@@ -50,7 +50,7 @@
 
 ### P0-4 · Database Setup
 - [ ] Implement `backend/app/db.py` — SQLAlchemy async engine + `AsyncSession` factory
-- [ ] Write raw SQL migration file `backend/migrations/001_initial.sql` with full schema (user_profiles, trips, imported_bookings tables + all indexes)
+- [ ] Write raw SQL migration file `backend/migrations/001_initial.sql` with full schema (user_profiles, trips tables + all indexes)
 - [ ] Add `make migrate` target that runs migration SQL against local postgres
 - [ ] Verify tables created: `psql` → `\dt` shows all 3 tables
 

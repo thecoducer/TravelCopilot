@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # Application
+    app_env: str = "development"
+    log_level: str = "info"
+
+    # LLM
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o"
+    openai_api_key: str = ""
+
+    # Mock flag — when True all tools return fixture data, no network calls
+    mock_external_apis: bool = True
+
+    # External Search APIs
+    serpapi_key: str = ""
+    tavily_api_key: str = ""
+
+    # Maps & Places
+    google_maps_api_key: str = ""
+    google_places_api_key: str = ""
+
+    # Weather
+    openweathermap_api_key: str = ""
+
+    # Currency exchange
+    fx_api_key: str = ""
+
+    # Database
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/travelcopilot"
+
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Langfuse
+    langfuse_host: str = "http://localhost:3000"
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+
+    # OpenTelemetry
+    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    otel_service_name: str = "travelcopilot-backend"
+
+    # Clarification gate
+    clarification_required_fields: str = "destination,dates,travelers"
+    parse_confidence_threshold: float = 0.6
+
+    # Budget guard
+    max_llm_spend_usd_per_trip: float = 1.00
+
+    @property
+    def clarification_fields(self) -> list[str]:
+        return [f.strip() for f in self.clarification_required_fields.split(",")]
+
+
+settings = Settings()

@@ -1,0 +1,12 @@
+# docker-compose.override.yml — local dev overrides
+# This file is automatically merged by docker compose. Do not commit local secrets here.
+
+services:
+  backend:
+    # Expose extra debug port if needed locally
+    environment:
+      LOG_LEVEL: debug
+      MOCK_EXTERNAL_APIS: "true"
+
+  # Skip langfuse in fast local dev by overriding its restart policy
+  # Uncomment to disable: langfuse: { profiles: ["full"] }
