@@ -17,6 +17,9 @@ RUN uv pip install --system -e ".[dev]"
 # Copy application code (overridden by volume mount in dev)
 COPY . .
 
+# Lint + format check (fails the build on violations)
+RUN ruff format --check app/ && ruff check app/
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

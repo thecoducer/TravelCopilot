@@ -18,8 +18,17 @@ dev-logs: ## Tail backend logs
 test: ## Run backend test suite
 	cd $(BACKEND_DIR) && uv run pytest tests/ -v --cov=app --cov-report=term-missing
 
+format: ## Auto-format code with ruff
+	cd $(BACKEND_DIR) && uv run ruff format app/ tests/
+
+format-check: ## Check formatting without modifying files (used in CI)
+	cd $(BACKEND_DIR) && uv run ruff format --check app/ tests/
+
 lint: ## Run ruff linter + mypy type checker
 	cd $(BACKEND_DIR) && uv run ruff check app/ tests/ && uv run mypy app/
+
+lint-fix: ## Auto-fix ruff lint issues where possible
+	cd $(BACKEND_DIR) && uv run ruff check --fix app/ tests/
 
 migrate: ## Run database migrations against local postgres
 	docker compose exec postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/001_initial.sql
