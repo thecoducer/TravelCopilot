@@ -16,19 +16,19 @@ dev-logs: ## Tail backend logs
 	$(COMPOSE) logs -f backend
 
 test: ## Run backend test suite
-	cd $(BACKEND_DIR) && python -m pytest tests/ -v --cov=app --cov-report=term-missing
+	cd $(BACKEND_DIR) && uv run pytest tests/ -v --cov=app --cov-report=term-missing
 
 lint: ## Run ruff linter + mypy type checker
-	cd $(BACKEND_DIR) && python -m ruff check app/ tests/ && python -m mypy app/
+	cd $(BACKEND_DIR) && uv run ruff check app/ tests/ && uv run mypy app/
 
 migrate: ## Run database migrations against local postgres
 	docker compose exec postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/001_initial.sql
 
 evals: ## Run Langfuse evals (requires LANGFUSE_* env vars)
-	cd $(BACKEND_DIR) && python -m pytest tests/evals/ -v -m "not golden"
+	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m "not golden"
 
 evals-golden: ## Run golden-set evals
-	cd $(BACKEND_DIR) && python -m pytest tests/evals/ -v -m golden
+	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m golden
 
 build: ## Build backend Docker image
 	docker build -t travelcopilot-backend $(BACKEND_DIR)/

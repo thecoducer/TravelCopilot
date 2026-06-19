@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: travelcopilot
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -42,15 +42,6 @@ services:
       postgres:
         condition: service_healthy
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    ports:
-      - "16686:16686"   # Jaeger UI
-      - "4317:4317"     # OTLP gRPC receiver
-      - "4318:4318"     # OTLP HTTP receiver
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-
   backend:
     build:
       context: ./backend
@@ -64,7 +55,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/travelcopilot
       REDIS_URL: redis://redis:6379/0
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       LANGFUSE_HOST: http://langfuse:3000
     depends_on:
       postgres:

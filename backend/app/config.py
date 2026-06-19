@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
 
     # OpenTelemetry
-    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    otel_exporter_otlp_endpoint: str = ""
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate

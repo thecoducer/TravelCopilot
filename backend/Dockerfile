@@ -7,9 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Install Python dependencies
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN uv pip install --system -e ".[dev]"
 
 # Copy application code (overridden by volume mount in dev)
 COPY . .

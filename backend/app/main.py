@@ -44,7 +44,11 @@ def configure_logging() -> None:
 
 
 def configure_otel(app: FastAPI) -> None:
-    """Set up OpenTelemetry tracing → Jaeger via OTLP."""
+    """Set up OpenTelemetry tracing via OTLP when configured."""
+    if not settings.otel_exporter_otlp_endpoint:
+        logger.info("otel_disabled", reason="OTEL_EXPORTER_OTLP_ENDPOINT not set")
+        return
+
     resource = Resource(attributes={SERVICE_NAME: settings.otel_service_name})
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint)

@@ -34,10 +34,9 @@
   - `postgres` (PostgreSQL 15, port 5432, persistent volume)
   - `redis` (Redis 7, port 6379)
   - `langfuse` (Langfuse self-hosted, port 3000) — use official `langfuse/langfuse` image
-  - `jaeger` (Jaeger all-in-one, port 16686 for UI, port 4317 for OTLP) — receives OTel traces locally
   - `backend` (FastAPI, port 8000, hot-reload via `--reload`, mounts `backend/` as volume)
 - [ ] Add `docker-compose.override.yml` for local dev overrides (e.g. skip frontend)
-- [ ] Verify `docker-compose up` starts all 5 services cleanly
+- [ ] Verify `docker-compose up` starts all 4 services cleanly
 
 ### P0-3 · Environment Config
 - [ ] Create `.env.example` with all keys from plan (no real values)
@@ -349,7 +348,7 @@
 
 ## Phase 4 — Observability + Evals Setup
 
-> **Goal**: Langfuse shows full LLM traces for every agent call. Cloud Trace equivalent works locally via Jaeger. Eval datasets written, all mock-mode evaluators pass, `run_evals.py --mode mock` exits 0; a small real-API golden set verifies factual accuracy via `run_evals.py --mode golden`.
+> **Goal**: Langfuse shows full LLM traces for every agent call. Eval datasets written, all mock-mode evaluators pass, `run_evals.py --mode mock` exits 0; a small real-API golden set verifies factual accuracy via `run_evals.py --mode golden`.
 > **Done when**: After running a full planning request, Langfuse UI shows nested trace tree; `make evals` exits 0 and prints scores; `make evals-golden` passes against human-verified ground truth.
 
 ### P4-1 · Langfuse Integration
@@ -362,12 +361,11 @@
   - [ ] Token counts and cost visible per agent call
   - [ ] Session ID attached to trace
 
-### P4-2 · OpenTelemetry + Local Jaeger
+### P4-2 · OpenTelemetry
 - [ ] Implement `backend/app/observability/otel.py` — OTel tracer setup, `agent_span()` context manager
-- [ ] Add Jaeger to `docker-compose.yml` (port 16686 for UI, 4317 for OTLP)
-- [ ] Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317` in `.env`
+- [ ] Set `OTEL_EXPORTER_OTLP_ENDPOINT` to your OTLP collector endpoint when tracing is enabled
 - [ ] Wrap every agent `run()` call with `agent_span(name, layer)` context manager
-- [ ] Run full planning request → open Jaeger at `http://localhost:16686` → verify waterfall shows `trip.plan` root span with 14 child spans labelled by agent name and layer
+- [ ] Run full planning request → verify `trip.plan` root span with 14 child spans labelled by agent name and layer in your configured tracing backend
 
 ### P4-3 · Prometheus Metrics
 - [ ] Implement `backend/app/observability/metrics.py` — define all metrics from plan
