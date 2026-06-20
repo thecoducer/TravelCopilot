@@ -1,0 +1,389 @@
+{
+  "info": {
+    "_postman_id": "tc-collection-v1",
+    "name": "TravelCopilot API",
+    "description": "End-to-end Postman test collection for TravelCopilot backend.\n\nRun order:\n1. Health Check\n2. Upsert User Profile\n3. Get User Profile\n4. Plan Trip (SSE) — domestic\n5. Plan Trip (SSE) — clarification gate (vague query)\n6. Get Itinerary\n7. Update Itinerary\n8. Get Usage\n9. Generate PDF\n10. Submit Feedback\n11. Get Public Itinerary (manual: set public=true in DB first)\n\nAll requests target `{{base_url}}` (default: http://localhost:8000).\nRequires `MOCK_EXTERNAL_APIS=true` in backend `.env`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Ops",
+      "item": [
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "  pm.expect(b.version).to.exist;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Prometheus Metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["metrics"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "User Profile",
+      "item": [
+        {
+          "name": "Upsert Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Session-ID", "value": "{{session_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"test-user-postman\",\n  \"passport_country\": \"India\",\n  \"home_city\": \"Kolkata\",\n  \"interests\": [\"food\", \"history\"],\n  \"dietary_restrictions\": [],\n  \"hotel_style\": \"mid\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/user/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "user", "profile"]
+            }
+          }
+        },
+        {
+          "name": "Get Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('profile returned', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.profile).to.exist;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Session-ID", "value": "{{session_id}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/user/profile",
+              "host": ["{{base_url}}"],
+              "path": ["api", "user", "profile"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trip Planning",
+      "item": [
+        {
+          "name": "Plan Trip — SSE (domestic Osaka)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('content-type is SSE', () => {",
+                  "  pm.expect(pm.response.headers.get('content-type')).to.include('text/event-stream');",
+                  "});",
+                  "// Extract itinerary_id from the complete event",
+                  "const body = pm.response.text();",
+                  "const match = body.match(/\"itinerary_id\":\\s*\"([^\"]+)\"/);",
+                  "if (match) {",
+                  "  pm.environment.set('trip_id', match[1]);",
+                  "  pm.test('complete event has itinerary_id', () => pm.expect(match[1]).to.exist);",
+                  "}",
+                  "pm.test('agent_done events present', () => {",
+                  "  pm.expect(body).to.include('agent_done');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"3 days Osaka from Kolkata, mid-October, love food\",\n  \"session_id\": \"{{session_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/trip/plan",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "plan"]
+            }
+          }
+        },
+        {
+          "name": "Plan Trip — Clarification gate (vague query)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.text();",
+                  "pm.test('needs_clarification event emitted', () => {",
+                  "  pm.expect(body).to.include('needs_clarification');",
+                  "});",
+                  "pm.test('no complete event (graph halted)', () => {",
+                  "  pm.expect(body).to.not.include('\"complete\"');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"plan a trip to Tokyo\",\n  \"session_id\": \"vague-test-session\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/trip/plan",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "plan"]
+            }
+          }
+        },
+        {
+          "name": "Get Itinerary by Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// 200 when DB is available; 503/404 without a running DB is expected in CI.",
+                  "pm.test('Status is 200 or 404/503', () => {",
+                  "  pm.expect([200, 404, 503]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/trip/{{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "{{session_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Itinerary (reorder)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"segments\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/trip/{{trip_id}}/itinerary",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "{{trip_id}}", "itinerary"]
+            }
+          }
+        },
+        {
+          "name": "Get Usage",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/trip/{{trip_id}}/usage",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "{{trip_id}}", "usage"]
+            }
+          }
+        },
+        {
+          "name": "Generate PDF",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404/503', () => {",
+                  "  pm.expect([200, 404, 503]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('PDF content-type', () => {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/pdf');",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/trip/{{trip_id}}/pdf",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "{{trip_id}}", "pdf"]
+            }
+          }
+        },
+        {
+          "name": "Submit Feedback",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 1,\n  \"comment\": \"Great itinerary!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/trip/{{trip_id}}/feedback",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "{{trip_id}}", "feedback"]
+            }
+          }
+        },
+        {
+          "name": "Get Public Itinerary (manual: set public=true in DB first)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/trip/public/my-public-slug",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trip", "public", "my-public-slug"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

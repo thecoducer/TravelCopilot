@@ -1,7 +1,7 @@
 # Multi-Agent AI Trip Planner — Engineering Dev Roadmap
 
 > Created: 2026-06-15  
-> Last updated: 2026-06-20  
+> Last updated: 2026-06-21  
 > Based on: System Design Plan v6  
 > Strategy: Mock-first → Real APIs → Frontend last
 
@@ -91,7 +91,7 @@
 - [x] `backend/app/models/reports.py`: `DestinationContextReport`, `ScamSafetyReport`, `VisaReport`, `SelfDriveReport`, `BudgetReport`, `ReviewSummary`, `AgentTokenUsage`
   - [x] `VisaReport` includes **(G)** `sources[]` (`title`, `url`, `published_or_fetched_date`), `last_verified_at`, `confidence` (`high`/`medium`/`low`), `disclaimer`
   - [x] `BudgetReport` includes **(H)** `total_in_source_currency`, `fx_rates_used` (map of pair → `{rate, fetched_at}`), `fx_disclaimer`
-- [ ] Add clarification fields to `TripState` in `state.py`: `needs_clarification: bool`, `clarification_prompts: list[ClarificationPrompt]`, `parse_confidence: dict[str, float]` ← Phase 2 (state.py not yet created)
+- [x] Add clarification fields to `TripState` in `state.py`: `needs_clarification: bool`, `clarification_prompts: list[ClarificationPrompt]`, `parse_confidence: dict[str, float]`
 - [x] Write model validation tests for every Pydantic model (required fields, type coercion), incl. `VisaReport.sources` and `BudgetReport.fx_rates_used`
 
 ### P1-3 · Mock Tool Fixtures
@@ -289,12 +289,12 @@
 
 ### P3-7 · OpenAPI Docs Verification
 - [ ] Visit `http://localhost:8000/docs` — verify all endpoints documented with correct request/response schemas
-- [ ] Export OpenAPI spec: `http://localhost:8000/openapi.json` — save to `backend/openapi.json` for frontend reference
+- [x] Export OpenAPI spec: `http://localhost:8000/openapi.json` — save to `backend/openapi.json` for frontend reference
 
 ### P3-8 · Postman Collection
-- [ ] Create `backend/postman/TripPlanner.postman_collection.json` covering all endpoints
-- [ ] Add environment file `backend/postman/local.postman_environment.json` with `base_url=http://localhost:8000`
-- [ ] Document collection in `backend/postman/README.md` with test order and expected outputs
+- [x] Create `backend/postman/TripPlanner.postman_collection.json` covering all endpoints
+- [x] Add environment file `backend/postman/local.postman_environment.json` with `base_url=http://localhost:8000`
+- [x] Document collection in `backend/postman/README.md` with test order and expected outputs
 
 ---
 
@@ -304,9 +304,9 @@
 > **Done when**: After running a full planning request, Langfuse UI shows nested trace tree; `make evals` exits 0 and prints scores; `make evals-golden` passes against human-verified ground truth.
 
 ### P4-1 · Langfuse Integration
-- [ ] Implement `backend/app/observability/langfuse.py` — init `CallbackHandler`, `lf.score()` helper function
-- [ ] Register Langfuse `CallbackHandler` in every `graph.invoke()` call
-- [ ] Register `litellm.success_callback = ["langfuse"]` in `main.py` lifespan
+- [x] Implement `backend/app/observability/langfuse.py` — init `CallbackHandler`, `lf.score()` helper function
+- [x] Register Langfuse `CallbackHandler` in every `graph.invoke()` call
+- [x] Register `litellm.success_callback = ["langfuse"]` in `main.py` lifespan
 - [ ] Run full planning request → open Langfuse at `http://localhost:3000` → verify:
   - [ ] Trace created per planning request
   - [ ] All LLM calls appear as nested spans with prompt + completion visible
@@ -320,13 +320,13 @@
 - [ ] Run full planning request → verify `trip.plan` root span with 14 child spans labelled by agent name and layer in your configured tracing backend
 
 ### P4-3 · Prometheus Metrics
-- [ ] Implement `backend/app/observability/metrics.py` — define all metrics from plan
-- [ ] Instrument: `trip_planning_duration_seconds` (histogram, timer around full graph run)
-- [ ] Instrument: `agent_duration_seconds` (histogram, timer around each agent node)
-- [ ] Instrument: `agent_error_total` (counter, increment on agent exception)
-- [ ] Instrument: `llm_tokens_total` (counter, from UsageLogger)
-- [ ] Instrument: `llm_cost_usd_total` (counter, from UsageLogger)
-- [ ] Instrument: `api_cache_hits_total` (counter, from cache_service)
+- [x] Implement `backend/app/observability/metrics.py` — define all metrics from plan
+- [x] Instrument: `trip_planning_duration_seconds` (histogram, timer around full graph run)
+- [x] Instrument: `agent_duration_seconds` (histogram, timer around each agent node)
+- [x] Instrument: `agent_error_total` (counter, increment on agent exception)
+- [x] Instrument: `llm_tokens_total` (counter, from UsageLogger)
+- [x] Instrument: `llm_cost_usd_total` (counter, from UsageLogger)
+- [x] Instrument: `api_cache_hits_total` (counter, from cache_service)
 - [ ] Verify `GET /metrics` returns all metric names
 
 ### P4-4 · Eval Datasets

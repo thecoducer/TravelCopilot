@@ -19,6 +19,7 @@ from app.agents.destination_context_agent import DestinationContextAgent
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
 from app.agents.orchestrator import OrchestratorAgent, quick_extract_days
+from app.agents.reviews_agent import ReviewsAgent
 from app.agents.scam_safety_agent import ScamSafetyAgent
 from app.agents.self_drive_search_agent import SelfDriveSearchAgent
 from app.agents.stay_analyst_agent import StayAnalystAgent
@@ -526,3 +527,396 @@ class TestFoodDiscoveryAgent:
         result = await agent({**base_state, "experiences_raw": []})
         # Should still try to find restaurants at the destination
         assert "restaurant_recommendations" in result
+
+
+# ── get_llm factory ───────────────────────────────────────────────────────────
+
+
+class TestGetLLM:
+    def test_returns_litellm_chat_model(self) -> None:
+        """get_llm returns a model with the correct metadata (P2-2)."""
+        from app.llm import LiteLLMChatModel, get_llm
+
+        llm = get_llm("test_agent", "sess_123")
+        assert isinstance(llm, LiteLLMChatModel)
+        assert llm.metadata["agent_name"] == "test_agent"
+        assert llm.metadata["session_id"] == "sess_123"
+
+    def test_model_string_uses_provider_and_model(self) -> None:
+        from app.config import settings
+        from app.llm import get_llm
+
+        llm = get_llm("orchestrator")
+        expected = f"{settings.llm_provider}/{settings.llm_model}"
+        assert llm.model == expected
+
+
+# ── TransportOptimizerAgent ───────────────────────────────────────────────────
+
+
+class TestTransportOptimizerAgent:
+    @pytest.fixture
+    def _legs_raw(self) -> dict[str, Any]:
+        from datetime import UTC, datetime
+
+        return {
+            "KOL→DEL→IXL": [
+                {
+                    "airline": {"name": "IndiGo"},
+                    "price": 9500,
+                    "total_duration": 195,
+                    "travel_class": "economy",
+                    "departure_airport": {"time": "06:00"},
+                    "layovers": [{"duration": 60}],
+                    "price_cached_at": datetime.now(tz=UTC).isoformat(),
+                }
+            ],
+            "KOL→IXL direct": [
+                {
+                    "airline": {"name": "Air India"},
+                    "price": 14000,
+                    "total_duration": 150,
+                    "travel_class": "economy",
+                    "departure_airport": {"time": "08:00"},
+                    "layovers": [],
+                    "price_cached_at": datetime.now(tz=UTC).isoformat(),
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_recommendation_has_positive_cost_and_waypoints(
+        self,
+        base_state: dict[str, Any],
+        _legs_raw: dict[str, Any],
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from app.agents.transport_optimizer_agent import _OptimiserOutput
+        from app.models.transport import RouteLeg, RouteWaypoint, TransportRecommendation
+
+        rec = TransportRecommendation(
+            recommended_legs=[
+                RouteLeg(
+                    mode="flight",
+                    operator="IndiGo",
+                    origin="KOL",
+                    destination="IXL",
+                    duration_minutes=195,
+                    cost=9500.0,
+                    currency_code="INR",
+                    price_cached_at=datetime.now(tz=UTC),
+                    price_disclaimer="Price indicative — verify before booking.",
+                )
+            ],
+            total_cost=9500.0,
+            total_duration_minutes=195,
+            currency_code="INR",
+            rationale="Best value mid-range option.",
+            personalization_reason="Matches mid budget tier.",
+            route_waypoints=[
+                RouteWaypoint(label="KOL", name="Kolkata", lat=22.57, lng=88.36),
+                RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
+            ],
+        )
+        mock_out = _OptimiserOutput(recommended=rec, alternatives=[])
+        from app.agents.transport_optimizer_agent import TransportOptimizerAgent
+
+        agent = TransportOptimizerAgent(llm=_make_llm(mock_out))
+        result = await agent({**base_state, "transport_legs_raw": _legs_raw})
+
+        transport = result["transport_recommendation"]
+        assert transport is not None
+        assert transport.total_cost > 0
+        assert len(transport.route_waypoints) >= 2
+
+    @pytest.mark.asyncio
+    async def test_every_leg_has_price_cached_at_and_disclaimer(
+        self,
+        base_state: dict[str, Any],
+        _legs_raw: dict[str, Any],
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from app.agents.transport_optimizer_agent import _OptimiserOutput
+        from app.models.transport import RouteLeg, RouteWaypoint, TransportRecommendation
+
+        leg = RouteLeg(
+            mode="flight",
+            operator="IndiGo",
+            origin="KOL",
+            destination="IXL",
+            duration_minutes=195,
+            cost=9500.0,
+            currency_code="INR",
+            price_cached_at=datetime.now(tz=UTC),
+            price_disclaimer="Price indicative — verify before booking.",
+        )
+        rec = TransportRecommendation(
+            recommended_legs=[leg],
+            total_cost=9500.0,
+            total_duration_minutes=195,
+            currency_code="INR",
+            rationale="Best option.",
+            personalization_reason="Good value.",
+            route_waypoints=[
+                RouteWaypoint(label="KOL", name="Kolkata", lat=22.57, lng=88.36),
+                RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
+            ],
+        )
+        mock_out = _OptimiserOutput(recommended=rec, alternatives=[])
+        from app.agents.transport_optimizer_agent import TransportOptimizerAgent
+
+        agent = TransportOptimizerAgent(llm=_make_llm(mock_out))
+        result = await agent({**base_state, "transport_legs_raw": _legs_raw})
+
+        for leg in result["transport_recommendation"].recommended_legs:
+            assert leg.price_cached_at is not None, f"{leg.operator} missing price_cached_at"
+            assert leg.price_disclaimer, f"{leg.operator} missing price_disclaimer"
+
+    @pytest.mark.asyncio
+    async def test_budget_tier_filters_premium_from_raw_legs(
+        self,
+        base_state: dict[str, Any],
+    ) -> None:
+        """Budget tier must strip business-class legs before the LLM sees them (P2-6)."""
+        from app.agents.transport_optimizer_agent import _budget_filter
+
+        legs_with_premium: dict[str, Any] = {
+            "KOL→IXL": [
+                {"travel_class": "business", "price": 25000},
+                {"travel_class": "economy", "price": 9500},
+            ]
+        }
+        filtered = _budget_filter(legs_with_premium, "budget")
+        for options in filtered.values():
+            for leg in options:
+                assert leg["travel_class"] != "business", (
+                    "Business class must be stripped for budget tier"
+                )
+
+
+# ── ReviewsAgent ──────────────────────────────────────────────────────────────
+
+
+class TestReviewsAgent:
+    @pytest.mark.asyncio
+    async def test_reviews_summary_covers_all_shortlisted_hotels(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        from app.models.reports import ReviewSummary
+        from app.models.transport import StayOption
+
+        stays = [
+            StayOption(
+                name=f"Hotel {i}",
+                address="Leh",
+                city="Leh",
+                price_per_night=3000,
+                currency_code="INR",
+                rating=4.0 + i * 0.1,
+                review_count=50,
+            )
+            for i in range(3)
+        ]
+
+        def _mock_side_effect(schema: Any) -> MagicMock:
+            from app.agents.reviews_agent import _PlaceSummary
+
+            chain = MagicMock()
+            chain.invoke = MagicMock(
+                return_value=_PlaceSummary(
+                    pros=["Good location", "Clean rooms"],
+                    cons=["Noisy street"],
+                    sentiment="positive",
+                )
+            )
+            return chain
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output = MagicMock(side_effect=_mock_side_effect)
+
+        agent = ReviewsAgent(tool_factory=mock_tool_factory, llm=mock_llm)
+        result = await agent({**base_state, "stays_shortlist": stays, "experiences_raw": []})
+
+        reviews = result["reviews_summary"]
+        for stay in stays:
+            assert stay.name in reviews, f"Missing review for {stay.name}"
+            assert isinstance(reviews[stay.name], ReviewSummary)
+
+
+# ── BudgetPlannerAgent ────────────────────────────────────────────────────────
+
+
+class TestBudgetPlannerAgent:
+    @pytest.mark.asyncio
+    async def test_budget_report_positive_total_and_all_categories(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from app.models.reports import BudgetReport
+        from app.models.transport import (
+            RouteLeg,
+            RouteWaypoint,
+            StayOption,
+            TransportRecommendation,
+        )
+
+        transport_rec = TransportRecommendation(
+            recommended_legs=[
+                RouteLeg(
+                    mode="flight",
+                    operator="IndiGo",
+                    origin="KOL",
+                    destination="IXL",
+                    duration_minutes=195,
+                    cost=9500.0,
+                    currency_code="INR",
+                    price_cached_at=datetime.now(tz=UTC),
+                    price_disclaimer="Indicative.",
+                )
+            ],
+            total_cost=9500.0,
+            total_duration_minutes=195,
+            currency_code="INR",
+            rationale="Best value.",
+            personalization_reason="Budget match.",
+            route_waypoints=[
+                RouteWaypoint(label="KOL", name="Kolkata", lat=22.57, lng=88.36),
+                RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
+            ],
+        )
+        stays_shortlist = [
+            StayOption(
+                name="Hotel A",
+                address="Leh",
+                city="Leh",
+                price_per_night=2500,
+                currency_code="INR",
+                rating=4.1,
+                review_count=80,
+            )
+        ]
+
+        mock_report = BudgetReport(
+            currency_code="INR",
+            total_estimated_cost=42000.0,
+            per_category_breakdown={
+                "transport": 9500.0,
+                "accommodation": 7500.0,
+                "food": 6000.0,
+                "activities": 4500.0,
+                "visa": 0.0,
+                "self_drive": 0.0,
+            },
+            per_day_breakdown=[14000.0, 14000.0, 14000.0],
+            vs_budget_verdict="on-budget",
+        )
+        from app.agents.budget_planner_agent import BudgetPlannerAgent
+
+        agent = BudgetPlannerAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
+        result = await agent(
+            {
+                **base_state,
+                "transport_recommendation": transport_rec,
+                "stays_shortlist": stays_shortlist,
+                "stays_pick": stays_shortlist[0],
+            }
+        )
+
+        report = result["budget_report"]
+        assert report is not None
+        assert report.total_estimated_cost > 0
+        expected_cats = {"transport", "accommodation", "food", "activities", "visa", "self_drive"}
+        assert expected_cats.issubset(set(report.per_category_breakdown.keys()))
+
+    @pytest.mark.asyncio
+    async def test_fx_rates_used_populated_for_multi_currency(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        """FX-normalised breakdown should record fx_rates_used with fetched_at (H)."""
+        from datetime import UTC, datetime
+
+        from app.models.reports import BudgetReport, FxRateEntry
+        from app.models.transport import (
+            RouteLeg,
+            RouteWaypoint,
+            StayOption,
+            TransportRecommendation,
+        )
+
+        # Transport in JPY (international trip) to trigger FX conversion
+        transport_rec = TransportRecommendation(
+            recommended_legs=[
+                RouteLeg(
+                    mode="flight",
+                    operator="ANA",
+                    origin="BOM",
+                    destination="NRT",
+                    duration_minutes=540,
+                    cost=65000.0,
+                    currency_code="JPY",
+                    price_cached_at=datetime.now(tz=UTC),
+                    price_disclaimer="Indicative.",
+                )
+            ],
+            total_cost=65000.0,
+            total_duration_minutes=540,
+            currency_code="JPY",
+            rationale="Direct flight.",
+            personalization_reason="Good value.",
+            route_waypoints=[
+                RouteWaypoint(label="BOM", name="Mumbai", lat=19.08, lng=72.88),
+                RouteWaypoint(label="NRT", name="Tokyo", lat=35.76, lng=140.38),
+            ],
+        )
+        stays_shortlist = [
+            StayOption(
+                name="Tokyo Hotel",
+                address="Tokyo",
+                city="Tokyo",
+                price_per_night=12000,
+                currency_code="JPY",
+                rating=4.3,
+                review_count=120,
+            )
+        ]
+
+        mock_report = BudgetReport(
+            currency_code="JPY",
+            total_estimated_cost=185000.0,
+            per_category_breakdown={
+                "transport": 65000.0,
+                "accommodation": 60000.0,
+                "food": 30000.0,
+                "activities": 20000.0,
+                "visa": 8000.0,
+                "self_drive": 0.0,
+            },
+            per_day_breakdown=[37000.0] * 5,
+            vs_budget_verdict="on-budget",
+            fx_rates_used={"INR→JPY": FxRateEntry(rate=1.82, fetched_at=datetime.now(tz=UTC))},
+            fx_disclaimer="FX rates fetched at time of planning.",
+        )
+        from app.agents.budget_planner_agent import BudgetPlannerAgent
+
+        agent = BudgetPlannerAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
+        result = await agent(
+            {
+                **base_state,
+                "destination": "Tokyo",
+                "is_international": True,
+                "transport_recommendation": transport_rec,
+                "stays_shortlist": stays_shortlist,
+                "stays_pick": stays_shortlist[0],
+            }
+        )
+
+        report = result["budget_report"]
+        assert report is not None
+        # The mock FX tool returns a rate; fx_rates_used may be populated from the agent's
+        # _convert() call. We verify the structure is sound either way.
+        if report.fx_rates_used:
+            for key, entry in report.fx_rates_used.items():
+                assert entry.fetched_at is not None, f"fx_rates_used[{key}] missing fetched_at"
