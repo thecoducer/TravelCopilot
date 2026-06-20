@@ -1,0 +1,30 @@
+{
+  "fetched_at": "2026-06-19T00:00:00Z",
+  "base": "INR",
+  "rates": {
+    "JPY→INR": 0.558,
+    "INR→JPY": 1.792,
+    "USD→INR": 83.50,
+    "INR→USD": 0.01198,
+    "EUR→INR": 90.20,
+    "INR→EUR": 0.01109,
+    "GBP→INR": 106.30,
+    "INR→GBP": 0.00941,
+    "THB→INR": 2.32,
+    "INR→THB": 0.431,
+    "SGD→INR": 62.50,
+    "INR→SGD": 0.016,
+    "AUD→INR": 54.80,
+    "INR→AUD": 0.01825,
+    "BDT→INR": 0.71,
+    "INR→BDT": 1.408,
+    "LKR→INR": 0.258,
+    "INR→LKR": 3.876,
+    "NPR→INR": 0.625,
+    "INR→NPR": 1.60,
+    "AED→INR": 22.72,
+    "INR→AED": 0.04402,
+    "IDR→INR": 0.00512,
+    "INR→IDR": 195.31
+  }
+}

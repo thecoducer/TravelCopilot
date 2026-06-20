@@ -1,0 +1,70 @@
+{
+  "destination": "Leh",
+  "rentals": [
+    {
+      "name": "Adventure Ladakh Bike Rentals",
+      "type": "motorcycle",
+      "vehicle_model": "Royal Enfield Himalayan 450",
+      "price_per_day": 1800,
+      "currency_code": "INR",
+      "deposit": 5000,
+      "address": "Fort Road, Leh, Ladakh 194101",
+      "phone": "+91-9419150001",
+      "rating": 4.6,
+      "notes": "Himalayan 450 with crash guards and luggage rack included. Valid driving licence mandatory. Helmet, gloves, and knee-pads provided. Full tank on pickup; return full tank.",
+      "google_maps_url": "https://maps.google.com/?q=Adventure+Ladakh+Bike+Rentals+Leh"
+    },
+    {
+      "name": "Ladakh Bike Rental House",
+      "type": "motorcycle",
+      "vehicle_model": "Royal Enfield Classic 350",
+      "price_per_day": 1200,
+      "currency_code": "INR",
+      "deposit": 3000,
+      "address": "Main Bazaar, Leh, Ladakh 194101",
+      "phone": "+91-9419101234",
+      "rating": 4.3,
+      "notes": "Classic 350 — good for paved roads but not recommended for challenging mountain passes. Helmet included. Insurance available for ₹200/day extra.",
+      "google_maps_url": "https://maps.google.com/?q=Ladakh+Bike+Rental+House+Leh"
+    },
+    {
+      "name": "Ladakh SUV Rentals",
+      "type": "suv",
+      "vehicle_model": "Toyota Innova Crysta",
+      "price_per_day": 5500,
+      "currency_code": "INR",
+      "deposit": 10000,
+      "address": "Airport Road, Leh, Ladakh 194101",
+      "phone": "+91-9419200200",
+      "rating": 4.5,
+      "notes": "Includes experienced Ladakhi driver who knows mountain roads. Covers Pangong and Nubra permit routes. No self-drive option for Innova — driver included only. Fuel extra.",
+      "google_maps_url": "https://maps.google.com/?q=Ladakh+SUV+Rentals"
+    },
+    {
+      "name": "Changspa Scooter Rentals",
+      "type": "scooter",
+      "vehicle_model": "Honda Activa 6G",
+      "price_per_day": 600,
+      "currency_code": "INR",
+      "deposit": 1500,
+      "address": "Changspa Lane, Leh, Ladakh 194101",
+      "phone": "+91-9469150033",
+      "rating": 4.1,
+      "notes": "Scooter suitable for Leh town and day trips to Magnetic Hill, Hall of Fame, and Shey. Not recommended above 4,000m — engine may struggle. Helmet included.",
+      "google_maps_url": "https://maps.google.com/?q=Changspa+Scooter+Rentals+Leh"
+    },
+    {
+      "name": "Himalayan Jeep Safaris",
+      "type": "jeep",
+      "vehicle_model": "Mahindra Thar 4x4",
+      "price_per_day": 4200,
+      "currency_code": "INR",
+      "deposit": 8000,
+      "address": "Karzoo, Leh, Ladakh 194101",
+      "phone": "+91-9622001122",
+      "rating": 4.7,
+      "notes": "Open-top Thar for an authentic Ladakhi experience. Perfect for sand dunes at Nubra and mountain passes. Self-drive with valid DL. Driver available for ₹1,500 extra.",
+      "google_maps_url": "https://maps.google.com/?q=Himalayan+Jeep+Safaris+Leh"
+    }
+  ]
+}

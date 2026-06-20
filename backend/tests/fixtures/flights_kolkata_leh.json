@@ -1,0 +1,127 @@
+{
+  "search_parameters": {
+    "engine": "google_flights",
+    "departure_id": "CCU",
+    "arrival_id": "IXL",
+    "outbound_date": "2026-10-14",
+    "currency": "INR",
+    "hl": "en",
+    "gl": "in",
+    "type": "2"
+  },
+  "best_flights": [
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 05:30"},
+          "arrival_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 07:45"},
+          "duration": 135,
+          "airplane": "Airbus A320neo",
+          "airline": "IndiGo",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/6E.png",
+          "travel_class": "Economy",
+          "flight_number": "6E 2011",
+          "legroom": "28 in",
+          "extensions": ["Below average legroom (28 in)", "Carbon emissions estimate: 38 kg"],
+          "often_delayed_by_over_30_min": false
+        },
+        {
+          "departure_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 11:00"},
+          "arrival_airport": {"name": "Kushok Bakula Rimpochee Airport", "id": "IXL", "time": "2026-10-14 12:15"},
+          "duration": 75,
+          "airplane": "ATR 72-600",
+          "airline": "IndiGo",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/6E.png",
+          "travel_class": "Economy",
+          "flight_number": "6E 2063",
+          "legroom": "30 in",
+          "extensions": ["Average legroom (30 in)", "Carbon emissions estimate: 22 kg"],
+          "often_delayed_by_over_30_min": true
+        }
+      ],
+      "layovers": [{"duration": 195, "name": "Indira Gandhi International Airport", "id": "DEL"}],
+      "total_duration": 405,
+      "carbon_emissions": {"this_flight": 60000, "typical_for_this_route": 68000, "difference_percent": -12},
+      "price": 7200,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/6E.png",
+      "departure_token": "mock_token_6e_ccu_del_ixl"
+    },
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 07:00"},
+          "arrival_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 09:20"},
+          "duration": 140,
+          "airplane": "Boeing 737-800",
+          "airline": "Air India",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/AI.png",
+          "travel_class": "Economy",
+          "flight_number": "AI 764",
+          "legroom": "30 in",
+          "extensions": ["Average legroom (30 in)", "Carbon emissions estimate: 41 kg"],
+          "often_delayed_by_over_30_min": false
+        },
+        {
+          "departure_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 13:30"},
+          "arrival_airport": {"name": "Kushok Bakula Rimpochee Airport", "id": "IXL", "time": "2026-10-14 14:50"},
+          "duration": 80,
+          "airplane": "ATR 72-600",
+          "airline": "Air India",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/AI.png",
+          "travel_class": "Economy",
+          "flight_number": "AI 452",
+          "legroom": "30 in",
+          "extensions": ["Average legroom (30 in)", "Carbon emissions estimate: 24 kg"],
+          "often_delayed_by_over_30_min": false
+        }
+      ],
+      "layovers": [{"duration": 250, "name": "Indira Gandhi International Airport", "id": "DEL"}],
+      "total_duration": 470,
+      "carbon_emissions": {"this_flight": 65000, "typical_for_this_route": 68000, "difference_percent": -4},
+      "price": 8500,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/AI.png",
+      "departure_token": "mock_token_ai_ccu_del_ixl"
+    }
+  ],
+  "other_flights": [
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 12:00"},
+          "arrival_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 14:15"},
+          "duration": 135,
+          "airplane": "Boeing 737-800",
+          "airline": "SpiceJet",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/SG.png",
+          "travel_class": "Economy",
+          "flight_number": "SG 116",
+          "legroom": "28 in",
+          "extensions": ["Below average legroom (28 in)", "Carbon emissions estimate: 39 kg"],
+          "often_delayed_by_over_30_min": false
+        },
+        {
+          "departure_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 17:30"},
+          "arrival_airport": {"name": "Kushok Bakula Rimpochee Airport", "id": "IXL", "time": "2026-10-14 18:45"},
+          "duration": 75,
+          "airplane": "ATR 72-600",
+          "airline": "Air India Regional",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/AI.png",
+          "travel_class": "Economy",
+          "flight_number": "AI 453",
+          "legroom": "30 in",
+          "extensions": ["Average legroom (30 in)", "Carbon emissions estimate: 22 kg"],
+          "often_delayed_by_over_30_min": false
+        }
+      ],
+      "layovers": [{"duration": 195, "name": "Indira Gandhi International Airport", "id": "DEL"}],
+      "total_duration": 405,
+      "carbon_emissions": {"this_flight": 61000, "typical_for_this_route": 68000, "difference_percent": -10},
+      "price": 6800,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/multi.png",
+      "departure_token": "mock_token_sg_ccu_del_ai_ixl"
+    }
+  ]
+}

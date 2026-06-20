@@ -1,0 +1,77 @@
+{
+  "passport_country": "India",
+  "destination_country": "Portugal",
+  "visa_required": true,
+  "visa_type": "schengen_short_stay",
+  "application_process": [
+    "Book an appointment via the VFS Global Portugal visa portal (https://visa.vfsglobal.com/ind/en/prt/)",
+    "Complete the Schengen visa application form (available on the VFS portal)",
+    "Prepare all required documents per the checklist below",
+    "Pay the visa fee and VFS Global service charge online or at the centre",
+    "Attend your appointment at the VFS Global Portugal Visa Application Centre with original documents",
+    "Track your application status online via the VFS Global portal",
+    "Passport returned by courier to your registered address or collect from the centre"
+  ],
+  "documents_required": [
+    "Valid Indian passport (minimum 3 months validity beyond return date, at least 2 blank pages)",
+    "Completed and signed Schengen visa application form",
+    "Two recent passport-size photographs (35x45mm, white background, taken within last 6 months)",
+    "Confirmed return flight booking (onward + return)",
+    "Accommodation proof (hotel reservations for all nights or invitation letter)",
+    "Travel insurance minimum €30,000 coverage, valid for all Schengen states",
+    "Bank statements (last 6 months, minimum average balance ₹4,00,000 recommended)",
+    "Proof of financial means (minimum €100/day or equivalent in INR)",
+    "If employed: NOC letter from employer + last 3 months salary slips + ITR",
+    "If self-employed: Business registration + latest ITR + CA-certified financial statement",
+    "Proof of ties to India (property documents, family, return job — shows intent to return)"
+  ],
+  "processing_timeline": "15 working days; apply at least 6 weeks before travel. June–September (summer) may take up to 20 working days. Do NOT book non-refundable travel until visa is approved.",
+  "fees": "Schengen visa fee: €90 (~₹8,100) + VFS Global service charge: ₹2,080 + optional courier: ₹750",
+  "dos_and_donts": [
+    "DO apply at the earliest opportunity — Schengen processing is not expedited for Indians even for emergencies",
+    "DO book flexible/refundable flights and hotels until the visa is in hand",
+    "DO ensure your bank statement is genuine and shows regular activity, not a sudden large deposit",
+    "DO get travel insurance from a reputable provider — it is mandatory and checked",
+    "DON'T submit incorrect or conflicting information on the form — a single inconsistency causes rejection",
+    "DON'T travel to other Schengen countries more than your Portugal visa duration allows",
+    "DON'T overstay — even by one day — as it affects all future Schengen visa applications"
+  ],
+  "nearest_embassy": {
+    "name": "Embassy of Portugal in New Delhi",
+    "address": "4 Panchsheel Marg, Chanakyapuri, New Delhi 110021",
+    "phone": "+91-11-26114040",
+    "opening_hours": "Mon-Fri 09:00-13:00 (consular section; visas via VFS only)",
+    "booking_url": "https://www.embaixadadoportugal.in",
+    "google_maps_url": "https://maps.google.com/?q=Embassy+of+Portugal+New+Delhi"
+  },
+  "application_centre": {
+    "name": "VFS Global — Portugal Visa Application Centre, Mumbai",
+    "address": "VFS Global Services Pvt Ltd, 1st Floor, Times Square Building, Andheri Kurla Road, Andheri East, Mumbai 400059",
+    "phone": "+91-22-6190-0100",
+    "opening_hours": "Mon-Fri 08:30-16:00 (submission); 15:00-17:00 (passport collection)",
+    "booking_url": "https://visa.vfsglobal.com/ind/en/prt/book-an-appointment",
+    "google_maps_url": "https://maps.google.com/?q=VFS+Global+Portugal+Mumbai"
+  },
+  "apply_online_url": "https://visa.vfsglobal.com/ind/en/prt/",
+  "validity_notes": "Schengen short-stay visa: up to 90 days within any 180-day period. Single, double, or multiple entry available depending on travel history and frequency. Multiple-entry visas are granted only to repeat travellers with a good Schengen visa history.",
+  "sources": [
+    {
+      "title": "Portuguese Consulate General — Visa Information for Indian Nationals",
+      "url": "https://www.consuladogeralportugal.net.in/en/visa",
+      "published_or_fetched_date": "2026-05-20"
+    },
+    {
+      "title": "VFS Global — Portugal Schengen Visa India",
+      "url": "https://visa.vfsglobal.com/ind/en/prt/",
+      "published_or_fetched_date": "2026-06-01"
+    },
+    {
+      "title": "EU Schengen Visa — Official European Union Information",
+      "url": "https://home-affairs.ec.europa.eu/policies/schengen-borders-and-visa/visa-policy_en",
+      "published_or_fetched_date": "2026-04-15"
+    }
+  ],
+  "last_verified_at": "2026-06-01T10:00:00Z",
+  "confidence": "high",
+  "disclaimer": "Visa rules change frequently and depend on your exact nationality and circumstances. This is guidance only — always confirm with the official consulate or embassy before booking travel."
+}

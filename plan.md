@@ -10,7 +10,7 @@
 
 A production-grade LangGraph multi-agent trip planning system built for real users to plan end-to-end domestic and international trips. Chat-first UI. LLM-agnostic via LiteLLM. Multi-modal transport via Google Routes API + SerpAPI + LLM hub reasoning. Agents are organised into 6 clear execution layers with explicit dependencies. Full observability: OpenTelemetry → Cloud Trace + local Jaeger, Langfuse (open-source, self-hostable) for LLM tracing and evals, Prometheus → Cloud Monitoring. Deploys to Google Cloud Run with Cloud SQL + Memorystore via Terraform.
 
-**Development strategy**: Mock-first → Real APIs → Frontend last. All external APIs (SerpAPI, Tavily, Google Maps, OpenWeatherMap) are mocked via fixture JSON during development. A `ToolFactory` controlled by `MOCK_EXTERNAL_APIS` env flag swaps mock ↔ real tools with zero agent code changes. Backend is Postman-testable before any frontend work begins.
+**Development strategy**: Mock-first → Real APIs → Frontend last. All external APIs (SerpAPI, Tavily, Google Maps) are mocked via fixture JSON during development. A `ToolFactory` controlled by `MOCK_EXTERNAL_APIS` env flag swaps mock ↔ real tools with zero agent code changes. Backend is Postman-testable before any frontend work begins.
 
 ---
 
@@ -42,9 +42,8 @@ graph TD
     OA --> L1["LAYER 1 — Intelligence (parallel)"]
     OA --> L2["LAYER 2 — Supply Search (parallel)"]
 
-    L1 --> TRA["TripRealityAgent"]
+    L1 --> DCA["DestinationContextAgent"]
     L1 --> SCA["ScamSafetyAgent"]
-    L1 --> WA["WeatherAgent"]
     L1 --> VA["VisaAgent (intl only)"]
 
     L2 --> TSA["TransportSearchAgent"]
@@ -60,15 +59,14 @@ graph TD
     LEA --> L4
 
     L4 --> RA["ReviewsAgent"]
-    L4 --> RA2["RestaurantAgent"]
+    L4 --> FDA["FoodDiscoveryAgent"]
     L4 --> BPA["BudgetPlannerAgent"]
 
     RA --> IC["ItineraryCompilerAgent\ngeo-cluster · self-critique · compile"]
-    RA2 --> IC
+    FDA --> IC
     BPA --> IC
-    TRA --> IC
+    DCA --> IC
     SCA --> IC
-    WA --> IC
     VA --> IC
     SDSA --> IC
 
@@ -91,9 +89,8 @@ LAYER 0 — ROUTING & ORCHESTRATION
         This IS the LangGraph supervisor/router node.
 
 LAYER 1 — DESTINATION INTELLIGENCE  (all parallel, no supply data needed)
-  ├── TripRealityAgent         peak season · crowd · weather · hidden fees
+  ├── DestinationContextAgent  seasonality · crowd · practical costs · local constraints
   ├── ScamSafetyAgent          safety · scams · advisories
-  ├── WeatherAgent             day-by-day forecast (OpenWeatherMap)
   └── VisaAgent                international trips only
 
 LAYER 2 — SUPPLY SEARCH  (all parallel, pure tool calls — no LLM)
@@ -108,7 +105,7 @@ LAYER 3 — ANALYSIS  (parallel, LLM-heavy, each waits for its Layer 2 parent)
 
 LAYER 4 — ENRICHMENT  (parallel, after Layer 3 + LocalExperiences complete)
   ├── ReviewsAgent             Google Places reviews + photos for stays + experiences
-  ├── RestaurantAgent          dedicated restaurant search per neighbourhood per day
+  ├── FoodDiscoveryAgent       meal-time food search per day cluster: restaurants, cafes, street food
   └── BudgetPlannerAgent       aggregate all costs → budget verdict + savings tips
 
 LAYER 5 — SYNTHESIS
@@ -139,9 +136,8 @@ class TripState(TypedDict):
     parse_confidence:     dict[str, float]        # per-field confidence (0–1) from the parse
 
     # ── Layer 1: Intelligence ──────────────────────────────────────
-    reality_report:    TripRealityReport | None
+    destination_context_report: DestinationContextReport | None
     scam_safety_report: ScamSafetyReport | None
-    weather_report:    WeatherReport | None
     visa_report:       VisaReport | None
 
     # ── Layer 2: Supply Search ─────────────────────────────────────
@@ -158,7 +154,7 @@ class TripState(TypedDict):
 
     # ── Layer 4: Enrichment ────────────────────────────────────────
     reviews_summary:        dict[str, ReviewSummary]  # keyed by place name
-    restaurant_recommendations: dict[str, list[Restaurant]]  # keyed by day ISO date
+    food_recommendations: dict[str, list[FoodVenue]]  # keyed by day ISO date
     budget_report:          BudgetReport | None
 
     # ── Output ─────────────────────────────────────────────────────
@@ -188,7 +184,6 @@ trip-planner/
 │   │   │   │   ├── transit_tools.py
 │   │   │   │   ├── places_tools.py
 │   │   │   │   ├── tavily_tools.py
-│   │   │   │   ├── weather_tools.py
 │   │   │   │   ├── visa_tools.py
 │   │   │   │   ├── rental_tools.py
 │   │   │   │   ├── geo_tools.py
@@ -199,7 +194,6 @@ trip-planner/
 │   │   │       ├── transit_tools.py
 │   │   │       ├── places_tools.py
 │   │   │       ├── tavily_tools.py
-│   │   │       ├── weather_tools.py
 │   │   │       ├── visa_tools.py
 │   │   │       ├── rental_tools.py
 │   │   │       ├── geo_tools.py   # ClusterByProximityTool implemented fully (pure math)
@@ -263,7 +257,6 @@ class Settings(BaseSettings):
     serpapi_key:        str = ""   # required when mock_external_apis=False
     google_maps_key:    str = ""   # Routes API + Places API + Maps JS API + Static Maps + Distance Matrix
     tavily_key:         str = ""
-    openweathermap_key: str = ""
     fx_api_key:         str = ""   # currency exchange-rate provider (e.g. exchangerate.host / OXR)
 
     # Critical fields that trigger the clarification gate when missing/low-confidence.
@@ -328,7 +321,7 @@ class ToolFactory:
 
 All agents receive `list[BaseTool]` via constructor injection. In unit tests, `ToolFactory(mock=True)` is passed — zero network calls, zero patching needed. In Phase 5, flipping `MOCK_EXTERNAL_APIS=false` in `.env` and providing real API keys is the only change required.
 
-**Fixture files** (`tests/fixtures/`) contain realistic hardcoded JSON per destination and scenario (flights, hotels, places, weather, scams, visa, rentals). Mock tools read from these files based on input params.
+**Fixture files** (`tests/fixtures/`) contain realistic hardcoded JSON per destination and scenario (flights, hotels, places, food venues, scams, visa, rentals). Mock tools read from these files based on input params.
 
 ### 5. LangGraph StateGraph wiring (`graph/graph.py`)
 
@@ -360,9 +353,9 @@ All 14 agent nodes wired with parallel edges per layer. `OrchestratorAgent` uses
 
 ### LAYER 1 — Destination Intelligence
 
-**TripRealityAgent** (`agents/trip_reality_agent.py`)
+**DestinationContextAgent** (`agents/destination_context_agent.py`)
 - Tavily searches: crowds `"{destination} crowded {month} {year}"`, peak season `"is {destination} peak season {month}"`, festivals `"{destination} events {dates}"`, costs `"average daily cost {destination} 2026"`, hidden fees `"tourist tax hidden fees {destination}"`
-- LLM synthesizes `TripRealityReport`:
+- LLM synthesizes `DestinationContextReport`:
   - `is_peak_season`: bool
   - `season_label`: e.g. "Peak season", "Shoulder season", "Off season"
   - `season_reason`: e.g. "Cherry blossom season — expect 2–3h queues at major attractions"
@@ -371,18 +364,13 @@ All 14 agent nodes wired with parallel edges per layer. `OrchestratorAgent` uses
   - `real_daily_cost`: estimated per-person per-day spend in destination currency
   - `currency_code`: ISO 4217 currency of the destination country (e.g. `"JPY"`, `"INR"`, `"BDT"`, `"EUR"`)
   - `cost_warnings[]`: e.g. "Venice day-tripper tax €5/person", "Hotel tax not included in listed prices"
-  - `weather_summary`: brief condition overview for the travel dates
-  - `weather_warnings[]`: e.g. "Typhoon season active, check forecasts daily"
+  - `seasonal_weather_summary`: brief seasonal expectation for the travel window
+  - `seasonal_risks[]`: e.g. "Typhoon season may affect ferries", "Mountain roads can close after early snowfall"
 - No score, no verdict, no recommendation — the decision to travel is entirely the user’s
 
 **ScamSafetyAgent** (`agents/scam_safety_agent.py`)
 - Tavily: `"tourist scams {destination} 2026"`, `"safety tips {destination}"`, fetches travel.state.gov + gov.uk/foreign-travel-advice
 - LLM synthesizes `ScamSafetyReport`: `advisory_level`, `top_scams[]` (name, description, how-to-avoid), `safe_areas[]`, `emergency_contacts` (police, ambulance, tourist helpline)
-
-**WeatherAgent** (`agents/weather_agent.py`) ← *promoted from post-MVP*
-- Tool: OpenWeatherMap 5-day/3-hour forecast API → `forecast(lat, lon, days)`. Geocode destination via Google Maps Geocoding API first.
-- LLM synthesizes `WeatherReport`: `daily_forecasts[]` (date, min/max temp, condition, precipitation_probability, UV_index), `weather_warnings[]` (e.g. "Typhoon season, pack rain gear"), `packing_suggestions[]` (based on conditions + trip_days + activities)
-- Feeds into: DayCard weather icon in UI, packing section in PDF, activity scheduling hints for ItineraryCompilerAgent
 
 **VisaAgent** (`agents/visa_agent.py`) ← *international trips only*
 - Tools:
@@ -483,20 +471,20 @@ LLM enumerates plausible route combinations using geographic knowledge:
 - Photo URLs + `google_maps_url` stored for frontend carousels and map pins
 - Writes `state["reviews_summary"]`
 
-**RestaurantAgent** (`agents/restaurant_agent.py`) ← *new*
-- Waits for: `experiences_raw` (needs neighbourhood context from day clusters)
-- Tools: `google_places_search(location, type="restaurant", min_rating=4.0)` filtered by `user_profile.dietary_restrictions` and `budget_tier`, Tavily for `"best restaurants {neighbourhood} {destination} locals recommend"`
-- Finds top restaurants per neighbourhood (mapped to each day's activity cluster)
-- Returns: breakfast, lunch, dinner recommendations per day — each with name, cuisine, price range, rating, address, google_maps_url, photos[]
-- Writes `state["restaurant_recommendations"]` keyed by day ISO date
+**FoodDiscoveryAgent** (`agents/food_discovery_agent.py`) ← *new*
+- Waits for: `experiences_raw` (needs neighbourhood context from day clusters, so this is not a raw Layer 2 search)
+- Tools: `google_places_search(location, included_types=["restaurant","cafe","meal_takeaway"], min_rating=4.0)` filtered by `user_profile.dietary_restrictions` and `budget_tier`, Tavily for `"best food in {neighbourhood} {destination} locals recommend"` and `"best street food in {destination} {neighbourhood}"`
+- Finds top food venues per neighbourhood (mapped to each day's activity cluster)
+- Returns: breakfast, lunch, dinner, coffee/snack suggestions per day — each with name, category, cuisine, price range, rating, address, google_maps_url, photos[]
+- Writes `state["food_recommendations"]` keyed by day ISO date
 
 **BudgetPlannerAgent** (`agents/budget_planner_agent.py`) ← *new*
-- Waits for: `transport_recommendation` (Layer 3) + `stays_pick` (Layer 3) + `reality_report` (Layer 1) + `visa_report` if applicable + `self_drive_report` if applicable
+- Waits for: `transport_recommendation` (Layer 3) + `stays_pick` (Layer 3) + `destination_context_report` (Layer 1) + `visa_report` if applicable + `self_drive_report` if applicable
 - Tools: `CurrencyConvertTool` **(H)** — converts any per-leg or per-category amount between currencies using a live FX rate (cached 12h). Returns `rate` and `fetched_at` so the conversion is auditable.
 - Aggregates all costs:
   - Transport: sum of `recommended_legs[].cost`
   - Accommodation: `stays_pick.price_per_night × trip_days`
-  - Food: `reality_report.real_daily_cost × 0.35 × trip_days` in destination currency (est. 35% of daily spend on food)
+  - Food: `destination_context_report.real_daily_cost × 0.35 × trip_days` in destination currency (est. 35% of daily spend on food)
   - Activities: estimated from `experiences_raw` price ranges
   - Visa fees: from `visa_report.fees` if international
   - Self-drive: from `self_drive_report.fuel_cost_estimate + toll_estimate` if applicable
@@ -523,18 +511,16 @@ LLM enumerates plausible route combinations using geographic knowledge:
 - Tool: `validate_day_duration(day_cluster, travel_dates) → list[str]` **(B)** — sums `duration_minutes + estimated_transit_to_next` per slot. Flags any slot exceeding 10h or any day exceeding 14h total. Pure Python, no LLM. Compiler uses flags to trim activities before LLM synthesis.
 - Tool: `enforce_opening_hours(places[], travel_dates) → list[Conflict]` **(A)** — cross-checks each place’s `opening_hours` against its assigned day and time slot. Returns list of conflicts (e.g. place closed on Tuesday, closes at 12pm but in afternoon slot). Compiler resolves each conflict by moving the place to a valid slot or swapping to an alternative experience before LLM synthesis.
 - LLM compiles final `Itinerary` with all `personalization_reason` fields **(C)** populated:
-  - `reality_banner` (peak season status, crowd level, weather summary, hidden fees)
+  - `reality_banner` (peak season status, crowd level, seasonal conditions, hidden fees)
   - `transport_section`: `recommended` (default route), `alternatives[]` (2 budget-filtered options) — each with `personalization_reason`, `price_disclaimer`
   - `accommodation_section`: `recommended` (default stay), `alternatives[]` (remaining shortlist, budget-filtered) — each with `personalization_reason`, `price_disclaimer`, full reviews
   - `visa_section` (if international)
-  - `weather_summary`
-  - `days[]`: each with ISO date + weather icon; `morning/afternoon/evening` slots; each slot has a `primary` Place **and** `alternatives[]` (1–2 swap options for that slot, same neighbourhood, open at that time, matching user interests). Each `Place` has name, description, duration_minutes, photos[], google_maps_url, more_images_url, youtube_search_url, reviews_summary, lat, lng, geotag, `personalization_reason`
-  - `restaurant_recommendations[]` per day
+  - `days[]`: each with ISO date; `morning/afternoon/evening` slots; each slot has a `primary` Place **and** `alternatives[]` (1–2 swap options for that slot, same neighbourhood, open at that time, matching user interests). Each `Place` has name, description, duration_minutes, photos[], google_maps_url, more_images_url, youtube_search_url, reviews_summary, lat, lng, geotag, `personalization_reason`
+  - `food_recommendations[]` per day
   - `self_drive_section` (if applicable)
   - `safety_briefing`
   - `budget_breakdown` (based on recommended picks; recalculates automatically in frontend if user swaps options)
-  - `packing_suggestions[]`
-- **Self-critique pass + deterministic final gate (A+B+I)**: after the first compile, a secondary LLM call refines soft qualities only — *"Are there awkward schedule gaps? Is any outdoor activity on a forecasted/typical rain day? Is the pace suitable for the traveler count?"* — and may reorder or swap activities. **The hard constraints are then enforced deterministically, not by the LLM**: `enforce_opening_hours()` (A) and `validate_day_duration()` (B) are **re-run on the final compiled itinerary** as the authoritative gate. If either returns any unresolved conflict (a closed venue, a slot >10h, or a day >14h), the compiler auto-resolves (slot-swap / activity replacement / trim) and re-runs the gate — looping on the **tools' output, never the LLM's opinion** — up to a bounded number of iterations. An LLM revision can never reintroduce a violation, because the Python checks have the final say. If the gate still cannot be satisfied after the iteration cap, the offending slot is left empty with an explicit `unresolved_note` rather than shipping a wrong time.
+- **Self-critique pass + deterministic final gate (A+B+I)**: after the first compile, a secondary LLM call refines soft qualities only — *"Are there awkward schedule gaps? Are any outdoor-heavy segments poorly matched to the likely season? Is the pace suitable for the traveler count?"* — and may reorder or swap activities. **The hard constraints are then enforced deterministically, not by the LLM**: `enforce_opening_hours()` (A) and `validate_day_duration()` (B) are **re-run on the final compiled itinerary** as the authoritative gate. If either returns any unresolved conflict (a closed venue, a slot >10h, or a day >14h), the compiler auto-resolves (slot-swap / activity replacement / trim) and re-runs the gate — looping on the **tools' output, never the LLM's opinion** — up to a bounded number of iterations. An LLM revision can never reintroduce a violation, because the Python checks have the final say. If the gate still cannot be satisfied after the iteration cap, the offending slot is left empty with an explicit `unresolved_note` rather than shipping a wrong time.
 - After compile: reads token usage from Redis, rolls up `token_usage["total"]`, emits `usage_summary` SSE event
 
 ---
@@ -572,7 +558,6 @@ SSE event types: `agent_start`, `agent_done` (with preview text), `needs_clarifi
 | SerpAPI hotels | 2h | `hotels:{location}:{checkin}:{checkout}` |
 | Google Places details + photos | 48h | `place:{place_id}` |
 | Tavily scam/safety/reality | 24h | `tavily:{dest}:{month}:{query_hash}` |
-| OpenWeatherMap forecast | 3h | `weather:{lat}:{lon}:{date}` |
 | Rental results | 12h | `rentals:{destination}` |
 | FX exchange rates | 12h | `fx:{base}:{quote}` |
 | Token usage per session | 7d | `usage:{session_id}:{agent_name}` |
@@ -803,9 +788,9 @@ Each morning/afternoon/evening slot in `DayCard` shows a **primary `PlaceCard`**
 - Trains (India): [IRCTC] · (Europe): [Omio] · (Asia): [12Go]
 - Buses: [RedBus] or regional equivalent
 
-### RestaurantCard (`components/RestaurantCard.tsx`) ← *new*
-- Per-day restaurant recommendations (breakfast / lunch / dinner)
-- Google Places rating, cuisine type, price range, distance from day's activities
+### FoodCard (`components/FoodCard.tsx`) ← *new*
+- Per-day food recommendations (breakfast / lunch / dinner / coffee / snacks)
+- Google Places rating, venue category, cuisine type, price range, distance from day's activities
 - Embedded links: 🗺️ Maps · 📺 Reviews on YouTube
 
 ### BudgetBreakdownPanel (`components/BudgetBreakdownPanel.tsx`) ← *new*
@@ -826,10 +811,6 @@ Each morning/afternoon/evening slot in `DayCard` shows a **primary `PlaceCard`**
 ### SelfDrivePanel — rental options, fuel calculator widget, road tips
 
 ### ScamSafetyPanel — amber/red accent, advisory badge, scam list, emergency contacts
-
-### PackingPanel (`components/PackingPanel.tsx`) ← *new*
-- Packing suggestions from WeatherAgent, organised by category (clothing, accessories, documents)
-- Checklist format — users can tick items off
 
 ### PlanningCostBadge — total tokens + USD, expandable per-agent breakdown table
 
@@ -951,12 +932,12 @@ sequenceDiagram
     L3-->>FE: SSE: StayAnalyst done (Park Hyatt)
 
     L3->>L4: StayAnalyst + LocalExperiences → ReviewsAgent
-    L3->>L4: LocalExperiences → RestaurantAgent
+    L3->>L4: LocalExperiences → FoodDiscoveryAgent
     L3->>L4: TransportOptimizer + StayAnalyst + L1 → BudgetPlanner
     Note over L4: Layer 4 agents run in parallel
 
     L4-->>FE: SSE: Reviews done
-    L4-->>FE: SSE: Restaurants done
+    L4-->>FE: SSE: FoodDiscovery done
     L4-->>FE: SSE: Budget done (within budget, amounts in destination currency)
 
     L4->>L5: all results → ItineraryCompiler
@@ -972,9 +953,8 @@ sequenceDiagram
 Step 1:  OrchestratorAgent               (sequential — parse + detect + route)
 
 Step 2:  ┌─── Layer 1 + Layer 2 — fully parallel ──────────────────────────────┐
-         │  Layer 1:  TripRealityAgent                                          │
+         │  Layer 1:  DestinationContextAgent                                   │
          │            ScamSafetyAgent                                           │
-         │            WeatherAgent                                              │
          │            VisaAgent           (is_international only)               │
          │  Layer 2:  TransportSearchAgent                                      │
          │            StaySearchAgent                                           │
@@ -987,7 +967,7 @@ Step 3:  TransportOptimizerAgent         (after TransportSearch)
          — parallel with each other
 
 Step 4:  ReviewsAgent                    (after StayAnalyst + LocalExperiences)
-         RestaurantAgent                 (after LocalExperiences)
+         FoodDiscoveryAgent              (after LocalExperiences; needs day-cluster context)
          BudgetPlannerAgent              (after TransportOptimizer + StayAnalyst + Layer 1)
          — parallel with each other
 
@@ -1011,14 +991,13 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/graph/graph.py` | LangGraph `StateGraph` wiring — all layers + parallel edges |
 | `backend/app/graph/router.py` | `conditional_edges` routing logic + clarification gate (halt when `needs_clarification`) |
 | `backend/app/models/user_profile.py` | `UserProfile`, `TripDates`, `BudgetPreference`, `ClarificationPrompt` |
-| `backend/app/models/itinerary.py` | `Itinerary`, `Day`, `Place`, `Restaurant`, `Experience` |
+| `backend/app/models/itinerary.py` | `Itinerary`, `Day`, `Place`, `FoodVenue`, `Experience` |
 | `backend/app/models/transport.py` | `TransportRecommendation`, `RouteLeg`, `RouteWaypoint` |
-| `backend/app/models/reports.py` | `TripRealityReport`, `ScamSafetyReport`, `WeatherReport`, `VisaReport` (+ `sources[]`, `last_verified_at`, `confidence`, `disclaimer`), `SelfDriveReport`, `BudgetReport` (+ FX fields) |
+| `backend/app/models/reports.py` | `DestinationContextReport`, `ScamSafetyReport`, `VisaReport` (+ `sources[]`, `last_verified_at`, `confidence`, `disclaimer`), `SelfDriveReport`, `BudgetReport` (+ FX fields) |
 | `backend/app/config.py` | `Settings` (pydantic-settings) + LiteLLM factory + `UsageLogger` |
 | `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + clarification gate + detect intent + conditional_edges |
-| `backend/app/agents/trip_reality_agent.py` | Layer 1: peak season · crowd level · hidden fees · weather summary |
+| `backend/app/agents/destination_context_agent.py` | Layer 1: seasonality · crowd level · hidden fees · seasonal conditions |
 | `backend/app/agents/scam_safety_agent.py` | Layer 1: Tavily + advisories |
-| `backend/app/agents/weather_agent.py` | Layer 1: OpenWeatherMap forecasts + packing suggestions |
 | `backend/app/agents/visa_agent.py` | Layer 1: visa requirements + embassy + application centre discovery (international only) |
 | `backend/app/agents/transport_search_agent.py` | Layer 2: hub ID + SerpAPI flights + Google Routes API transit |
 | `backend/app/agents/stay_search_agent.py` | Layer 2: SerpAPI Google Hotels |
@@ -1027,7 +1006,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/agents/stay_analyst_agent.py` | Layer 3: LLM stay pick + rationale |
 | `backend/app/agents/self_drive_search_agent.py` | Layer 3: rentals + fuel + distance (conditional) |
 | `backend/app/agents/reviews_agent.py` | Layer 4: Google Places reviews + photos |
-| `backend/app/agents/restaurant_agent.py` | Layer 4: restaurant search per neighbourhood per day |
+| `backend/app/agents/food_discovery_agent.py` | Layer 4: per-day-cluster food discovery across restaurants, cafes, and street food |
 | `backend/app/agents/budget_planner_agent.py` | Layer 4: cost aggregation + FX-normalised totals + budget verdict |
 | `backend/app/agents/itinerary_agent.py` | Layer 5: geo-cluster + compile + self-critique + deterministic final gate |
 | `backend/app/tools/base.py` | `BaseTool` protocol |
@@ -1036,7 +1015,6 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/tools/mock/transit_tools.py` | Mock: `MockTransitSearchTool` |
 | `backend/app/tools/mock/places_tools.py` | Mock: `MockPlaceSearchTool`, `MockPlaceDetailsTool` |
 | `backend/app/tools/mock/tavily_tools.py` | Mock: `MockTavilySearchTool` |
-| `backend/app/tools/mock/weather_tools.py` | Mock: `MockWeatherTool` |
 | `backend/app/tools/mock/visa_tools.py` | Mock: `MockVisaCentreSearchTool`, `MockEmbassySearchTool` |
 | `backend/app/tools/mock/rental_tools.py` | Mock: `MockRentalSearchTool`, `MockFuelPriceTool` |
 | `backend/app/tools/mock/geo_tools.py` | Mock: `MockClusterByProximityTool`, `MockDistanceMatrixTool` |
@@ -1046,7 +1024,6 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/tools/real/transit_tools.py` | Real: `TransitSearchTool` (Google Routes API — transit mode) |
 | `backend/app/tools/real/places_tools.py` | Real: `PlaceSearchTool`, `PlaceDetailsTool` (Google Places API) |
 | `backend/app/tools/real/tavily_tools.py` | Real: `TavilySearchTool` |
-| `backend/app/tools/real/weather_tools.py` | Real: `WeatherTool` (OpenWeatherMap) |
 | `backend/app/tools/real/visa_tools.py` | Real: `VisaCentreSearchTool` (Tavily-based, discovers correct company per corridor), `EmbassySearchTool` — both return grounding `sources[]` for `VisaReport` |
 | `backend/app/tools/real/rental_tools.py` | Real: `RentalSearchTool`, `FuelPriceTool` |
 | `backend/app/tools/real/geo_tools.py` | Real: `ClusterByProximityTool` (pure math — fully implemented), `DistanceMatrixTool`, `ValidateDayDurationTool` (B), `EnforceOpeningHoursTool` (A) — (A)+(B) are the deterministic final gate (I) |
@@ -1136,7 +1113,6 @@ MOCK_EXTERNAL_APIS=true
 SERPAPI_KEY=
 GOOGLE_MAPS_KEY=          # Directions + Places + Maps JS + Static Maps + Distance Matrix
 TAVILY_KEY=
-OPENWEATHERMAP_KEY=
 FX_API_KEY=              # currency exchange-rate provider (e.g. exchangerate.host / Open Exchange Rates)
 
 # Clarification gate — critical fields that must be present before planning starts
@@ -1176,7 +1152,7 @@ GCP_REGION=asia-south1
 4. TripConditionsPanel shows season badge (e.g. “Peak season”), crowd level, weather summary, hidden fees — no score or verdict displayed
 4. **Route optimization**: "Kolkata to Leh" → TransportInsightCallout shows direct vs via-Delhi cost+time; RouteMap shows polyline with ① KOL ② LEH (or via hub)
 5. **Self-drive**: "rent a scooter in Goa" → SelfDrivePanel with Goa scooter rentals, fuel estimate, road tips
-6. Day 1 card: ISO date shown, weather icon, mini-map with pins, photo carousels, geotag chips, Google/YouTube links
+6. Day 1 card: ISO date shown, mini-map with pins, photo carousels, geotag chips, Google/YouTube links
 7. Budget: BudgetBreakdownPanel shows per-category table (transport / stay / food / activities / visa) + per-day estimate + vs-budget verdict
 7b. **FX (H)**: for an international trip, the budget total is shown in destination currency with a home-currency equivalent; `fx_rates_used` (with `fetched_at`) and the FX disclaimer are present; `budget_accuracy` eval confirms FX-normalised per-category amounts sum to the total within 5%
 8. Drag day-2 activity to day-1 → `PUT /api/trip/{id}/itinerary` persists
@@ -1188,7 +1164,7 @@ GCP_REGION=asia-south1
 13. `GET /metrics` Prometheus metrics visible in Cloud Monitoring
 14. `run_evals.py`: all 6 evaluators pass; score regression blocks CI
 14b. **Golden evals (J)**: `run_evals.py --mode golden` against real APIs passes `golden_accuracy` — visa requirement/type, transit-route existence, opening hours, and FX all match the human-verified `evals/golden/*` ground truth within tolerance
-15. PDF: route map, day plans with dates + weather, restaurants, budget table, safety section, visa section (if international), packing list
+15. PDF: route map, day plans with dates, food recommendations, budget table, safety section, visa section (if international)
 
 ---
 
@@ -1207,9 +1183,9 @@ GCP_REGION=asia-south1
 - **Deterministic final gate (I)**: The LLM self-critique handles only soft qualities (gaps, pace, rain). The hard constraints — opening hours (A) and per-day duration (B) — are enforced by re-running the pure-Python tools on the *final* compiled itinerary and looping on the **tools' output, not the LLM's opinion**. An LLM revision can never reintroduce a closed-venue or overpacked-day violation.
 - **Golden-set accuracy evals (J)**: Mock evals (regression-gated every PR) verify structure and logic; a small, human-verified `evals/golden/*` set run against **real APIs** (`run_evals.py --mode golden`, pre-release) verifies the *factual correctness* of what the user relies on — visa rules, transit-route existence, opening hours, and FX rates. This is the gate that protects real-world reliability, not just internal consistency.
 - **6-layer agent architecture**: Layers make dependencies explicit, parallelism maximal, and testing per-layer clean. Layer 1 + Layer 2 always run in parallel. Each subsequent layer waits only for its direct dependencies.
-- **WeatherAgent promoted to MVP**: Real users absolutely need weather for packing and scheduling. OpenWeatherMap free tier (1,000 calls/day) covers MVP.
-- **LocalExperiencesAgent as a first-class agent**: Extracting activity search from the compiler into its own Layer 2 agent means the compiler has structured experience data to geo-cluster, ReviewsAgent has specific targets to enrich, and RestaurantAgent knows which neighbourhoods each day covers.
-- **RestaurantAgent dedicated**: Restaurants are not an afterthought for real travellers. Per-neighbourhood, per-meal-type, dietary-restriction-aware search produces meaningfully better output than a generic LLM suggestion.
+- **DestinationContextAgent dedicated**: seasonality, crowd pressure, practical costs, and local constraints are planning context, not raw supply search. Keeping them together produces a clear destination brief without pretending a near-term forecast is reliable months in advance.
+- **LocalExperiencesAgent as a first-class agent**: Extracting activity search from the compiler into its own Layer 2 agent means the compiler has structured experience data to geo-cluster, ReviewsAgent has specific targets to enrich, and FoodDiscoveryAgent knows which neighbourhoods each day covers.
+- **FoodDiscoveryAgent dedicated**: food planning is not limited to formal restaurants. Per-neighbourhood, per-meal-type, dietary-restriction-aware discovery across restaurants, cafes, takeaways, and street-food spots produces meaningfully better output than a generic LLM suggestion.
 - **BudgetPlannerAgent dedicated**: Real users have budgets. Aggregating costs from 4+ agents into a single verdict with day-by-day breakdown requires its own agent — the compiler shouldn't be doing financial aggregation.
 - **Transport search: SerpAPI + Google Routes API + LLM hub reasoning**: Covers real-time flight prices, structured train/bus data (IRCTC, European rail, intercity buses), and combinatorial route intelligence.
 - **Langfuse for LLM tracing + evals**: Open-source (MIT), self-hostable for $0 via Docker Compose alongside postgres and redis in `docker-compose.yml`. Free cloud tier: 50,000 events/month. Integrated via a single `CallbackHandler` passed to every LangGraph invocation — zero agent code changes. Also registered as a LiteLLM callback for cost tracking at the gateway level. User feedback (thumbs up/down) wired via `lf.score()` for real user signal. Evaluator logic is pure Python — completely portable if switching observability tool later.

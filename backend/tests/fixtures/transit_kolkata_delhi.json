@@ -1,0 +1,138 @@
+{
+  "routes": [
+    {
+      "description": "via NH 19 (Rajdhani Express 12301)",
+      "legs": [
+        {
+          "distanceMeters": 1440000,
+          "duration": "61200s",
+          "startLocation": {"latLng": {"latitude": 22.5726, "longitude": 88.3639}},
+          "endLocation": {"latLng": {"latitude": 28.6139, "longitude": 77.2090}},
+          "steps": [
+            {
+              "distanceMeters": 1440000,
+              "staticDuration": "61200s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopDetails": {
+                  "departureStop": {"name": "Howrah Junction", "location": {"latLng": {"latitude": 22.5837, "longitude": 88.3427}}},
+                  "arrivalStop": {"name": "New Delhi Railway Station (NDLS)", "location": {"latLng": {"latitude": 28.6427, "longitude": 77.2193}}},
+                  "departureTime": "2026-10-14T16:55:00+05:30",
+                  "arrivalTime": "2026-10-15T10:00:00+05:30"
+                },
+                "localizedValues": {
+                  "arrivalTime": {"time": {"text": "10:00 AM"}, "timeZone": "IST"},
+                  "departureTime": {"time": {"text": "4:55 PM"}, "timeZone": "IST"}
+                },
+                "headsign": "New Delhi",
+                "transitLine": {
+                  "agencies": [{"name": "Indian Railways", "uri": "https://www.indianrailways.gov.in"}],
+                  "name": "Rajdhani Express",
+                  "nameShort": "12301",
+                  "color": "#e31e24",
+                  "vehicle": {"name": {"text": "Train"}, "type": "HEAVY_RAIL"}
+                },
+                "numStops": 5,
+                "_fareInfo": {"amount": 1785, "currency": "INR", "class": "3A"}
+              }
+            }
+          ]
+        }
+      ],
+      "localizedValues": {
+        "distance": {"text": "1,440 km"},
+        "duration": {"text": "17 hr 5 min"},
+        "staticDuration": {"text": "17 hr 5 min"}
+      }
+    },
+    {
+      "description": "via NH 19 (Duronto Express 12259)",
+      "legs": [
+        {
+          "distanceMeters": 1440000,
+          "duration": "59400s",
+          "startLocation": {"latLng": {"latitude": 22.5726, "longitude": 88.3639}},
+          "endLocation": {"latLng": {"latitude": 28.6139, "longitude": 77.2090}},
+          "steps": [
+            {
+              "distanceMeters": 1440000,
+              "staticDuration": "59400s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopDetails": {
+                  "departureStop": {"name": "Howrah Junction", "location": {"latLng": {"latitude": 22.5837, "longitude": 88.3427}}},
+                  "arrivalStop": {"name": "Hazrat Nizamuddin Railway Station (NZM)", "location": {"latLng": {"latitude": 28.5892, "longitude": 77.2503}}},
+                  "departureTime": "2026-10-14T20:30:00+05:30",
+                  "arrivalTime": "2026-10-15T13:00:00+05:30"
+                },
+                "localizedValues": {
+                  "arrivalTime": {"time": {"text": "1:00 PM"}, "timeZone": "IST"},
+                  "departureTime": {"time": {"text": "8:30 PM"}, "timeZone": "IST"}
+                },
+                "headsign": "Hazrat Nizamuddin",
+                "transitLine": {
+                  "agencies": [{"name": "Indian Railways", "uri": "https://www.indianrailways.gov.in"}],
+                  "name": "Duronto Express",
+                  "nameShort": "12259",
+                  "color": "#e31e24",
+                  "vehicle": {"name": {"text": "Train"}, "type": "HEAVY_RAIL"}
+                },
+                "numStops": 0,
+                "_fareInfo": {"amount": 1455, "currency": "INR", "class": "3A"}
+              }
+            }
+          ]
+        }
+      ],
+      "localizedValues": {
+        "distance": {"text": "1,440 km"},
+        "duration": {"text": "16 hr 30 min"},
+        "staticDuration": {"text": "16 hr 30 min"}
+      }
+    },
+    {
+      "description": "AC Bus via NH 19",
+      "legs": [
+        {
+          "distanceMeters": 1480000,
+          "duration": "93600s",
+          "startLocation": {"latLng": {"latitude": 22.5726, "longitude": 88.3639}},
+          "endLocation": {"latLng": {"latitude": 28.6139, "longitude": 77.2090}},
+          "steps": [
+            {
+              "distanceMeters": 1480000,
+              "staticDuration": "93600s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopDetails": {
+                  "departureStop": {"name": "Esplanade Bus Stand, Kolkata", "location": {"latLng": {"latitude": 22.5593, "longitude": 88.3513}}},
+                  "arrivalStop": {"name": "Kashmere Gate ISBT, New Delhi", "location": {"latLng": {"latitude": 28.6662, "longitude": 77.2272}}},
+                  "departureTime": "2026-10-14T14:00:00+05:30",
+                  "arrivalTime": "2026-10-15T16:00:00+05:30"
+                },
+                "localizedValues": {
+                  "arrivalTime": {"time": {"text": "4:00 PM"}, "timeZone": "IST"},
+                  "departureTime": {"time": {"text": "2:00 PM"}, "timeZone": "IST"}
+                },
+                "headsign": "New Delhi ISBT",
+                "transitLine": {
+                  "agencies": [{"name": "WBTC / Private Operators", "uri": "https://www.redbus.in"}],
+                  "name": "Kolkata–Delhi Sleeper Bus",
+                  "nameShort": "AC Sleeper",
+                  "vehicle": {"name": {"text": "Bus"}, "type": "BUS"}
+                },
+                "numStops": 3,
+                "_fareInfo": {"amount": 1100, "currency": "INR", "class": "AC Sleeper"}
+              }
+            }
+          ]
+        }
+      ],
+      "localizedValues": {
+        "distance": {"text": "1,480 km"},
+        "duration": {"text": "26 hr"},
+        "staticDuration": {"text": "26 hr"}
+      }
+    }
+  ]
+}

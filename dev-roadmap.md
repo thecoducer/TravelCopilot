@@ -1,14 +1,27 @@
 # Multi-Agent AI Trip Planner — Engineering Dev Roadmap
 
-> Created: 2026-06-15
-> Based on: System Design Plan v6
+> Created: 2026-06-15  
+> Last updated: 2026-06-20  
+> Based on: System Design Plan v6  
 > Strategy: Mock-first → Real APIs → Frontend last
+
+**Phase 0 status**: ✅ All code items complete. 3 runtime-verification items (docker up, psql, log check) pending first `docker-compose up`.  
+**Phase 1 status**: ✅ Complete. 113/113 tests passing, 0 ruff violations, 0 mypy errors.  
+**Phase 2 status**: 🔜 Not started.
+
+**Key design decisions enacted in Phase 1:**
+- Itinerary is options-based: every time slot, stay, and food choice has 2–3 ranked options with `recommendation_reason` and `best_for` tags
+- Multi-stop trips use `TripSegment` (one per location) — each segment carries its own `StayOptions`, `permits_required`, `altitude_meters`, `connectivity` note
+- AI clarification: `ClarificationRequest` model; `Itinerary.clarifications_needed[]` surfaces gaps before the user gets a fixed plan
+- Fixtures aligned to real SerpAPI / Google Places / Tavily API response shapes — Phase 5 parsers will be drop-in
+- `ClusterByProximityTool` uses haversine distance matrix + `AgglomerativeClustering` (sklearn) rather than Euclidean k-means
+- All tool `run()` methods typed `-> dict[str, Any]`; mypy strict mode passes cleanly
 
 ---
 
 ## Guiding Principles
 
-- **Mock-first**: Every external API (SerpAPI, Tavily, Google Maps, OpenWeatherMap) is mocked during Phases 1–4. Real APIs are drop-in replacements in Phase 5. Zero wasted API quota during development.
+- **Mock-first**: Every external API (SerpAPI, Tavily, Google Maps) is mocked during Phases 1–4. Real APIs are drop-in replacements in Phase 5. Zero wasted API quota during development.
 - **Backend-first**: All FastAPI endpoints are Postman-testable before any frontend work begins.
 - **Agent-first within backend**: Agents and graph are fully functional before endpoints are wired.
 - **Evals from day one**: Langfuse and eval datasets set up in Phase 3 — not as an afterthought.
@@ -22,40 +35,40 @@
 > **Done when**: `docker-compose up` starts all services; `GET /health` returns 200; `python -c "from app.config import settings; print(settings.llm_model)"` works.
 
 ### P0-1 · Repository & Tooling Setup
-- [ ] Initialise Git repo with `.gitignore` (Python, Node, `.env`, `__pycache__`)
-- [ ] Create monorepo structure: `backend/`, `frontend/`, `infra/`
-- [ ] Add `backend/pyproject.toml` with dependencies: `fastapi`, `uvicorn`, `langgraph`, `langchain`, `litellm`, `pydantic-settings`, `sqlalchemy[asyncio]`, `asyncpg`, `redis[hiredis]`, `structlog`, `opentelemetry-sdk`, `opentelemetry-instrumentation-fastapi`, `langfuse`, `pytest`, `pytest-asyncio`
-- [ ] Add `backend/.python-version` pinned to 3.12
-- [ ] Add `frontend/package.json` stub (no implementation yet — just initialise)
-- [ ] Add `Makefile` with targets: `make dev`, `make test`, `make lint`, `make evals`, `make evals-golden`
+- [x] Initialise Git repo with `.gitignore` (Python, Node, `.env`, `__pycache__`)
+- [x] Create monorepo structure: `backend/`, `frontend/`, `infra/`
+- [x] Add `backend/pyproject.toml` with dependencies: `fastapi`, `uvicorn`, `langgraph`, `langchain`, `litellm`, `pydantic-settings`, `sqlalchemy[asyncio]`, `asyncpg`, `redis[hiredis]`, `structlog`, `opentelemetry-sdk`, `opentelemetry-instrumentation-fastapi`, `langfuse`, `pytest`, `pytest-asyncio`
+- [x] Add `backend/.python-version` pinned to 3.12
+- [x] Add `frontend/package.json` stub (no implementation yet — just initialise)
+- [x] Add `Makefile` with targets: `make dev`, `make test`, `make lint`, `make evals`, `make evals-golden`
 
 ### P0-2 · Docker Compose (local dev)
-- [ ] Write `docker-compose.yml` with services:
+- [x] Write `docker-compose.yml` with services:
   - `postgres` (PostgreSQL 15, port 5432, persistent volume)
   - `redis` (Redis 7, port 6379)
   - `langfuse` (Langfuse self-hosted, port 3000) — use official `langfuse/langfuse` image
   - `backend` (FastAPI, port 8000, hot-reload via `--reload`, mounts `backend/` as volume)
-- [ ] Add `docker-compose.override.yml` for local dev overrides (e.g. skip frontend)
+- [x] Add `docker-compose.override.yml` for local dev overrides (e.g. skip frontend)
 - [ ] Verify `docker-compose up` starts all 4 services cleanly
 
 ### P0-3 · Environment Config
-- [ ] Create `.env.example` with all keys from plan (no real values)
-- [ ] Create `.env` from example — fill in `DATABASE_URL`, `REDIS_URL`, `LANGFUSE_*` (local), dummy strings for API keys (will be replaced in Phase 5)
-- [ ] Implement `backend/app/config.py` — `Settings` class via `pydantic-settings`, reads from `.env`
-- [ ] Add `MOCK_EXTERNAL_APIS=true` flag to `Settings` — when true, all tools return mock data
-- [ ] Add `FX_API_KEY` to `Settings` (currency exchange-rate provider — blank in mock mode)
-- [ ] Add clarification-gate settings: `CLARIFICATION_REQUIRED_FIELDS=destination,dates,travelers`, `PARSE_CONFIDENCE_THRESHOLD=0.6`
-- [ ] Write smoke test: `assert settings.llm_provider == "openai"`
+- [x] Create `.env.example` with all keys from plan (no real values)
+- [x] Create `.env` from example — fill in `DATABASE_URL`, `REDIS_URL`, `LANGFUSE_*` (local), dummy strings for API keys (will be replaced in Phase 5)
+- [x] Implement `backend/app/config.py` — `Settings` class via `pydantic-settings`, reads from `.env`
+- [x] Add `MOCK_EXTERNAL_APIS=true` flag to `Settings` — when true, all tools return mock data
+- [x] Add `FX_API_KEY` to `Settings` (currency exchange-rate provider — blank in mock mode)
+- [x] Add clarification-gate settings: `CLARIFICATION_REQUIRED_FIELDS=destination,dates,travelers`, `PARSE_CONFIDENCE_THRESHOLD=0.6`
+- [x] Write smoke test: `assert settings.llm_provider == "openai"`
 
 ### P0-4 · Database Setup
-- [ ] Implement `backend/app/db.py` — SQLAlchemy async engine + `AsyncSession` factory
-- [ ] Write raw SQL migration file `backend/migrations/001_initial.sql` with full schema (user_profiles, trips tables + all indexes)
-- [ ] Add `make migrate` target that runs migration SQL against local postgres
+- [x] Implement `backend/app/db.py` — SQLAlchemy async engine + `AsyncSession` factory
+- [x] Write raw SQL migration file `backend/migrations/001_initial.sql` with full schema (user_profiles, trips tables + all indexes)
+- [x] Add `make migrate` target that runs migration SQL against local postgres
 - [ ] Verify tables created: `psql` → `\dt` shows all 3 tables
 
 ### P0-5 · Structured Logging
-- [ ] Configure `structlog` in `backend/app/main.py` — JSON output, log level from env
-- [ ] Add `trace_id`, `session_id`, `agent_name` as log context fields
+- [x] Configure `structlog` in `backend/app/main.py` — JSON output, log level from env
+- [x] Add `trace_id`, `session_id`, `agent_name` as log context fields
 - [ ] Verify log output is valid JSON in `docker-compose logs backend`
 
 ---
@@ -66,66 +79,62 @@
 > **Done when**: Every tool can be instantiated in both mock and real mode; `MOCK_EXTERNAL_APIS=true` → all tools return fixture data without any network call.
 
 ### P1-1 · BaseTool Protocol + Tool Factory
-- [ ] Implement `backend/app/tools/base.py` — `BaseTool` Protocol with `name`, `description`, `async def run(**kwargs) -> dict`
-- [ ] Implement `ToolFactory` in `backend/app/tools/factory.py` — reads `settings.mock_external_apis`, returns mock or real tool instance for each tool name
-- [ ] Write unit test: `ToolFactory(mock=True).get("search_flights")` returns `MockFlightSearchTool`
+- [x] Implement `backend/app/tools/base.py` — `BaseTool` Protocol with `name`, `description`, `async def run(**kwargs) -> dict`
+- [x] Implement `ToolFactory` in `backend/app/tools/factory.py` — reads `settings.mock_external_apis`, returns mock or real tool instance for each tool name
+- [x] Write unit test: `ToolFactory(mock=True).get("search_flights")` returns `MockFlightSearchTool`
 
 ### P1-2 · Pydantic Models — User & Core
-- [ ] `backend/app/models/user_profile.py`: `UserProfile`, `TripDates`, `BudgetPreference`, `ClarificationPrompt` (`field`, `question`, `reason`)
-- [ ] `backend/app/models/itinerary.py`: `Itinerary`, `Day`, `TimeSlot`, `Place`, `Restaurant`, `Experience`
-- [ ] `backend/app/models/transport.py`: `TransportRecommendation`, `RouteLeg`, `RouteWaypoint`, `StayOption`
-- [ ] `backend/app/models/reports.py`: `TripRealityReport`, `ScamSafetyReport`, `WeatherReport`, `VisaReport`, `SelfDriveReport`, `BudgetReport`, `ReviewSummary`, `AgentTokenUsage`
-  - [ ] `VisaReport` includes **(G)** `sources[]` (`title`, `url`, `published_or_fetched_date`), `last_verified_at`, `confidence` (`high`/`medium`/`low`), `disclaimer`
-  - [ ] `BudgetReport` includes **(H)** `total_in_source_currency`, `fx_rates_used` (map of pair → `{rate, fetched_at}`), `fx_disclaimer`
-- [ ] Add clarification fields to `TripState` in `state.py`: `needs_clarification: bool`, `clarification_prompts: list[ClarificationPrompt]`, `parse_confidence: dict[str, float]`
-- [ ] Write model validation tests for every Pydantic model (required fields, type coercion), incl. `VisaReport.sources` and `BudgetReport.fx_rates_used`
+- [x] `backend/app/models/user_profile.py`: `UserProfile`, `TripDates`, `BudgetPreference`, `ClarificationPrompt` (`field`, `question`, `reason`)
+- [x] `backend/app/models/itinerary.py`: `Itinerary`, `TripSegment`, `Day`, `TimeSlotOptions`, `ActivityOption`, `Place`, `FoodVenue`, `FoodOptions`, `StayOptions`, `ClarificationRequest`, `Experience`
+- [x] `backend/app/models/transport.py`: `TransportRecommendation`, `RouteLeg`, `RouteWaypoint`, `StayOption`
+- [x] `backend/app/models/reports.py`: `DestinationContextReport`, `ScamSafetyReport`, `VisaReport`, `SelfDriveReport`, `BudgetReport`, `ReviewSummary`, `AgentTokenUsage`
+  - [x] `VisaReport` includes **(G)** `sources[]` (`title`, `url`, `published_or_fetched_date`), `last_verified_at`, `confidence` (`high`/`medium`/`low`), `disclaimer`
+  - [x] `BudgetReport` includes **(H)** `total_in_source_currency`, `fx_rates_used` (map of pair → `{rate, fetched_at}`), `fx_disclaimer`
+- [ ] Add clarification fields to `TripState` in `state.py`: `needs_clarification: bool`, `clarification_prompts: list[ClarificationPrompt]`, `parse_confidence: dict[str, float]` ← Phase 2 (state.py not yet created)
+- [x] Write model validation tests for every Pydantic model (required fields, type coercion), incl. `VisaReport.sources` and `BudgetReport.fx_rates_used`
 
 ### P1-3 · Mock Tool Fixtures
-- [ ] Create `backend/tests/fixtures/` directory with realistic JSON fixture files:
-  - `flights_kolkata_leh.json` — 3 flight options with prices, durations
-  - `flights_mumbai_tokyo.json` — 4 international flight options
-  - `hotels_osaka.json` — 8 hotel options with ratings, prices
-  - `hotels_tokyo.json` — 8 hotel options
-  - `places_osaka_attractions.json` — 12 attractions with lat/lng, photos, hours
-  - `places_tokyo_attractions.json` — 12 attractions
-  - `restaurants_osaka.json` — 9 restaurants (3 per neighbourhood)
-  - `weather_osaka_october.json` — 5-day forecast
-  - `weather_tokyo_october.json` — 5-day forecast
-  - `transit_kolkata_delhi.json` — train + bus options
-  - `scams_tokyo.json` — 4 scam entries
-  - `scams_osaka.json` — 3 scam entries
-  - `visa_india_japan.json` — full visa report (includes `application_centre` field with dynamically discovered company name, address, booking URL; `sources[]` with official URLs; `last_verified_at`; `confidence`)
-  - `rentals_goa.json` — 5 rental options
-  - `fx_rates.json` — reference exchange rates for common pairs (JPY→INR, EUR→INR, USD→INR, BDT→INR, etc.) with a `fetched_at` timestamp
+- [x] Create `backend/tests/fixtures/` directory with realistic JSON fixture files:
+  - `flights_kolkata_leh.json` — 3 domestic flight options (SerpAPI google_flights format)
+  - `flights_kolkata_lisbon.json` — 3 international flight options (SerpAPI format)
+  - `hotels_leh.json` — 8 hotel options with ratings, prices (SerpAPI google_hotels format)
+  - `hotels_lisbon.json` — 8 hotel options
+  - `places_leh_attractions.json` — 12 attractions with lat/lng (Google Places new API format)
+  - `places_lisbon_attractions.json` — 12 attractions
+  - `food_leh.json` — 9 food venues across restaurants, cafes, street food (Google Places format)
+  - `transit_kolkata_delhi.json` — train + bus options (Google Routes API format)
+  - `scams_leh.json` — 4 scam entries (Tavily format)
+  - `scams_lisbon.json` — 3 scam entries (Tavily format)
+  - `visa_india_portugal.json` — full visa report (VFS Global; `application_centre`, `sources[]`, `last_verified_at`, `confidence`)
+  - `rentals_leh.json` — 5 rental options
+  - `fx_rates.json` — reference exchange rates (JPY/EUR/USD/GBP → INR) with `fetched_at`
 
 ### P1-4 · Mock Tool Implementations
-- [ ] `backend/app/tools/mock/serpapi_tools.py` — `MockFlightSearchTool`, `MockHotelSearchTool` (read from fixtures based on origin/dest/location)
-- [ ] `backend/app/tools/mock/transit_tools.py` — `MockTransitSearchTool` (read from fixtures)
-- [ ] `backend/app/tools/mock/places_tools.py` — `MockPlaceSearchTool`, `MockPlaceDetailsTool` (read from fixtures)
-- [ ] `backend/app/tools/mock/tavily_tools.py` — `MockTavilySearchTool` (returns fixture for scam/reality/visa queries based on destination)
-- [ ] `backend/app/tools/mock/weather_tools.py` — `MockWeatherTool` (returns fixture based on destination + month)
-- [ ] `backend/app/tools/mock/visa_tools.py` — `MockVisaCentreSearchTool` (returns fixture with application centre company name, address, booking URL — company varies by corridor; returns `sources[]` and `last_verified_at`), `MockEmbassySearchTool`
-- [ ] `backend/app/tools/mock/rental_tools.py` — `MockRentalSearchTool`, `MockFuelPriceTool`
-- [ ] `backend/app/tools/mock/geo_tools.py` — `MockClusterByProximityTool`, `MockDistanceMatrixTool`
-- [ ] `backend/app/tools/mock/fx_tools.py` — `MockCurrencyConvertTool` (reads `fx_rates.json`; returns converted amount + `rate` + `fetched_at`) **(H)**
-- [ ] `backend/app/tools/mock/hub_tools.py` — `MockIdentifyHubsTool` (returns hardcoded plausible hubs for common routes)
+- [x] `backend/app/tools/mock/serpapi_tools.py` — `MockFlightSearchTool`, `MockHotelSearchTool` (read from fixtures based on origin/dest/location)
+- [x] `backend/app/tools/mock/transit_tools.py` — `MockTransitSearchTool` (read from fixtures)
+- [x] `backend/app/tools/mock/places_tools.py` — `MockPlaceSearchTool`, `MockPlaceDetailsTool` (read from fixtures)
+- [x] `backend/app/tools/mock/tavily_tools.py` — `MockTavilySearchTool` (returns fixture for scam/reality/visa queries based on destination)
+- [x] `backend/app/tools/mock/visa_tools.py` — `MockVisaCentreSearchTool` (returns fixture with application centre company name, address, booking URL — company varies by corridor; returns `sources[]` and `last_verified_at`), `MockEmbassySearchTool`
+- [x] `backend/app/tools/mock/rental_tools.py` — `MockRentalSearchTool`, `MockFuelPriceTool`
+- [x] `backend/app/tools/mock/geo_tools.py` — `MockClusterByProximityTool`, `MockDistanceMatrixTool`
+- [x] `backend/app/tools/mock/fx_tools.py` — `MockCurrencyConvertTool` (reads `fx_rates.json`; returns converted amount + `rate` + `fetched_at`) **(H)**
+- [x] `backend/app/tools/mock/hub_tools.py` — `MockIdentifyHubsTool` (returns hardcoded plausible hubs for common routes)
 
 ### P1-5 · Real Tool Stubs (raise NotImplementedError)
-- [ ] `backend/app/tools/real/serpapi_tools.py` — stubs for `FlightSearchTool`, `HotelSearchTool`
-- [ ] `backend/app/tools/real/transit_tools.py` — stub for `TransitSearchTool`
-- [ ] `backend/app/tools/real/places_tools.py` — stubs for `PlaceSearchTool`, `PlaceDetailsTool`
-- [ ] `backend/app/tools/real/tavily_tools.py` — stub for `TavilySearchTool`
-- [ ] `backend/app/tools/real/weather_tools.py` — stub for `WeatherTool`
-- [ ] `backend/app/tools/real/visa_tools.py` — stubs for `VisaCentreSearchTool` (Tavily-based, discovers correct company per corridor — VFS Global, BLS International, TLScontact, iData, etc.), `EmbassySearchTool`
-- [ ] `backend/app/tools/real/rental_tools.py` — stubs for `RentalSearchTool`, `FuelPriceTool`
-- [ ] `backend/app/tools/real/geo_tools.py` — `ClusterByProximityTool` (pure math, no external API — implement fully now), `DistanceMatrixTool` stub
-- [ ] `backend/app/tools/real/fx_tools.py` — stub for `CurrencyConvertTool` (raise `NotImplementedError`) **(H)**
-- [ ] `backend/app/tools/real/hub_tools.py` — stub for `IdentifyHubsTool`
+- [x] `backend/app/tools/real/serpapi_tools.py` — stubs for `FlightSearchTool`, `HotelSearchTool`
+- [x] `backend/app/tools/real/transit_tools.py` — stub for `TransitSearchTool`
+- [x] `backend/app/tools/real/places_tools.py` — stubs for `PlaceSearchTool`, `PlaceDetailsTool`
+- [x] `backend/app/tools/real/tavily_tools.py` — stub for `TavilySearchTool`
+- [x] `backend/app/tools/real/visa_tools.py` — stubs for `VisaCentreSearchTool` (Tavily-based, discovers correct company per corridor — VFS Global, BLS International, TLScontact, iData, etc.), `EmbassySearchTool`
+- [x] `backend/app/tools/real/rental_tools.py` — stubs for `RentalSearchTool`, `FuelPriceTool`
+- [x] `backend/app/tools/real/geo_tools.py` — `ClusterByProximityTool` (pure math, no external API — implement fully now), `DistanceMatrixTool` stub
+- [x] `backend/app/tools/real/fx_tools.py` — stub for `CurrencyConvertTool` (raise `NotImplementedError`) **(H)**
+- [x] `backend/app/tools/real/hub_tools.py` — stub for `IdentifyHubsTool`
 
 ### P1-6 · Cache Service
-- [ ] Implement `backend/app/services/cache_service.py` — Redis wrapper with `get(key)`, `set(key, value, ttl)`, `delete(key)`
-- [ ] Add TTL constants matching plan (flights 4h, hotels 2h, places 48h, FX 12h, etc.)
-- [ ] Write unit test with mock Redis client
+- [x] Implement `backend/app/services/cache_service.py` — Redis wrapper with `get(key)`, `set(key, value, ttl)`, `delete(key)`
+- [x] Add TTL constants matching plan (flights 4h, hotels 2h, places 48h, FX 12h, etc.)
+- [x] Write unit test with mock Redis client
 
 ---
 
@@ -164,22 +173,18 @@
 - [ ] Unit test (F): a fully-specified query → `needs_clarification=False` (guards against over-prompting)
 
 ### P2-4 · LAYER 1 — Destination Intelligence Agents
-- [ ] Implement `backend/app/agents/trip_reality_agent.py`
+- [ ] Implement `backend/app/agents/destination_context_agent.py`
   - [ ] Inject `MockTavilySearchTool` (via ToolFactory)
   - [ ] Run 4 Tavily queries (peak season check, crowds, costs, hidden fees)
-  - [ ] LLM synthesizes `TripRealityReport` — structured factual fields: `is_peak_season`, `season_label`, `season_reason`, `crowd_level`, `crowd_notes`, `real_daily_cost` (in destination currency), `currency_code` (ISO 4217, resolved from destination country), `cost_warnings[]`, `weather_summary`, `weather_warnings[]`
+  - [ ] LLM synthesizes `DestinationContextReport` — structured factual fields: `is_peak_season`, `season_label`, `season_reason`, `crowd_level`, `crowd_notes`, `real_daily_cost` (in destination currency), `currency_code` (ISO 4217, resolved from destination country), `cost_warnings[]`, `seasonal_weather_summary`, `seasonal_risks[]`
   - [ ] No score, no verdict fields in the model
-  - [ ] Write result to `state["reality_report"]`
-  - [ ] Unit test: destination="Osaka", month="October" → `reality_report.is_peak_season` is bool; `reality_report.crowd_level` is one of Low/Moderate/High/Extreme; `reality_report.season_label` is non-empty string
+  - [ ] Write result to `state["destination_context_report"]`
+  - [ ] Unit test: destination="Osaka", month="October" → `destination_context_report.is_peak_season` is bool; `destination_context_report.crowd_level` is one of Low/Moderate/High/Extreme; `destination_context_report.season_label` is non-empty string
 - [ ] Implement `backend/app/agents/scam_safety_agent.py`
   - [ ] Inject `MockTavilySearchTool`
   - [ ] Run 2 Tavily queries (scams, safety)
   - [ ] LLM synthesizes `ScamSafetyReport`
   - [ ] Unit test: `scam_safety_report.top_scams` has at least 1 entry
-- [ ] Implement `backend/app/agents/weather_agent.py`
-  - [ ] Inject `MockWeatherTool` (geocode via mock, then forecast)
-  - [ ] LLM synthesizes `WeatherReport` with `daily_forecasts[]` and `packing_suggestions[]`
-  - [ ] Unit test: `weather_report.daily_forecasts` length == `trip_days`
 - [ ] Implement `backend/app/agents/visa_agent.py`
   - [ ] Only runs when `state["is_international"] == True` — return early otherwise
   - [ ] Inject `MockTavilySearchTool`, `MockVisaCentreSearchTool`, `MockEmbassySearchTool`
@@ -243,11 +248,12 @@
   - [ ] LLM synthesizes `pros[]`, `cons[]`, sentiment per place
   - [ ] Store photo URLs
   - [ ] Unit test: `reviews_summary` has entries for all shortlisted hotels and at least 3 experiences
-- [ ] Implement `backend/app/agents/restaurant_agent.py`
+- [ ] Implement `backend/app/agents/food_discovery_agent.py`
   - [ ] Inject `MockPlaceSearchTool`, `MockTavilySearchTool`
-  - [ ] Group by neighbourhood (from day clusters implied by `experiences_raw` lat/lng)
+  - [ ] Group by neighbourhood (from day clusters implied by `experiences_raw` lat/lng); keep this in Layer 4 because it depends on day-cluster context, not just raw destination search
+  - [ ] Search across restaurants, cafes, takeaways, and street-food spots
   - [ ] Filter by `user_profile.dietary_restrictions` and `budget_tier`
-  - [ ] Unit test: `restaurant_recommendations` keyed by ISO date; each day has breakfast/lunch/dinner entries
+  - [ ] Unit test: `food_recommendations` keyed by ISO date; each day has breakfast/lunch/dinner entries and at least one coffee/snack option
 - [ ] Implement `backend/app/agents/budget_planner_agent.py`
   - [ ] Inject `MockCurrencyConvertTool` **(H)**
   - [ ] Aggregate: transport + accommodation + food estimate + activities + visa (if applicable) + self-drive (if applicable)
@@ -417,13 +423,12 @@
 ## Phase 5 — Real API Integration (plug and play)
 
 > **Goal**: Replace all mock tool implementations with real API calls. Set `MOCK_EXTERNAL_APIS=false`. All 4 integration test cases pass with real data. Zero changes to agent code or graph.
-> **Done when**: `MOCK_EXTERNAL_APIS=false` with real API keys → `"3 days Osaka from Kolkata"` returns a real itinerary with real flights, real hotels, real weather.
+> **Done when**: `MOCK_EXTERNAL_APIS=false` with real API keys → `"3 days Osaka from Kolkata"` returns a real itinerary with real flights, real hotels, and grounded destination context.
 
 ### P5-1 · Obtain API Keys
 - [ ] Sign up for SerpAPI (free plan: 100 searches/month for testing) → add `SERPAPI_KEY` to `.env`
 - [ ] Enable Google Maps Platform in GCP project → enable **Routes API**, Places API, Maps JS API, Distance Matrix API → create API key → add `GOOGLE_MAPS_KEY` to `.env`
 - [ ] Sign up for Tavily (free: 1,000 calls/month) → add `TAVILY_KEY` to `.env`
-- [ ] Sign up for OpenWeatherMap (free: 1,000 calls/day) → add `OPENWEATHERMAP_KEY` to `.env`
 - [ ] Sign up for an FX rate provider (e.g. exchangerate.host — free, or Open Exchange Rates) → add `FX_API_KEY` to `.env` **(H)**
 - [ ] Set LLM key (`OPENAI_API_KEY` or equivalent) in `.env`
 
@@ -451,12 +456,7 @@
 - [ ] Wrap with cache (24h TTL keyed by query hash + dest + month)
 - [ ] Test: `TavilySearchTool.run(query="tourist scams in Tokyo 2026")` → returns real results
 
-### P5-6 · Implement Real OpenWeatherMap Tool
-- [ ] `backend/app/tools/real/weather_tools.py` — `WeatherTool.run()`: geocode destination via Google Maps Geocoding API → call OWM 5-day/3-hour forecast → aggregate to daily summary
-- [ ] Wrap with cache (3h TTL)
-- [ ] Test: `WeatherTool.run(destination="Osaka", start_date="2026-10-13", days=3)` → returns real 3-day forecast
-
-### P5-7 · Implement Real Visa Tools
+### P5-6 · Implement Real Visa Tools
 - [ ] `backend/app/tools/real/visa_tools.py` — `VisaCentreSearchTool.run()`:
   - Step 1: Tavily search `"visa application centre {destination_country} in {home_city}"` to discover which company handles this corridor (VFS Global, BLS International, TLScontact, iData, ACSIS, or consulate direct)
   - Step 2: Google Places search `"{discovered_company_name} {destination_country}", home_city` to get address, hours, phone, maps URL
@@ -469,17 +469,17 @@
 - [ ] Test: `VisaCentreSearchTool.run(dest_country="Singapore", home_city="Mumbai")` → returns `None` (visa-free; no centre needed)
 - [ ] Test (G): returned payload includes at least one official-domain source URL and a fetched date
 
-### P5-8 · Implement Real Rental + Distance Matrix Tools
+### P5-7 · Implement Real Rental + Distance Matrix Tools
 - [ ] `backend/app/tools/real/rental_tools.py` — `RentalSearchTool.run()`: Google Places `type=car_rental` search + Tavily for local operators
 - [ ] `backend/app/tools/real/rental_tools.py` — `FuelPriceTool.run()`: Tavily search for current fuel price
 - [ ] `backend/app/tools/real/geo_tools.py` — `DistanceMatrixTool.run()`: Google Distance Matrix API for total trip distance
 - [ ] Test: `RentalSearchTool.run(destination="Goa")` → returns real rental shops
 
-### P5-9 · Implement Real Hub Tool
+### P5-8 · Implement Real Hub Tool
 - [ ] `backend/app/tools/real/hub_tools.py` — `IdentifyHubsTool.run()`: LLM call with geographic knowledge prompt → returns list of route combos
 - [ ] Test: `IdentifyHubsTool.run(origin="Kolkata", dest="Leh")` → includes "via Delhi"
 
-### P5-9b · Implement Real FX Tool **(H)**
+### P5-9 · Implement Real FX Tool **(H)**
 - [ ] `backend/app/tools/real/fx_tools.py` — `CurrencyConvertTool.run()`: call the FX provider, return `{ amount_converted, rate, fetched_at }`
 - [ ] Wrap with cache (12h TTL keyed by `{base}:{quote}`)
 - [ ] Test: `CurrencyConvertTool.run(amount=10000, base="JPY", quote="INR")` → returns a plausible INR amount with a `rate` and `fetched_at`
@@ -487,7 +487,7 @@
 ### P5-10 · End-to-end Real Data Testing
 - [ ] Set `MOCK_EXTERNAL_APIS=false` in `.env`
 - [ ] Run integration test case 1: `"3 days Osaka from Kolkata, mid-October"` with real APIs → complete itinerary returned
-- [ ] Run integration test case 2: `"5 days Tokyo from Mumbai"` → real visa info (with `sources[]` + `last_verified_at`), real weather
+- [ ] Run integration test case 2: `"5 days Tokyo from Mumbai"` → real visa info (with `sources[]` + `last_verified_at`), grounded destination context
 - [ ] Run integration test case 3: `"Kolkata to Leh 4 days"` → real flight options, non-obvious insight
 - [ ] Run `make evals` with real APIs on small dataset subset (5 cases) — verify scores hold
 - [ ] Run `make evals-golden` **(J)** → visa/transit/opening-hours/FX match the human-verified `evals/golden/*` ground truth
@@ -504,7 +504,6 @@
 - [ ] `TransportSearchAgent`: if SerpAPI quota exceeded → fallback to `TavilySearchTool` with `"flights {origin} to {dest} {date} price"` → fallback to LLM-only estimation with disclaimer
 - [ ] `StaySearchAgent`: if SerpAPI fails → fallback to Tavily `"hotels in {destination} {checkin} {checkout}"`
 - [ ] `ReviewsAgent`: if Google Places returns no results → skip review synthesis, return empty `pros/cons` without failing
-- [ ] `WeatherAgent`: if OWM fails → return generic seasonal advice from LLM knowledge
 - [ ] `VisaAgent`: if application centre search returns no results → return visa info with `application_centre=None` and a note to contact the embassy directly; never fail the whole plan
 - [ ] **(G)** `VisaAgent`: if no official-domain source can be grounded → set `confidence="low"` and surface the verify-directly warning rather than presenting unverified rules as fact
 - [ ] **(H)** `BudgetPlannerAgent`: if the FX provider fails → fall back to the last cached rate (mark stale in `fx_disclaimer`); if no rate at all, present per-currency subtotals without a converted grand total rather than inventing a rate
@@ -613,7 +612,7 @@
 - [ ] Run `terraform plan` → review; `terraform apply` → provision all resources in `dev` workspace
 
 ### P8-2 · Secret Manager
-- [ ] Store all API keys in Secret Manager: `SERPAPI_KEY`, `GOOGLE_MAPS_KEY`, `TAVILY_KEY`, `OPENWEATHERMAP_KEY`, `FX_API_KEY`, `LANGFUSE_SECRET_KEY`, `DATABASE_URL`, LLM key
+- [ ] Store all API keys in Secret Manager: `SERPAPI_KEY`, `GOOGLE_MAPS_KEY`, `TAVILY_KEY`, `FX_API_KEY`, `LANGFUSE_SECRET_KEY`, `DATABASE_URL`, LLM key
 - [ ] Update Cloud Run service definitions to inject secrets via `--set-secrets`
 - [ ] Verify Cloud Run service starts with injected secrets (no secrets in container image)
 

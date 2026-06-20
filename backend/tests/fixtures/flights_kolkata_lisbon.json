@@ -1,0 +1,166 @@
+{
+  "search_parameters": {
+    "engine": "google_flights",
+    "departure_id": "CCU",
+    "arrival_id": "LIS",
+    "outbound_date": "2026-10-14",
+    "currency": "INR",
+    "hl": "en",
+    "gl": "in",
+    "type": "2"
+  },
+  "best_flights": [
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 10:00"},
+          "arrival_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 12:20"},
+          "duration": 140,
+          "airplane": "Airbus A320neo",
+          "airline": "IndiGo",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/6E.png",
+          "travel_class": "Economy",
+          "flight_number": "6E 2019",
+          "legroom": "28 in",
+          "extensions": ["Below average legroom (28 in)", "Carbon emissions estimate: 41 kg"],
+          "often_delayed_by_over_30_min": false
+        },
+        {
+          "departure_airport": {"name": "Indira Gandhi International Airport", "id": "DEL", "time": "2026-10-14 22:55"},
+          "arrival_airport": {"name": "Lisbon Humberto Delgado Airport", "id": "LIS", "time": "2026-10-15 04:00"},
+          "duration": 455,
+          "airplane": "Boeing 777-300ER",
+          "airline": "Emirates",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/EK.png",
+          "travel_class": "Economy",
+          "flight_number": "EK 503",
+          "legroom": "31 in",
+          "extensions": ["Average legroom (31 in)", "Wi-Fi for a fee", "In-seat power & USB outlets", "On-demand video", "Carbon emissions estimate: 412 kg"],
+          "often_delayed_by_over_30_min": false,
+          "overnight": true
+        }
+      ],
+      "layovers": [{"duration": 635, "name": "Indira Gandhi International Airport", "id": "DEL"}],
+      "total_duration": 1230,
+      "carbon_emissions": {"this_flight": 453000, "typical_for_this_route": 490000, "difference_percent": -8},
+      "price": 58000,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/multi.png",
+      "departure_token": "mock_token_6e_ek_ccu_del_lis"
+    },
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 20:30"},
+          "arrival_airport": {"name": "Istanbul Airport", "id": "IST", "time": "2026-10-15 02:00"},
+          "duration": 480,
+          "airplane": "Boeing 787-9",
+          "airline": "Turkish Airlines",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/TK.png",
+          "travel_class": "Economy",
+          "flight_number": "TK 721",
+          "legroom": "31 in",
+          "extensions": ["Average legroom (31 in)", "In-seat power & USB outlets", "On-demand video", "Carbon emissions estimate: 388 kg"],
+          "often_delayed_by_over_30_min": false,
+          "overnight": true
+        },
+        {
+          "departure_airport": {"name": "Istanbul Airport", "id": "IST", "time": "2026-10-15 09:30"},
+          "arrival_airport": {"name": "Lisbon Humberto Delgado Airport", "id": "LIS", "time": "2026-10-15 12:45"},
+          "duration": 195,
+          "airplane": "Airbus A321",
+          "airline": "Turkish Airlines",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/TK.png",
+          "travel_class": "Economy",
+          "flight_number": "TK 1761",
+          "legroom": "30 in",
+          "extensions": ["Average legroom (30 in)", "Carbon emissions estimate: 120 kg"],
+          "often_delayed_by_over_30_min": false
+        }
+      ],
+      "layovers": [{"duration": 450, "name": "Istanbul Airport", "id": "IST"}],
+      "total_duration": 1125,
+      "carbon_emissions": {"this_flight": 508000, "typical_for_this_route": 490000, "difference_percent": 4},
+      "price": 52500,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/TK.png",
+      "departure_token": "mock_token_tk_ccu_ist_lis"
+    },
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 06:30"},
+          "arrival_airport": {"name": "Frankfurt Airport", "id": "FRA", "time": "2026-10-14 12:20"},
+          "duration": 590,
+          "airplane": "Airbus A330-300",
+          "airline": "Lufthansa",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/LH.png",
+          "travel_class": "Economy",
+          "flight_number": "LH 756",
+          "legroom": "31 in",
+          "extensions": ["Average legroom (31 in)", "Wi-Fi for a fee", "In-seat power & USB outlets", "On-demand video", "Carbon emissions estimate: 450 kg"],
+          "often_delayed_by_over_30_min": false
+        },
+        {
+          "departure_airport": {"name": "Frankfurt Airport", "id": "FRA", "time": "2026-10-14 15:35"},
+          "arrival_airport": {"name": "Lisbon Humberto Delgado Airport", "id": "LIS", "time": "2026-10-14 17:40"},
+          "duration": 125,
+          "airplane": "Airbus A319",
+          "airline": "Lufthansa",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/LH.png",
+          "travel_class": "Economy",
+          "flight_number": "LH 1180",
+          "legroom": "30 in",
+          "extensions": ["Average legroom (30 in)", "Carbon emissions estimate: 87 kg"],
+          "often_delayed_by_over_30_min": false
+        }
+      ],
+      "layovers": [{"duration": 195, "name": "Frankfurt Airport", "id": "FRA"}],
+      "total_duration": 910,
+      "carbon_emissions": {"this_flight": 537000, "typical_for_this_route": 490000, "difference_percent": 10},
+      "price": 67000,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/LH.png",
+      "departure_token": "mock_token_lh_ccu_fra_lis"
+    }
+  ],
+  "other_flights": [
+    {
+      "flights": [
+        {
+          "departure_airport": {"name": "Netaji Subhas Chandra Bose International Airport", "id": "CCU", "time": "2026-10-14 08:00"},
+          "arrival_airport": {"name": "Hamad International Airport", "id": "DOH", "time": "2026-10-14 11:00"},
+          "duration": 300,
+          "airplane": "Airbus A350-900",
+          "airline": "Qatar Airways",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/QR.png",
+          "travel_class": "Economy",
+          "flight_number": "QR 512",
+          "legroom": "32 in",
+          "extensions": ["Above average legroom (32 in)", "Wi-Fi for a fee", "In-seat power & USB outlets", "On-demand video", "Carbon emissions estimate: 250 kg"],
+          "often_delayed_by_over_30_min": false
+        },
+        {
+          "departure_airport": {"name": "Hamad International Airport", "id": "DOH", "time": "2026-10-14 14:30"},
+          "arrival_airport": {"name": "Lisbon Humberto Delgado Airport", "id": "LIS", "time": "2026-10-14 19:30"},
+          "duration": 360,
+          "airplane": "Airbus A330-300",
+          "airline": "Qatar Airways",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/QR.png",
+          "travel_class": "Economy",
+          "flight_number": "QR 55",
+          "legroom": "32 in",
+          "extensions": ["Above average legroom (32 in)", "Wi-Fi for a fee", "In-seat power & USB outlets", "On-demand video", "Carbon emissions estimate: 310 kg"],
+          "often_delayed_by_over_30_min": false
+        }
+      ],
+      "layovers": [{"duration": 210, "name": "Hamad International Airport", "id": "DOH"}],
+      "total_duration": 870,
+      "carbon_emissions": {"this_flight": 560000, "typical_for_this_route": 490000, "difference_percent": 14},
+      "price": 71500,
+      "type": "One way",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/QR.png",
+      "departure_token": "mock_token_qr_ccu_doh_lis"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 """Smoke tests for P0-3 config and P0-5 logging."""
+
 from __future__ import annotations
 
 import json
