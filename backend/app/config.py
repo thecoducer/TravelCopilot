@@ -15,10 +15,25 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "info"
 
-    # LLM
+    # LLM — swap provider+model with two env vars, zero code changes
+    # Examples:
+    #   openai   / gpt-4o                        (default)
+    #   anthropic/ claude-3-5-sonnet-20241022
+    #   gemini   / gemini-1.5-pro
+    #   ollama   / llama3                         (local)
+    #   groq     / llama3-70b-8192
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o"
+
+    # Provider API keys — LiteLLM reads these as env vars automatically;
+    # declare them here so pydantic-settings can validate + populate from .env
     openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    google_api_key: str = ""      # Gemini / Vertex AI
+    groq_api_key: str = ""        # Groq (fast Llama inference)
+
+    # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
+    llm_api_base: str = ""        # e.g. http://localhost:11434  for Ollama
 
     # Mock flag — when True all tools return fixture data, no network calls
     mock_external_apis: bool = True

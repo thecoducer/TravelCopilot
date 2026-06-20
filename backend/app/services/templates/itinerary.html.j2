@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; margin: 40px; }
+  h1   { font-size: 20pt; color: #1a4a7a; border-bottom: 2px solid #1a4a7a; padding-bottom: 6px; }
+  h2   { font-size: 14pt; color: #1a4a7a; margin-top: 24px; }
+  h3   { font-size: 12pt; color: #555; margin-top: 16px; }
+  .banner  { background: #e8f4fd; border-left: 4px solid #1a4a7a; padding: 10px 14px; margin: 12px 0; border-radius: 4px; }
+  .warning { background: #fff3cd; border-left: 4px solid #e6a817; padding: 10px 14px; margin: 10px 0; border-radius: 4px; }
+  .day-header { background: #f0f4ff; padding: 8px 12px; border-radius: 4px; margin-top: 18px; font-weight: bold; }
+  .slot   { margin-left: 16px; margin-top: 8px; }
+  .slot-label { font-weight: bold; color: #1a4a7a; text-transform: uppercase; font-size: 9pt; }
+  .place  { margin: 4px 0 4px 12px; }
+  table   { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th      { background: #1a4a7a; color: white; padding: 6px 10px; text-align: left; font-size: 10pt; }
+  td      { padding: 5px 10px; border-bottom: 1px solid #ddd; font-size: 10pt; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .footer { margin-top: 40px; font-size: 9pt; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
+  .visa-disclaimer { font-size: 9pt; color: #c00; font-style: italic; margin: 6px 0; }
+  .confidence-low { color: #c00; font-weight: bold; }
+  @page { margin: 20mm; }
+</style>
+</head>
+<body>
+
+<h1>{{ title }}</h1>
+<p><strong>{{ source }} → {{ destination }}</strong>
+{% if dates %} · {{ dates.departure }} – {{ dates.return_date }}{% endif %}
+· {{ travelers }} traveller{% if travelers != 1 %}s{% endif %}
+</p>
+
+{% if reality_banner %}
+<div class="banner">{{ reality_banner }}</div>
+{% endif %}
+
+<!-- ── Transport ── -->
+{% if transport_section and transport_section.recommended %}
+<h2>✈️ Getting There</h2>
+{% set tr = transport_section.recommended %}
+<p>{{ tr.rationale }}</p>
+{% if tr.non_obvious_insight %}
+<div class="banner">💡 {{ tr.non_obvious_insight }}</div>
+{% endif %}
+<table>
+<tr><th>Mode</th><th>Operator</th><th>Duration</th><th>Cost</th><th>Notes</th></tr>
+{% for leg in tr.recommended_legs %}
+<tr>
+  <td>{{ leg.mode | capitalize }}</td>
+  <td>{{ leg.operator }}</td>
+  <td>{{ (leg.duration_minutes // 60) }}h {{ (leg.duration_minutes % 60) }}m</td>
+  <td>{{ leg.cost }} {{ leg.currency_code }}</td>
+  <td>{{ leg.price_disclaimer }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+
+<!-- ── Accommodation ── -->
+{% if segments %}
+{% for seg in segments %}
+{% if seg.stay_options and seg.stay_options.options %}
+<h2>🏨 Where to Stay — {{ seg.location }}</h2>
+{% for opt in seg.stay_options.options[:3] %}
+<p><strong>{{ opt.name }}</strong> · {{ opt.rating }}★ · {{ opt.price_per_night }} {{ opt.currency_code }}/night
+{% if opt.personalization_reason %}<br/><em>{{ opt.personalization_reason }}</em>{% endif %}
+</p>
+{% endfor %}
+{% if seg.stay_options.notes %}<p>{{ seg.stay_options.notes }}</p>{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+<!-- ── Day Plans ── -->
+<h2>📅 Day-by-Day Itinerary</h2>
+{% for seg in segments %}
+{% for day in seg.days %}
+<div class="day-header">Day {{ day.day_number }} · {{ day.date }} · {{ day.location }}</div>
+{% if day.altitude_warning %}<div class="warning">⚠️ {{ day.altitude_warning }}</div>{% endif %}
+{% for slot in [day.morning, day.afternoon, day.evening] %}
+{% if slot.options %}
+<div class="slot">
+  <span class="slot-label">{{ slot.slot }}</span>
+  {% for opt in slot.options[:2] %}
+  <div class="place">• <strong>{{ opt.place.name }}</strong>
+  ({{ opt.estimated_duration_minutes // 60 }}h
+  {% if opt.estimated_duration_minutes % 60 %}{{ opt.estimated_duration_minutes % 60 }}m{% endif %})
+  {% if opt.recommendation_reason %} — {{ opt.recommendation_reason }}{% endif %}
+  {% if opt.crowd_warning %}<br/>&nbsp;&nbsp;&nbsp;⚠️ {{ opt.crowd_warning }}{% endif %}
+  </div>
+  {% endfor %}
+  {% if slot.unresolved_note %}<div class="warning">{{ slot.unresolved_note }}</div>{% endif %}
+</div>
+{% endif %}
+{% endfor %}
+{% if day.food %}
+<div class="slot"><span class="slot-label">Meals</span>
+{% for food_opt in day.food %}
+{% if food_opt.options %}
+<div class="place">{{ food_opt.meal_type | capitalize }}:
+{% for v in food_opt.options[:1] %}{{ v.name }} ({{ v.cuisine }}){% endfor %}
+</div>
+{% endif %}
+{% endfor %}
+</div>
+{% endif %}
+{% endfor %}
+{% endfor %}
+
+<!-- ── Budget ── -->
+{% if budget_breakdown %}
+<h2>💰 Budget Breakdown</h2>
+<table>
+<tr><th>Category</th><th>Estimated Cost ({{ budget_breakdown.currency_code }})</th></tr>
+{% for cat, amount in budget_breakdown.per_category_breakdown.items() %}
+<tr><td>{{ cat | capitalize }}</td><td>{{ "%.0f" | format(amount) }}</td></tr>
+{% endfor %}
+<tr><td><strong>Total</strong></td><td><strong>{{ "%.0f" | format(budget_breakdown.total_estimated_cost) }}</strong></td></tr>
+</table>
+<p>Verdict: <strong>{{ budget_breakdown.vs_budget_verdict }}</strong></p>
+{% if budget_breakdown.fx_disclaimer %}<p><em>{{ budget_breakdown.fx_disclaimer }}</em></p>{% endif %}
+{% if budget_breakdown.cost_saving_tips %}
+<h3>Cost-saving tips</h3>
+<ul>{% for tip in budget_breakdown.cost_saving_tips %}<li>{{ tip }}</li>{% endfor %}</ul>
+{% endif %}
+{% endif %}
+
+<!-- ── Visa ── -->
+{% if visa_section %}
+<h2>📋 Visa Information</h2>
+{% if visa_section.confidence == "low" %}<p class="confidence-low">⚠️ Low confidence — verify directly with the consulate.</p>{% endif %}
+<p><strong>Required:</strong> {{ visa_section.visa_required }} · <strong>Type:</strong> {{ visa_section.visa_type or 'N/A' }}</p>
+{% if visa_section.application_process %}
+<h3>Application Process</h3>
+<ol>{% for step in visa_section.application_process %}<li>{{ step }}</li>{% endfor %}</ol>
+{% endif %}
+{% if visa_section.application_centre %}
+<h3>Application Centre</h3>
+<p>{{ visa_section.application_centre.name }}<br/>{{ visa_section.application_centre.address }}</p>
+{% endif %}
+{% if visa_section.sources %}
+<p style="font-size:9pt;">Sources checked:
+{% for src in visa_section.sources[:3] %}{{ src.title or src.url }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}
+<p class="visa-disclaimer">{{ visa_section.disclaimer }}</p>
+{% endif %}
+
+<!-- ── Safety ── -->
+{% if safety_briefing %}
+<h2>⚠️ Safety Briefing</h2>
+<p>{{ safety_briefing }}</p>
+{% endif %}
+
+<!-- ── Self-drive ── -->
+{% if self_drive_section %}
+<h2>🏍️ Self-Drive</h2>
+<p><strong>Recommended vehicle:</strong> {{ self_drive_section.recommended_vehicle or 'N/A' }}</p>
+<p>Estimated distance: {{ self_drive_section.total_km_estimate or 'N/A' }} km · Fuel cost: {{ self_drive_section.fuel_cost_estimate or 'N/A' }} INR</p>
+{% if self_drive_section.permits_required %}<p><strong>Permits:</strong> {{ self_drive_section.permits_required | join(', ') }}</p>{% endif %}
+{% if self_drive_section.local_driving_tips %}
+<ul>{% for tip in self_drive_section.local_driving_tips %}<li>{{ tip }}</li>{% endfor %}</ul>
+{% endif %}
+{% endif %}
+
+<!-- ── Packing ── -->
+{% if packing_tips %}
+<h2>🎒 Packing Suggestions</h2>
+<ul>{% for tip in packing_tips %}<li>{{ tip }}</li>{% endfor %}</ul>
+{% endif %}
+
+<div class="footer">
+Generated by TravelCopilot · All prices and visa rules are indicative — verify before booking.
+</div>
+</body>
+</html>
