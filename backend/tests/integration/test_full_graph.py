@@ -17,6 +17,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+from app.agents.stay_analyst_agent import _RankingOutput
+from app.agents.transport_optimizer_agent import _OptimiserOutput
+from app.agents.transport_search_agent import _HubResult, _RouteCombo
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.itinerary import (
@@ -29,6 +33,7 @@ from app.models.itinerary import (
     TripSegment,
 )
 from app.models.reports import (
+    BudgetReport,
     DestinationContextReport,
     ScamEntry,
     ScamSafetyReport,
@@ -45,6 +50,7 @@ from app.models.user_profile import BudgetPreference, BudgetTier, UserProfile
 from app.tools.factory import ToolFactory
 
 # ── Fake LLM factory ──────────────────────────────────────────────────────────
+
 
 def _stub_place(name: str = "Mock Place", lat: float = 34.69, lng: float = 135.50) -> Place:
     return Place(
@@ -114,7 +120,7 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
                 slot="morning",
                 options=[
                     ActivityOption(
-                        place=_stub_place(f"Morning Place {i+1}"),
+                        place=_stub_place(f"Morning Place {i + 1}"),
                         rank=1,
                         recommendation_reason="Great for photography lovers.",
                         best_for=["photography", "history"],
@@ -126,7 +132,7 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
                 slot="afternoon",
                 options=[
                     ActivityOption(
-                        place=_stub_place(f"Afternoon Place {i+1}", lat=34.70, lng=135.51),
+                        place=_stub_place(f"Afternoon Place {i + 1}", lat=34.70, lng=135.51),
                         rank=1,
                         recommendation_reason="Matches your interest in food.",
                         best_for=["food"],
@@ -138,7 +144,7 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
                 slot="evening",
                 options=[
                     ActivityOption(
-                        place=_stub_place(f"Evening Place {i+1}", lat=34.71, lng=135.52),
+                        place=_stub_place(f"Evening Place {i + 1}", lat=34.71, lng=135.52),
                         rank=1,
                         recommendation_reason="Great nightlife spot.",
                         best_for=["nightlife"],
@@ -157,9 +163,7 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
         travelers=2,
         reality_banner="Moderate crowds, pleasant weather.",
         segments=[TripSegment(location=destination, days=days)],
-        transport_section=TransportSection(
-            recommended=_stub_transport_rec(), alternatives=[]
-        ),
+        transport_section=TransportSection(recommended=_stub_transport_rec(), alternatives=[]),
         safety_briefing="Exercise normal caution. Beware of overcharging taxis.",
         budget_breakdown=None,
     )
@@ -167,17 +171,10 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
 
 # ── Per-schema dispatch table ─────────────────────────────────────────────────
 
-from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
-from app.agents.stay_analyst_agent import _RankingOutput
-from app.agents.transport_optimizer_agent import _OptimiserOutput
-from app.agents.transport_search_agent import _HubResult, _RouteCombo
-
 
 def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMock:
     """Return a MagicMock LLM that dispatches by schema type."""
-    from app.models.reports import BudgetReport as BR
-
-    _RESPONSES: dict[type, Any] = {
+    _responses: dict[type, Any] = {
         _ParsedQuery: _ParsedQuery(
             source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
             destination=_FieldConfidence(value=destination, confidence=0.95),
@@ -241,7 +238,7 @@ def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMo
             alternatives=[],
         ),
         Itinerary: _stub_itinerary(destination=destination),
-        BR: BR(
+        BudgetReport: BudgetReport(
             currency_code="INR",
             total_estimated_cost=45000.0,
             per_category_breakdown={
@@ -270,7 +267,7 @@ def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMo
 
     def _with_structured_output(schema: Any) -> MagicMock:
         chain = MagicMock()
-        response = _RESPONSES.get(schema)
+        response = _responses.get(schema)
         if response is None:
             # For unknown schemas (e.g. inline Pydantic models), try model_construct
             try:
@@ -286,6 +283,7 @@ def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMo
 
 
 # ── Shared graph fixture ──────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_factory() -> ToolFactory:
@@ -319,7 +317,6 @@ def _run_graph_with_fake_llm(
 
 
 class TestFullGraph:
-
     # Case 1: domestic trip
     def test_domestic_trip_osaka_returns_itinerary(self, mock_factory: ToolFactory) -> None:
         result = _run_graph_with_fake_llm(
@@ -409,15 +406,13 @@ class TestFullGraph:
         if itinerary is None:
             return  # no itinerary due to clarification — skip
 
-        SLOT_LIMIT_HOURS = 10.0
+        slot_limit_hours = 10.0
         for seg in itinerary.segments:
             for day in seg.days:
                 for slot in [day.morning, day.afternoon, day.evening]:
-                    total = sum(
-                        o.estimated_duration_minutes for o in slot.options
-                    ) / 60.0
-                    assert total <= SLOT_LIMIT_HOURS, (
-                        f"Day {day.day_number} {slot.slot} total {total:.1f}h > {SLOT_LIMIT_HOURS}h"
+                    total = sum(o.estimated_duration_minutes for o in slot.options) / 60.0
+                    assert total <= slot_limit_hours, (
+                        f"Day {day.day_number} {slot.slot} total {total:.1f}h > {slot_limit_hours}h"
                     )
 
     # Case 7: clarification gate — vague query triggers clarification
@@ -491,7 +486,6 @@ class TestFullGraph:
 
 
 class TestDeterministicGates:
-
     @pytest.mark.asyncio
     async def test_enforce_opening_hours_real(self) -> None:
         from app.tools.real.opening_hours_tools import EnforceOpeningHoursTool
@@ -571,35 +565,54 @@ class TestDeterministicGates:
         from app.models.itinerary import ActivityOption, Day, Place, TimeSlotOptions, TripSegment
 
         place_closed = Place(
-            name="ClosedMuseum", description="", category="museum",
-            duration_minutes=120, price_range="Free",
-            lat=34.69, lng=135.50, address="Test"
+            name="ClosedMuseum",
+            description="",
+            category="museum",
+            duration_minutes=120,
+            price_range="Free",
+            lat=34.69,
+            lng=135.50,
+            address="Test",
         )
         place_open = Place(
-            name="OpenPark", description="", category="park",
-            duration_minutes=90, price_range="Free",
-            lat=34.70, lng=135.51, address="Test"
+            name="OpenPark",
+            description="",
+            category="park",
+            duration_minutes=90,
+            price_range="Free",
+            lat=34.70,
+            lng=135.51,
+            address="Test",
         )
         opt_closed = ActivityOption(
-            place=place_closed, rank=1,
+            place=place_closed,
+            rank=1,
             recommendation_reason="Great museum",
-            best_for=["history"], estimated_duration_minutes=120
+            best_for=["history"],
+            estimated_duration_minutes=120,
         )
         opt_open = ActivityOption(
-            place=place_open, rank=2,
+            place=place_open,
+            rank=2,
             recommendation_reason="Nice walk",
-            best_for=["nature"], estimated_duration_minutes=90
+            best_for=["nature"],
+            estimated_duration_minutes=90,
         )
         day = Day(
-            date=date(2026, 10, 14), day_number=1, location="Osaka",
+            date=date(2026, 10, 14),
+            day_number=1,
+            location="Osaka",
             morning=TimeSlotOptions(slot="morning", options=[opt_closed, opt_open]),
             afternoon=TimeSlotOptions(slot="afternoon"),
             evening=TimeSlotOptions(slot="evening"),
         )
         seg = TripSegment(location="Osaka", days=[day])
         itinerary = Itinerary(
-            title="Test", source="KOL", destination="Osaka",
-            destinations=["Osaka"], travelers=1,
+            title="Test",
+            source="KOL",
+            destination="Osaka",
+            destinations=["Osaka"],
+            travelers=1,
             segments=[seg],
         )
 

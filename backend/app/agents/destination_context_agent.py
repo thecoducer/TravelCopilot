@@ -51,7 +51,9 @@ class DestinationContextAgent:
         month = dates.departure.strftime("%B") if dates else "June"
         year = dates.departure.year if dates else 2026
 
-        log = logger.bind(agent="destination_context", destination=destination, session_id=session_id)
+        log = logger.bind(
+            agent="destination_context", destination=destination, session_id=session_id
+        )
         log.info("agent_start")
 
         # Run 3 Tavily searches in parallel
@@ -63,10 +65,7 @@ class DestinationContextAgent:
             f"{destination} seasonal risks weather {month} travel advisory",
         ]
         results = await asyncio.gather(
-            *[
-                self._tavily.run(query=q, destination=destination)
-                for q in queries
-            ],
+            *[self._tavily.run(query=q, destination=destination) for q in queries],
             return_exceptions=True,
         )
 

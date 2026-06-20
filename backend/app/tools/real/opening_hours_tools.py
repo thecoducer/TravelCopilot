@@ -84,7 +84,7 @@ class EnforceOpeningHoursTool:
                         "assigned_slot": slot,
                         "reason": (
                             f"Closed during {slot} "
-                            f"(opens {oh.get('open','?')} closes {oh.get('close','?')})"
+                            f"(opens {oh.get('open', '?')} closes {oh.get('close', '?')})"
                         ),
                     }
                 )
@@ -114,9 +114,7 @@ class ValidateDayDurationTool:
             for slot_name, exps in slots.items():
                 if not exps:
                     continue
-                slot_total_min = sum(
-                    float(e.get("duration_hours", 1.0)) * 60 for e in exps
-                )
+                slot_total_min = sum(float(e.get("duration_hours", 1.0)) * 60 for e in exps)
                 # Add transit time between activities
                 slot_total_min += _TRANSIT_MINUTES * max(0, len(exps) - 1)
                 slot_total_h = slot_total_min / 60.0
@@ -128,7 +126,9 @@ class ValidateDayDurationTool:
                             "day": day,
                             "slot": slot_name,
                             "total_hours": round(slot_total_h, 1),
-                            "reason": f"Slot total {slot_total_h:.1f}h exceeds {_SLOT_MAX_HOURS}h cap",
+                            "reason": (
+                                f"Slot total {slot_total_h:.1f}h exceeds {_SLOT_MAX_HOURS}h cap"
+                            ),
                             "excess_activities": max(0, len(exps) - 2),
                         }
                     )

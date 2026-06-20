@@ -66,9 +66,7 @@ class FoodDiscoveryAgent:
 
         # Build a list of (day_date, location_label) pairs
         # For single-destination trips, all days are at the destination
-        day_locations = [
-            (start_date + timedelta(days=i), destination) for i in range(trip_days)
-        ]
+        day_locations = [(start_date + timedelta(days=i), destination) for i in range(trip_days)]
 
         # Derive unique neighbourhood/area names from experiences (if any)
         areas: list[str] = list(
@@ -128,11 +126,9 @@ class FoodDiscoveryAgent:
                     meal_type=meal,
                     options=[v] if j < len(day_venues) else [],
                 ).model_dump()
-                for j, (meal, v) in enumerate(zip(meal_types, day_venues))
+                for j, (meal, v) in enumerate(zip(meal_types, day_venues, strict=False))
             ]
             restaurant_recommendations[day_key] = food_opts
 
-        log.info(
-            "agent_done", days_covered=len(restaurant_recommendations), venues=len(all_venues)
-        )
+        log.info("agent_done", days_covered=len(restaurant_recommendations), venues=len(all_venues))
         return {"restaurant_recommendations": restaurant_recommendations}

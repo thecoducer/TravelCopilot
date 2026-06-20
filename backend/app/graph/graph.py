@@ -36,6 +36,7 @@ from app.tools.factory import ToolFactory
 
 # ── Clarification pass-through node ──────────────────────────────────────────
 
+
 async def _clarification_node(state: dict[str, Any]) -> dict[str, Any]:
     """Terminal node reached when the query is ambiguous.
 
@@ -57,6 +58,7 @@ def _route_after_orchestrator(state: dict[str, Any]) -> str:
 
 
 # ── Graph builder ─────────────────────────────────────────────────────────────
+
 
 def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = None) -> Any:
     """Construct and compile the full planning graph.
@@ -126,8 +128,12 @@ def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = No
 
     # Fan-out from ready_to_plan → all Layer 1+2 nodes in parallel
     for node in [
-        "destination_context", "scam_safety", "visa",
-        "transport_search", "stay_search", "local_experiences",
+        "destination_context",
+        "scam_safety",
+        "visa",
+        "transport_search",
+        "stay_search",
+        "local_experiences",
     ]:
         graph.add_edge("ready_to_plan", node)
 
@@ -138,8 +144,12 @@ def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = No
 
     # Layer 1+3 → budget_planner (barrier: waits for all 6)
     for node in [
-        "destination_context", "scam_safety", "visa",
-        "transport_optimizer", "stay_analyst", "self_drive_search",
+        "destination_context",
+        "scam_safety",
+        "visa",
+        "transport_optimizer",
+        "stay_analyst",
+        "self_drive_search",
     ]:
         graph.add_edge(node, "budget_planner")
 
@@ -177,5 +187,3 @@ async def run_graph(query: str, session_id: str, **overrides: Any) -> dict[str, 
     compiled = get_graph()
     result: dict[str, Any] = await compiled.ainvoke(state)
     return result
-
-

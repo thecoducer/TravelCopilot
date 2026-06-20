@@ -87,11 +87,11 @@ class BudgetPlannerAgent:
 
         visa_cost = 0.0
         if visa_report and visa_report.fees:
-            try:
+            import contextlib
+
+            with contextlib.suppress(ValueError):
                 # Fees are stored as a string like "₹4,000" or "USD 160"
                 visa_cost = float("".join(c for c in visa_report.fees if c.isdigit() or c == "."))
-            except ValueError:
-                pass
 
         self_drive_cost = 0.0
         if self_drive_report:
@@ -106,18 +106,16 @@ class BudgetPlannerAgent:
             if from_ccy == dest_currency or amount == 0:
                 return amount
             try:
-                result = await self._fx_tool.run(
-                    amount=amount, base=from_ccy, quote=dest_currency
-                )
+                result = await self._fx_tool.run(amount=amount, base=from_ccy, quote=dest_currency)
                 rate = result.get("rate", 1.0)
                 fetched_at_str = result.get("fetched_at", datetime.now(tz=UTC).isoformat())
                 fx_rates_used[f"{from_ccy}→{dest_currency}"] = FxRateEntry(
-                    rate=rate, fetched_at=datetime.fromisoformat(fetched_at_str.replace("Z", "+00:00"))
+                    rate=rate,
+                    fetched_at=datetime.fromisoformat(fetched_at_str.replace("Z", "+00:00")),
                 )
                 return float(result.get("amount_converted", amount))
             except Exception:
                 return amount
-
 
         transport_converted = await _convert(transport_cost, transport_currency)
         stay_converted = await _convert(stay_total, stay_currency)
@@ -151,18 +149,18 @@ class BudgetPlannerAgent:
         cost_saving_tips: list[str] = []
         if verdict == "over":
             try:
-                from langchain_core.messages import HumanMessage as HM
-                from langchain_core.messages import SystemMessage as SM
-                from pydantic import BaseModel as BM
+                from langchain_core.messages import HumanMessage as HumanMessage_
+                from langchain_core.messages import SystemMessage as SystemMessage_
+                from pydantic import BaseModel as BaseModel_
 
-                class _Tips(BM):
+                class _Tips(BaseModel_):
                     tips: list[str]
 
                 chain = self._llm.with_structured_output(_Tips)  # type: ignore[union-attr]
                 tips_result: _Tips = chain.invoke(
                     [
-                        SM(content="You are a budget travel advisor."),
-                        HM(
+                        SystemMessage_(content="You are a budget travel advisor."),
+                        HumanMessage_(
                             content=(
                                 f"Trip to {destination}, {trip_days} days, {travelers} travelers.\n"
                                 f"Budget tier: {tier}. Currently over budget.\n"

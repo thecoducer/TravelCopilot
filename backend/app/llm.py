@@ -34,6 +34,7 @@ logger = structlog.get_logger(__name__)
 
 # ── Sync provider API keys so LiteLLM can find them ──────────────────────────
 
+
 def _sync_api_keys() -> None:
     key_map = {
         "OPENAI_API_KEY": settings.openai_api_key,
@@ -84,6 +85,7 @@ try:
                     async def _aw() -> None:
                         try:
                             from app.services.cache_service import CacheService
+
                             c = CacheService()
                             k = f"usage:{session_id}:{agent_name}"
                             ex: dict[str, Any] = await c.get(k) or {}
@@ -93,6 +95,7 @@ try:
                             await c.set(k, ex, ttl=604800)
                         except Exception as ce:
                             logger.warning("usage_cache_failed", agent=agent_name, error=str(ce))
+
                     asyncio.run(_aw())
 
                 threading.Thread(target=_write, daemon=True).start()
@@ -128,7 +131,7 @@ try:
         ToolMessage,
     )
     from langchain_core.outputs import ChatGeneration, ChatResult
-    from pydantic import BaseModel, Field
+    from pydantic import Field
 
     def _lc_to_litellm(messages: list[BaseMessage]) -> list[dict[str, Any]]:
         """Convert LangChain messages to LiteLLM/OpenAI format."""
@@ -141,7 +144,9 @@ try:
             elif isinstance(m, AIMessage):
                 result.append({"role": "assistant", "content": m.content or ""})
             elif isinstance(m, ToolMessage):
-                result.append({"role": "tool", "content": m.content, "tool_call_id": m.tool_call_id})
+                result.append(
+                    {"role": "tool", "content": m.content, "tool_call_id": m.tool_call_id}
+                )
             else:
                 result.append({"role": "user", "content": str(m.content)})
         return result
@@ -233,9 +238,7 @@ try:
             """
 
             is_pydantic = hasattr(schema, "model_json_schema")
-            schema_dict: dict[str, Any] = (
-                schema.model_json_schema() if is_pydantic else schema
-            )
+            schema_dict: dict[str, Any] = schema.model_json_schema() if is_pydantic else schema
             schema_name = getattr(schema, "__name__", "output")
 
             # Remove 'title' from the top-level schema to avoid provider rejections
@@ -313,13 +316,15 @@ def get_llm(agent_name: str, session_id: str = "") -> LiteLLMChatModel:
     Tests inject a fake LLM directly into agents via ``build_graph(llm=...)``,
     so this function is never called during test execution.
     """
-    if not any([
-        settings.openai_api_key,
-        settings.anthropic_api_key,
-        settings.google_api_key,
-        settings.groq_api_key,
-        settings.llm_api_base,          # local model — no key needed
-    ]):
+    if not any(
+        [
+            settings.openai_api_key,
+            settings.anthropic_api_key,
+            settings.google_api_key,
+            settings.groq_api_key,
+            settings.llm_api_base,  # local model — no key needed
+        ]
+    ):
         logger.warning(
             "llm_no_api_key",
             provider=settings.llm_provider,
@@ -336,4 +341,3 @@ def get_llm(agent_name: str, session_id: str = "") -> LiteLLMChatModel:
         metadata={"agent_name": agent_name, "session_id": session_id},
         api_base=settings.llm_api_base,
     )
-

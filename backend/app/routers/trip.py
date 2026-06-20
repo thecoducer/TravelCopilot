@@ -62,9 +62,15 @@ def _preview(agent_name: str, output: dict[str, Any]) -> str:
     try:
         m: dict[str, Any] = {
             "orchestrator": lambda o: f"{o.get('source', '')} → {o.get('destination', '')}",
-            "destination_context": lambda o: getattr(o.get("destination_context_report"), "crowd_level", "Done"),
-            "scam_safety": lambda o: f"{len(getattr(o.get('scam_safety_report'), 'top_scams', []))} scams found",
-            "visa": lambda o: f"Visa required: {getattr(o.get('visa_report'), 'visa_required', 'N/A')}",
+            "destination_context": lambda o: getattr(
+                o.get("destination_context_report"), "crowd_level", "Done"
+            ),
+            "scam_safety": lambda o: (
+                f"{len(getattr(o.get('scam_safety_report'), 'top_scams', []))} scams found"
+            ),
+            "visa": lambda o: (
+                f"Visa required: {getattr(o.get('visa_report'), 'visa_required', 'N/A')}"
+            ),
             "transport_search": lambda o: f"{len(o.get('transport_legs_raw', {}))} route legs",
             "stay_search": lambda o: f"{len(o.get('stays_raw', []))} hotels",
             "local_experiences": lambda o: f"{len(o.get('experiences_raw', []))} experiences",
@@ -86,10 +92,18 @@ def _preview(agent_name: str, output: dict[str, Any]) -> str:
 
 _AGENT_LAYERS: dict[str, int] = {
     "orchestrator": 0,
-    "destination_context": 1, "scam_safety": 1, "visa": 1,
-    "transport_search": 2, "stay_search": 2, "local_experiences": 2,
-    "transport_optimizer": 3, "stay_analyst": 3, "self_drive_search": 3,
-    "reviews": 4, "food_discovery": 4, "budget_planner": 4,
+    "destination_context": 1,
+    "scam_safety": 1,
+    "visa": 1,
+    "transport_search": 2,
+    "stay_search": 2,
+    "local_experiences": 2,
+    "transport_optimizer": 3,
+    "stay_analyst": 3,
+    "self_drive_search": 3,
+    "reviews": 4,
+    "food_discovery": 4,
+    "budget_planner": 4,
     "itinerary_compiler": 5,
 }
 
@@ -214,8 +228,11 @@ async def _persist_trip(
         async with AsyncSessionLocal() as session:
             await session.execute(
                 text("""
-                    INSERT INTO trips (id, session_id, query, is_international, itinerary_json, reality_score)
-                    VALUES (:id, :session_id, :query, :is_international, CAST(:itinerary AS jsonb), :reality_score)
+                    INSERT INTO trips
+                        (id, session_id, query, is_international, itinerary_json, reality_score)
+                    VALUES
+                        (:id, :session_id, :query, :is_international,
+                         CAST(:itinerary AS jsonb), :reality_score)
                     ON CONFLICT (id) DO UPDATE
                     SET itinerary_json = CAST(EXCLUDED.itinerary AS jsonb),
                         updated_at = NOW()
@@ -301,8 +318,9 @@ async def update_itinerary(trip_id: str, payload: ItineraryUpdateRequest) -> dic
         async with AsyncSessionLocal() as db:
             await db.execute(
                 text(
-                    "UPDATE trips SET itinerary_json = itinerary_json || :patch, updated_at = NOW() "
-                    "WHERE id = :id"
+                    "UPDATE trips"
+                    " SET itinerary_json = itinerary_json || :patch, updated_at = NOW()"
+                    " WHERE id = :id"
                 ),
                 {"id": trip_id, "patch": _json.dumps({"segments": payload.segments})},
             )

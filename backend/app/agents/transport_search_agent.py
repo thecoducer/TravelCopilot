@@ -93,21 +93,15 @@ class TransportSearchAgent:
                 llm_hubs: _HubResult = chain.invoke(
                     [
                         SystemMessage(content=_HUB_SYSTEM_PROMPT),
-                        HumanMessage(
-                            content=f"Source: {source}\nDestination: {destination}"
-                        ),
+                        HumanMessage(content=f"Source: {source}\nDestination: {destination}"),
                     ]
                 )
                 raw_combos = [c.model_dump() for c in llm_hubs.route_combinations]
             except Exception as exc:
                 log.warning("hub_llm_failed", error=str(exc))
-                raw_combos = [
-                    {"origin": source, "destination": destination, "mode": "flight"}
-                ]
+                raw_combos = [{"origin": source, "destination": destination, "mode": "flight"}]
 
-        transport_hubs = list(
-            {c.get("via_hub") for c in raw_combos if c.get("via_hub")}
-        )
+        transport_hubs = list({c.get("via_hub") for c in raw_combos if c.get("via_hub")})
 
         # ── Step B: Parallel supply search ───────────────────────────────────
         dep_date = dates.departure.isoformat() if dates else ""
@@ -126,9 +120,7 @@ class TransportSearchAgent:
                         destination=dest,
                         departure_date=dep_date,
                     )
-                    all_flights = result.get("best_flights", []) + result.get(
-                        "other_flights", []
-                    )
+                    all_flights = result.get("best_flights", []) + result.get("other_flights", [])
                     if all_flights:
                         legs_raw[leg_key] = all_flights
                 else:  # train | bus

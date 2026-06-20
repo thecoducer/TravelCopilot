@@ -22,8 +22,8 @@ from app.models.user_profile import BudgetTier
 logger = structlog.get_logger(__name__)
 
 # Multiplier thresholds relative to the average price
-_BUDGET_MAX_MULTIPLIER = 0.85   # budget: at most 85% of average price
-_MID_MAX_MULTIPLIER = 1.6       # mid: at most 160% of average price
+_BUDGET_MAX_MULTIPLIER = 0.85  # budget: at most 85% of average price
+_MID_MAX_MULTIPLIER = 1.6  # mid: at most 160% of average price
 
 _PRICE_DISCLAIMER = "Price per night is indicative — confirm on booking platform before reserving."
 
@@ -167,11 +167,13 @@ class StayAnalystAgent:
             ]
 
         stays_pick = shortlist[0] if shortlist else None
-        log.info("agent_done", shortlist=len(shortlist), pick=stays_pick.name if stays_pick else None)
+        log.info(
+            "agent_done",
+            shortlist=len(shortlist),
+            pick=stays_pick.name if stays_pick else None,
+        )
         return {
             "stays_shortlist": shortlist,
             "stays_pick": stays_pick,
             "stays_rationale": ranking.rationale,
         }
-
-

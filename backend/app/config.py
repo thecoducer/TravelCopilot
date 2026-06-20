@@ -29,11 +29,11 @@ class Settings(BaseSettings):
     # declare them here so pydantic-settings can validate + populate from .env
     openai_api_key: str = ""
     anthropic_api_key: str = ""
-    google_api_key: str = ""      # Gemini / Vertex AI
-    groq_api_key: str = ""        # Groq (fast Llama inference)
+    google_api_key: str = ""  # Gemini / Vertex AI
+    groq_api_key: str = ""  # Groq (fast Llama inference)
 
     # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
-    llm_api_base: str = ""        # e.g. http://localhost:11434  for Ollama
+    llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama
 
     # Mock flag — when True all tools return fixture data, no network calls
     mock_external_apis: bool = True

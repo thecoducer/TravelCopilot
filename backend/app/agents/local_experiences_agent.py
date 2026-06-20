@@ -80,9 +80,7 @@ def _parse_experience(item: dict[str, Any], source: str) -> Experience | None:
             price_range=item.get("priceLevel", "Moderate"),
             lat=lat,
             lng=lng,
-            photos=[
-                photo.get("name", "") for photo in item.get("photos", [])[:3]
-            ],
+            photos=[photo.get("name", "") for photo in item.get("photos", [])[:3]],
             google_maps_url=item.get("googleMapsUri"),
             opening_hours=hours,
             best_time_to_visit=item.get("best_time_to_visit"),
@@ -109,9 +107,7 @@ class LocalExperiencesAgent:
         session_id: str = state.get("session_id", "")
 
         interests = user_profile.interests if user_profile else []
-        log = logger.bind(
-            agent="local_experiences", destination=destination, session_id=session_id
-        )
+        log = logger.bind(agent="local_experiences", destination=destination, session_id=session_id)
         log.info("agent_start", interests=interests)
 
         included_types = _build_types(interests)
@@ -164,7 +160,7 @@ class LocalExperiencesAgent:
                 ]
                 verify_results = await asyncio.gather(*verify_tasks, return_exceptions=True)
 
-                for name, verify_result in zip(tavily_names, verify_results):
+                for name, verify_result in zip(tavily_names, verify_results, strict=False):
                     if isinstance(verify_result, Exception):
                         continue  # drop on error
                     places = verify_result.get("places", [])

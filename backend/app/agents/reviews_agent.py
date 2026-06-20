@@ -65,9 +65,7 @@ class ReviewsAgent:
         targets: list[tuple[str, str]] = []  # (name, place_id)
         for stay in stays_shortlist:
             targets.append((stay.name, ""))
-        for exp in sorted(
-            experiences_raw, key=lambda e: e.rating or 0, reverse=True
-        )[:8]:
+        for exp in sorted(experiences_raw, key=lambda e: e.rating or 0, reverse=True)[:8]:
             targets.append((exp.name, ""))
 
         if not targets:

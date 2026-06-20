@@ -55,8 +55,7 @@ def _budget_filter(legs_raw: dict[str, list[Any]], budget_tier: str) -> dict[str
     if budget_tier == "luxury":
         return legs_raw
     return {
-        key: [leg for leg in options if not _is_premium(leg)]
-        for key, options in legs_raw.items()
+        key: [leg for leg in options if not _is_premium(leg)] for key, options in legs_raw.items()
     }
 
 
@@ -79,7 +78,12 @@ class TransportOptimizerAgent:
         travelers: int = state.get("travelers", 1)
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="transport_optimizer", source=source, destination=destination, session_id=session_id)
+        log = logger.bind(
+            agent="transport_optimizer",
+            source=source,
+            destination=destination,
+            session_id=session_id,
+        )
         log.info("agent_start", route_options=list(legs_raw.keys()))
 
         if not legs_raw:
@@ -103,9 +107,7 @@ class TransportOptimizerAgent:
                 "seat_class": leg.get("travel_class", "economy"),
             }
 
-        legs_summary = {
-            k: [_trim_leg(l) for l in v[:4]] for k, v in filtered_legs.items()
-        }
+        legs_summary = {k: [_trim_leg(leg) for leg in v[:4]] for k, v in filtered_legs.items()}
 
         chain = self._llm.with_structured_output(_OptimiserOutput)  # type: ignore[union-attr]
         try:
@@ -150,5 +152,3 @@ class TransportOptimizerAgent:
             "transport_recommendation": recommendation,
             "transport_alternatives": alternatives,
         }
-
-

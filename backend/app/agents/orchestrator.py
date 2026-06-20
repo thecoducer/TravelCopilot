@@ -39,23 +39,73 @@ _INJECTION_PATTERNS = re.compile(
 # ── Domestic city set (for is_international heuristic) ──────────────────────
 _INDIAN_CITIES: frozenset[str] = frozenset(
     [
-        "mumbai", "delhi", "bangalore", "bengaluru", "kolkata", "chennai",
-        "hyderabad", "pune", "ahmedabad", "jaipur", "lucknow", "kanpur",
-        "nagpur", "indore", "bhopal", "goa", "leh", "srinagar", "amritsar",
-        "varanasi", "agra", "kerala", "rajasthan", "himachal", "uttarakhand",
-        "sikkim", "assam", "kochi", "udaipur", "jodhpur", "mysore",
-        "coimbatore", "madurai", "nashik", "aurangabad", "chandigarh",
-        "shimla", "manali", "mcleod ganj", "darjeeling", "gangtok",
-        "pondicherry", "guwahati", "bhubaneswar", "patna", "ranchi",
-        "raipur", "visakhapatnam", "vijayawada",
+        "mumbai",
+        "delhi",
+        "bangalore",
+        "bengaluru",
+        "kolkata",
+        "chennai",
+        "hyderabad",
+        "pune",
+        "ahmedabad",
+        "jaipur",
+        "lucknow",
+        "kanpur",
+        "nagpur",
+        "indore",
+        "bhopal",
+        "goa",
+        "leh",
+        "srinagar",
+        "amritsar",
+        "varanasi",
+        "agra",
+        "kerala",
+        "rajasthan",
+        "himachal",
+        "uttarakhand",
+        "sikkim",
+        "assam",
+        "kochi",
+        "udaipur",
+        "jodhpur",
+        "mysore",
+        "coimbatore",
+        "madurai",
+        "nashik",
+        "aurangabad",
+        "chandigarh",
+        "shimla",
+        "manali",
+        "mcleod ganj",
+        "darjeeling",
+        "gangtok",
+        "pondicherry",
+        "guwahati",
+        "bhubaneswar",
+        "patna",
+        "ranchi",
+        "raipur",
+        "visakhapatnam",
+        "vijayawada",
     ]
 )
 
 _SELF_DRIVE_KEYWORDS = frozenset(
     [
-        "rent a bike", "rent bike", "scooter", "self-drive", "self drive",
-        "motorcycle", "hire a car", "hire car", "rent a car", "road trip",
-        "road-trip", "motorbike", "two-wheeler",
+        "rent a bike",
+        "rent bike",
+        "scooter",
+        "self-drive",
+        "self drive",
+        "motorcycle",
+        "hire a car",
+        "hire car",
+        "rent a car",
+        "road trip",
+        "road-trip",
+        "motorbike",
+        "two-wheeler",
     ]
 )
 
@@ -116,7 +166,7 @@ Rules:
 - For interests, extract: food, nightlife, history, adventure, photography, wellness, nature, art.
 - Confidence rules: 1.0 = explicitly stated; 0.7 = strongly implied; 0.5 = inferred; 0.0 = absent.
 - For travelers: confidence=1.0 if explicitly stated, 0.8 if implied solo (no mention), 0.5 if ambiguous.
-"""
+"""  # noqa: E501
 
 
 class OrchestratorAgent:
@@ -138,7 +188,10 @@ class OrchestratorAgent:
                 "clarification_prompts": [
                     ClarificationPrompt(
                         field="query",
-                        question="Your request contains disallowed patterns. Please describe your trip normally.",
+                        question=(
+                            "Your request contains disallowed patterns."
+                            " Please describe your trip normally."
+                        ),
                         reason="Prompt injection detected",
                     )
                 ],
@@ -203,14 +256,14 @@ class OrchestratorAgent:
             is_low_confidence = conf < threshold
 
             if is_missing or is_low_confidence:
-                question = _CLARIFICATION_QUESTIONS.get(
-                    field, f"Could you clarify: {field}?"
-                )
+                question = _CLARIFICATION_QUESTIONS.get(field, f"Could you clarify: {field}?")
                 clarification_prompts.append(
                     ClarificationPrompt(
                         field=field,
                         question=question,
-                        reason=f"Missing or low confidence ({conf:.2f}) for required field '{field}'",
+                        reason=(
+                            f"Missing or low confidence ({conf:.2f}) for required field '{field}'"
+                        ),
                     )
                 )
 
@@ -313,5 +366,3 @@ def quick_extract_days(query: str) -> int | None:
     """Return number of trip days from a query string if mentioned."""
     m = _DAYS_PATTERN.search(query)
     return int(m.group(1)) if m else None
-
-

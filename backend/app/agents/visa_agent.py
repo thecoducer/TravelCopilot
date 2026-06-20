@@ -44,9 +44,7 @@ def _classify_sources(urls: list[dict[str, Any]]) -> tuple[list[VisaSource], str
         url = item.get("url", "")
         title = item.get("title", "")
         pub_date = item.get("published_date")
-        sources.append(
-            VisaSource(title=title, url=url, published_or_fetched_date=pub_date)
-        )
+        sources.append(VisaSource(title=title, url=url, published_or_fetched_date=pub_date))
         # Extract domain from URL
         domain_match = re.search(r"https?://([^/]+)", url)
         if domain_match:
@@ -150,7 +148,11 @@ class VisaAgent:
                         )
                     )
                     # Visa centre tool sources are official
-                    confidence = max(confidence, "medium", key=lambda c: {"low": 0, "medium": 1, "high": 2}[c])
+                    confidence = max(
+                        confidence,
+                        "medium",
+                        key=lambda c: {"low": 0, "medium": 1, "high": 2}[c],
+                    )
 
         # Build LLM context
         snippets: list[str] = []
@@ -167,7 +169,10 @@ class VisaAgent:
             )
         if not isinstance(embassy_result, Exception) and embassy_result.get("embassy"):
             e = embassy_result["embassy"]
-            snippets.append(f"Embassy: {e.get('name', '')} — {e.get('address', '')} | Phone: {e.get('phone', 'N/A')}")
+            snippets.append(
+                f"Embassy: {e.get('name', '')} — {e.get('address', '')}"
+                f" | Phone: {e.get('phone', 'N/A')}"
+            )
 
         context = "\n".join(snippets) if snippets else "No visa information found."
 
@@ -180,7 +185,9 @@ class VisaAgent:
                     destination_country=destination_country,
                     visa_required=True,
                     confidence="low",
-                    validity_notes="No grounded sources found — verify directly with consulate before booking.",
+                    validity_notes=(
+                        "No grounded sources found — verify directly with consulate before booking."
+                    ),
                 )
             }
 
@@ -218,6 +225,10 @@ class VisaAgent:
                 last_verified_at=datetime.now(tz=UTC),
             )
 
-        log.info("agent_done", visa_required=report.visa_required, confidence=report.confidence, sources=len(report.sources))
+        log.info(
+            "agent_done",
+            visa_required=report.visa_required,
+            confidence=report.confidence,
+            sources=len(report.sources),
+        )
         return {"visa_report": report}
-

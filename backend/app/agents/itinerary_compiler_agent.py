@@ -67,7 +67,7 @@ Return:
   "suggestions": ["short suggestion 1", ...]
 }}
 Keep suggestions brief and actionable. If no issues, return {{"has_issues": false, "suggestions": []}}.
-"""
+"""  # noqa: E501
 
 _MAX_GATE_ITERATIONS = 3
 _SLOT_NAMES = ["morning", "afternoon", "evening"]
@@ -112,7 +112,9 @@ class ItineraryCompilerAgent:
         restaurant_recs = state.get("restaurant_recommendations", {})
         user_profile = state.get("user_profile")
 
-        log = logger.bind(agent="itinerary_compiler", destination=destination, session_id=session_id)
+        log = logger.bind(
+            agent="itinerary_compiler", destination=destination, session_id=session_id
+        )
         log.info("agent_start", experiences=len(experiences_raw), stays=len(stays_shortlist))
 
         trip_days = dates.trip_days if dates else 3
@@ -134,9 +136,7 @@ class ItineraryCompilerAgent:
             }
             for e in experiences_raw
         ]
-        cluster_result = await self._cluster_tool.run(
-            experiences=exp_dicts, num_clusters=trip_days
-        )
+        cluster_result = await self._cluster_tool.run(experiences=exp_dicts, num_clusters=trip_days)
         clusters: list[dict[str, Any]] = cluster_result.get("clusters", [])
 
         # ── Step 2: Pre-gate — resolve opening-hours + duration issues ────────
@@ -148,9 +148,7 @@ class ItineraryCompilerAgent:
                 slot = _SLOT_NAMES[ei % 3]
                 slotted_exps.append({**exp, "assigned_slot": slot, "day_index": ci})
 
-        hours_pre = await self._opening_hours_tool.run(
-            experiences=slotted_exps, travel_dates=dates
-        )
+        hours_pre = await self._opening_hours_tool.run(experiences=slotted_exps, travel_dates=dates)
         closed_names: set[str] = {c["name"] for c in hours_pre.get("conflicts", [])}
 
         # Build day_slots for duration check
@@ -177,19 +175,30 @@ class ItineraryCompilerAgent:
 
         # Clean clusters removing closed venues
         clean_clusters = []
-        for ci, cluster in enumerate(clusters[:trip_days]):
-            clean_exps = [e for e in cluster.get("experiences", []) if e.get("name") not in closed_names]
+        for _ci, cluster in enumerate(clusters[:trip_days]):
+            clean_exps = [
+                e for e in cluster.get("experiences", []) if e.get("name") not in closed_names
+            ]
             clean_clusters.append({**cluster, "experiences": clean_exps})
 
         # ── Step 3: LLM compile ───────────────────────────────────────────────
         context = _build_context(
-            source=source, destination=destination, trip_days=trip_days,
-            start_date=str(start_date), travelers=travelers,
-            clusters=clean_clusters, transport_rec=transport_rec, transport_alts=transport_alts,
-            stays_shortlist=stays_shortlist, destination_ctx=destination_ctx,
-            scam_report=scam_report, visa_report=visa_report,
-            self_drive_report=self_drive_report, budget_report=budget_report,
-            reviews_summary=reviews_summary, restaurant_recs=restaurant_recs,
+            source=source,
+            destination=destination,
+            trip_days=trip_days,
+            start_date=str(start_date),
+            travelers=travelers,
+            clusters=clean_clusters,
+            transport_rec=transport_rec,
+            transport_alts=transport_alts,
+            stays_shortlist=stays_shortlist,
+            destination_ctx=destination_ctx,
+            scam_report=scam_report,
+            visa_report=visa_report,
+            self_drive_report=self_drive_report,
+            budget_report=budget_report,
+            reviews_summary=reviews_summary,
+            restaurant_recs=restaurant_recs,
             user_profile=user_profile,
         )
 
@@ -236,8 +245,10 @@ class ItineraryCompilerAgent:
                 break  # Clean — exit gate loop
 
             log.info(
-                "gate_resolving", iteration=iteration + 1,
-                conflicts=len(conflicts), duration_flags=len(flags)
+                "gate_resolving",
+                iteration=iteration + 1,
+                conflicts=len(conflicts),
+                duration_flags=len(flags),
             )
             # Auto-resolve: mark conflicted slots as unresolved rather than pass bad data
             conflict_names = {c["name"] for c in conflicts}
@@ -289,7 +300,8 @@ def _build_context(**kwargs: Any) -> str:
         parts.append(f"Transport alternatives: {alts_str}")
     if kwargs.get("stays_shortlist"):
         stays_str = " | ".join(
-            f"{s.name} (★{s.rating}, {s.price_per_night}/night)" for s in kwargs["stays_shortlist"][:4]
+            f"{s.name} (★{s.rating}, {s.price_per_night}/night)"
+            for s in kwargs["stays_shortlist"][:4]
         )
         parts.append(f"Accommodation shortlist (all options): {stays_str}")
     if kwargs.get("scam_report"):
@@ -298,7 +310,9 @@ def _build_context(**kwargs: Any) -> str:
         parts.append(f"Safety: {sc.advisory_level}. Scams: {scams}")
     if kwargs.get("budget_report"):
         br = kwargs["budget_report"]
-        parts.append(f"Budget: {br.total_estimated_cost} {br.currency_code} ({br.vs_budget_verdict})")
+        parts.append(
+            f"Budget: {br.total_estimated_cost} {br.currency_code} ({br.vs_budget_verdict})"
+        )
     if kwargs.get("user_profile"):
         up = kwargs["user_profile"]
         if up.interests:
@@ -380,9 +394,7 @@ def _resolve_conflicts(
             day_key = day.date.isoformat()
             new_slots: dict[str, TimeSlotOptions] = {}
             for slot_obj in [day.morning, day.afternoon, day.evening]:
-                clean_opts = [
-                    o for o in slot_obj.options if o.place.name not in conflict_names
-                ]
+                clean_opts = [o for o in slot_obj.options if o.place.name not in conflict_names]
                 # Trim over-packed slots
                 if (day_key, slot_obj.slot) in flagged_slots:
                     clean_opts = clean_opts[:2]  # keep at most 2 options
@@ -419,9 +431,7 @@ def _inject_shortlist(
         options=[s.model_dump() for s in stays_shortlist],
         notes=f"{len(stays_shortlist)} options available — all budget-filtered.",
     )
-    new_segs = [
-        seg.model_copy(update={"stay_options": stay_opts}) for seg in itinerary.segments
-    ]
+    new_segs = [seg.model_copy(update={"stay_options": stay_opts}) for seg in itinerary.segments]
     return itinerary.model_copy(update={"segments": new_segs})
 
 
@@ -459,4 +469,3 @@ def _build_stub(
         travelers=travelers,
         segments=[TripSegment(location=destination, days=days)],
     )
-

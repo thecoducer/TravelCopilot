@@ -80,10 +80,19 @@ class TestGraphCompilation:
     def test_initial_state_has_required_keys(self) -> None:
         state = initial_state("test query", "sess-1")
         required_keys = [
-            "query", "session_id", "source", "destination", "dates",
-            "is_international", "self_drive_intent",
-            "transport_legs_raw", "stays_raw", "experiences_raw",
-            "reviews_summary", "restaurant_recommendations", "token_usage",
+            "query",
+            "session_id",
+            "source",
+            "destination",
+            "dates",
+            "is_international",
+            "self_drive_intent",
+            "transport_legs_raw",
+            "stays_raw",
+            "experiences_raw",
+            "reviews_summary",
+            "restaurant_recommendations",
+            "token_usage",
         ]
         for key in required_keys:
             assert key in state, f"Missing key: {key}"
@@ -212,9 +221,7 @@ class TestDestinationContextAgent:
             currency_code="INR",
             seasonal_weather_summary="Sunny and dry",
         )
-        agent = DestinationContextAgent(
-            tool_factory=mock_tool_factory, llm=_make_llm(mock_report)
-        )
+        agent = DestinationContextAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
         result = await agent(base_state)
 
         assert "destination_context_report" in result
@@ -224,9 +231,7 @@ class TestDestinationContextAgent:
         assert isinstance(report.real_daily_cost, float)
 
     @pytest.mark.asyncio
-    async def test_fallback_on_empty_destination(
-        self, mock_tool_factory: ToolFactory
-    ) -> None:
+    async def test_fallback_on_empty_destination(self, mock_tool_factory: ToolFactory) -> None:
         mock_report = DestinationContextReport(
             destination="",
             travel_month="July",
@@ -239,9 +244,7 @@ class TestDestinationContextAgent:
             currency_code="USD",
             seasonal_weather_summary="",
         )
-        agent = DestinationContextAgent(
-            tool_factory=mock_tool_factory, llm=_make_llm(mock_report)
-        )
+        agent = DestinationContextAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
         result = await agent({"destination": "", "session_id": "s"})
         assert "destination_context_report" in result
 
@@ -333,9 +336,7 @@ class TestTransportSearchAgent:
                 _RouteCombo(origin="KOL", destination="IXL", mode="flight"),
             ]
         )
-        agent = TransportSearchAgent(
-            tool_factory=mock_tool_factory, llm=_make_llm(mock_hubs)
-        )
+        agent = TransportSearchAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_hubs))
         result = await agent(base_state)
 
         assert "transport_legs_raw" in result
@@ -378,9 +379,7 @@ class TestStaySearchAgent:
         factory = ToolFactory(mock=True)
         agent = StaySearchAgent(tool_factory=factory)
         # zzz destination has no fixture
-        result = await agent(
-            {**initial_state("trip", "s"), "destination": "zzz_no_fixture"}
-        )
+        result = await agent({**initial_state("trip", "s"), "destination": "zzz_no_fixture"})
         assert result["stays_raw"] == []
 
 
@@ -408,16 +407,31 @@ class TestStayAnalystAgent:
     async def test_picks_best_stay_with_shortlist(self, base_state: dict[str, Any]) -> None:
         stays = [
             StayOption(
-                name="Hotel A", address="Leh", city="Leh",
-                price_per_night=3000, currency_code="INR", rating=4.5, review_count=200,
+                name="Hotel A",
+                address="Leh",
+                city="Leh",
+                price_per_night=3000,
+                currency_code="INR",
+                rating=4.5,
+                review_count=200,
             ),
             StayOption(
-                name="Hotel B", address="Leh", city="Leh",
-                price_per_night=2800, currency_code="INR", rating=4.2, review_count=150,
+                name="Hotel B",
+                address="Leh",
+                city="Leh",
+                price_per_night=2800,
+                currency_code="INR",
+                rating=4.2,
+                review_count=150,
             ),
             StayOption(
-                name="Hotel C", address="Leh", city="Leh",
-                price_per_night=2600, currency_code="INR", rating=4.0, review_count=120,
+                name="Hotel C",
+                address="Leh",
+                city="Leh",
+                price_per_night=2600,
+                currency_code="INR",
+                rating=4.0,
+                review_count=120,
             ),
         ]
         from app.agents.stay_analyst_agent import _RankingOutput
@@ -474,9 +488,7 @@ class TestSelfDriveSearchAgent:
             total_km_estimate=240.0,
             fuel_cost_estimate=620.0,
         )
-        agent = SelfDriveSearchAgent(
-            tool_factory=mock_tool_factory, llm=_make_llm(mock_report)
-        )
+        agent = SelfDriveSearchAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
         result = await agent(
             {
                 **base_state,
