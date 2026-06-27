@@ -92,7 +92,7 @@ class TestGraphCompilation:
             "stays_raw",
             "experiences_raw",
             "reviews_summary",
-            "restaurant_recommendations",
+            "food_recommendations",
             "token_usage",
         ]
         for key in required_keys:
@@ -507,14 +507,14 @@ class TestSelfDriveSearchAgent:
 
 class TestFoodDiscoveryAgent:
     @pytest.mark.asyncio
-    async def test_returns_restaurant_recommendations(
+    async def test_returns_food_recommendations(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
         agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
         result = await agent(base_state)
 
-        assert "restaurant_recommendations" in result
-        recs = result["restaurant_recommendations"]
+        assert "food_recommendations" in result
+        recs = result["food_recommendations"]
         assert isinstance(recs, dict)
         # Should have at least 1 day of recommendations
         assert len(recs) >= 1
@@ -526,7 +526,7 @@ class TestFoodDiscoveryAgent:
         agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
         result = await agent({**base_state, "experiences_raw": []})
         # Should still try to find restaurants at the destination
-        assert "restaurant_recommendations" in result
+        assert "food_recommendations" in result
 
 
 # ── get_llm factory ───────────────────────────────────────────────────────────

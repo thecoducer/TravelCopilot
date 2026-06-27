@@ -5,7 +5,7 @@ partial updates returned by each node; agents MUST only return the keys they
 changed rather than the full state.
 
 Annotated reducers are used for fields that multiple agents write to
-(messages, token_usage, reviews_summary, restaurant_recommendations) so that
+(messages, token_usage, reviews_summary, food_recommendations) so that
 LangGraph merges rather than overwrites them.
 """
 
@@ -76,7 +76,7 @@ class TripState(dict):  # type: ignore[type-arg]
 
     # ── Layer 4: Enrichment ────────────────────────────────────────────────
     reviews_summary: Annotated[dict[str, ReviewSummary], operator.or_]
-    restaurant_recommendations: Annotated[dict[str, list[Any]], operator.or_]
+    food_recommendations: Annotated[dict[str, list[Any]], operator.or_]
     budget_report: BudgetReport | None
 
     # ── Output ─────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ def initial_state(
         "self_drive_report": None,
         # Layer 4
         "reviews_summary": {},
-        "restaurant_recommendations": {},
+        "food_recommendations": {},
         "budget_report": None,
         # Output
         "itinerary": None,
