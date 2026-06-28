@@ -33,55 +33,94 @@ Based on Google's Agent whitepaper and ReAct framework:
 
 ```mermaid
 graph TD
-    User -->|Chat| FE["Next.js — Chat-first UI"]
-    FE -->|SSE| API["FastAPI — Cloud Run"]
-    API --> LG["LangGraph StateGraph"]
+    %% ── Styling ──────────────────────────────────────────────────
+    classDef control fill:#1e1e2e,stroke:#cba6f7,stroke-width:2px,color:#cdd6f4
+    classDef gate fill:#313244,stroke:#f38ba8,stroke-width:2px,color:#f38ba8,stroke-dasharray:5
+    classDef layer1 fill:#1e3a5f,stroke:#89b4fa,stroke-width:2px,color:#cdd6f4
+    classDef layer2 fill:#1a4731,stroke:#a6e3a1,stroke-width:2px,color:#cdd6f4
+    classDef layer3 fill:#4a3728,stroke:#fab387,stroke-width:2px,color:#cdd6f4
+    classDef layer4 fill:#3b2d4a,stroke:#cba6f7,stroke-width:2px,color:#cdd6f4
+    classDef layer5 fill:#4a2d3b,stroke:#f5c2e7,stroke-width:2px,color:#cdd6f4
+    classDef terminal fill:#313244,stroke:#a6e3a1,stroke-width:3px,color:#a6e3a1
 
-    LG --> OA["OrchestratorAgent\nROUTER + ORCHESTRATOR\nparse · profile · intent · route"]
+    %% ── Entry ────────────────────────────────────────────────────
+    START((START)):::control --> orchestrator
 
-    OA --> L1["LAYER 1 — Intelligence (parallel)"]
-    OA --> L2["LAYER 2 — Supply Search (parallel)"]
+    %% ── Layer 0: Routing & Orchestration ─────────────────────────
+    orchestrator["🎯 OrchestratorAgent\n─────────────────\nparse query → structured params\ndetect is_international\ndetect self_drive_intent\nclarification gate check"]:::control
 
-    L1 --> DCA["DestinationContextAgent (LLM)"]
-    L1 --> SCA["ScamSafetyAgent (LLM)"]
-    L1 --> VA["VisaAgent (LLM · intl only)"]
+    %% ── Conditional Routing ──────────────────────────────────────
+    orchestrator -->|"needs_clarification\n== true"| clarification
+    orchestrator -->|"needs_clarification\n== false"| ready_to_plan
 
-    L2 --> TSA["TransportSearchAgent (tools only)"]
-    L2 --> SSA["StaySearchAgent (tools only)"]
-    L2 --> LEA["LocalExperiencesAgent (tools only)"]
+    clarification["⚠️ Clarification Node\n─────────────────\nterminal · emits SSE\nclarification_prompts[]"]:::gate
+    clarification --> END_NODE((END)):::terminal
 
-    TSA --> L3["LAYER 3 — Analysis (parallel)"]
-    SSA --> L3
+    ready_to_plan["✅ ready_to_plan\n─────────────────\npass-through fan-out"]:::control
 
-    L3 --> TOA["TransportOptimizerAgent (LLM)"]
-    L3 --> SAA["StayAnalystAgent (LLM)"]
-    L3 --> SDSA["SelfDriveSearchAgent (conditional · LLM)"]
+    %% ── Layer 1: Destination Intelligence (parallel) ─────────────
+    ready_to_plan --> destination_context
+    ready_to_plan --> scam_safety
+    ready_to_plan --> visa
 
-    TOA --> L4["LAYER 4 — Enrichment (parallel)"]
-    SAA --> L4
-    LEA --> L4
+    destination_context["🌍 DestinationContextAgent\n─────────────────\nLLM · Tavily search\nseasonality · crowds\ncosts · weather · risks"]:::layer1
 
-    L4 --> RA["ReviewsAgent (LLM)"]
-    L4 --> FDA["FoodDiscoveryAgent (tools only)"]
-    L4 --> BPA["BudgetPlannerAgent (LLM)"]
-    DCA --> BPA
-    VA --> BPA
+    scam_safety["🛡️ ScamSafetyAgent\n─────────────────\nLLM · Tavily search\nscams · safety tips\nemergency contacts"]:::layer1
 
-    RA --> L5["LAYER 5 — Synthesis"]
-    FDA --> L5
-    BPA --> L5
-    DCA --> L5
-    SCA --> L5
-    VA --> L5
-    SDSA --> L5
+    visa["🛂 VisaAgent\n─────────────────\nLLM · Tavily + Places\nintl trips only\nvisa type · process · fees"]:::layer1
 
-    L5 --> IC["ItineraryCompilerAgent (LLM)\ngeo-cluster · self-critique · compile"]
+    %% ── Layer 2: Supply Search (parallel) ────────────────────────
+    ready_to_plan --> transport_search
+    ready_to_plan --> stay_search
+    ready_to_plan --> local_experiences
 
-    IC --> DB["Cloud SQL + Memorystore"]
-    IC -->|usage_summary SSE| FE
-    FE -->|PDF| PDF["WeasyPrint — Cloud Run"]
-    API --> OTel["OpenTelemetry → Cloud Trace"]
-    LG --> LF["Langfuse — traces + evals"]
+    transport_search["✈️ TransportSearchAgent\n─────────────────\ntools only · no LLM\nflights · trains · buses\nSerpAPI + Google Routes"]:::layer2
+
+    stay_search["🏨 StaySearchAgent\n─────────────────\ntools only · no LLM\nhotels · stays\nSerpAPI Google Hotels"]:::layer2
+
+    local_experiences["🎭 LocalExperiencesAgent\n─────────────────\ntools only · no LLM\nattractions · activities\nGoogle Places + Tavily"]:::layer2
+
+    %% ── Layer 3: Analysis ────────────────────────────────────────
+    transport_search --> transport_optimizer
+    transport_search --> self_drive_search
+    stay_search --> stay_analyst
+
+    transport_optimizer["🔀 TransportOptimizerAgent\n─────────────────\nLLM reasoning\nbest route selection\nbudget-filtered alternatives"]:::layer3
+
+    stay_analyst["📊 StayAnalystAgent\n─────────────────\nLLM reasoning\nranked shortlist · rationale\npersonalization scoring"]:::layer3
+
+    self_drive_search["🚗 SelfDriveSearchAgent\n─────────────────\nconditional · LLM\nrentals · fuel estimate\nonly if self_drive_intent"]:::layer3
+
+    %% ── Layer 1 + Layer 3 → BudgetPlanner (barrier join) ─────────
+    destination_context --> budget_planner
+    scam_safety --> budget_planner
+    visa --> budget_planner
+    transport_optimizer --> budget_planner
+    stay_analyst --> budget_planner
+    self_drive_search --> budget_planner
+
+    %% ── Layer 3 + Layer 2 → Reviews ──────────────────────────────
+    stay_analyst --> reviews
+    local_experiences --> reviews
+
+    %% ── Layer 2 → FoodDiscovery ──────────────────────────────────
+    local_experiences --> food_discovery
+
+    %% ── Layer 4: Enrichment ──────────────────────────────────────
+    budget_planner["💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join\naggregate all costs\nbudget verdict + tips"]:::layer4
+
+    reviews["⭐ ReviewsAgent\n─────────────────\nLLM · Places API\nreviews + photos\nfor stays + experiences"]:::layer4
+
+    food_discovery["🍜 FoodDiscoveryAgent\n─────────────────\ntools only · no LLM\nrestaurants · cafes\nstreet food per day"]:::layer4
+
+    %% ── Layer 5: Synthesis ───────────────────────────────────────
+    budget_planner --> itinerary_compiler
+    reviews --> itinerary_compiler
+    food_discovery --> itinerary_compiler
+
+    itinerary_compiler["📋 ItineraryCompilerAgent\n─────────────────\nLLM · geo-cluster\ncompile · self-critique\ndeterministic gate · finalise"]:::layer5
+
+    itinerary_compiler --> END_NODE
 ```
 
 ---

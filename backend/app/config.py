@@ -69,7 +69,12 @@ class Settings(BaseSettings):
 
     # Clarification gate
     clarification_required_fields: str = "destination,dates,travelers"
+    # Per-field confidence thresholds (comma-separated field:threshold pairs).
+    # Falls back to parse_confidence_threshold for fields not listed.
+    clarification_field_thresholds: str = "destination:0.7,dates:0.6,travelers:0.4,source:0.3"
     parse_confidence_threshold: float = 0.6
+    # Maximum clarification rounds before proceeding with best-effort defaults
+    max_clarification_rounds: int = 3
 
     # Budget guard
     max_llm_spend_usd_per_trip: float = 1.00
@@ -77,6 +82,20 @@ class Settings(BaseSettings):
     @property
     def clarification_fields(self) -> list[str]:
         return [f.strip() for f in self.clarification_required_fields.split(",")]
+
+    @property
+    def field_thresholds(self) -> dict[str, float]:
+        """Parse clarification_field_thresholds into a field→threshold mapping."""
+        import contextlib
+
+        result: dict[str, float] = {}
+        for entry in self.clarification_field_thresholds.split(","):
+            entry = entry.strip()
+            if ":" in entry:
+                field, val = entry.split(":", 1)
+                with contextlib.suppress(ValueError):
+                    result[field.strip()] = float(val.strip())
+        return result
 
 
 settings = Settings()

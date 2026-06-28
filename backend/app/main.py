@@ -71,6 +71,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         env=settings.app_env,
     )
 
+    # Initialise LangGraph checkpointer (creates checkpoint tables if needed)
+    try:
+        from app.checkpointer import get_checkpointer
+
+        await get_checkpointer()
+    except Exception as exc:
+        logger.warning("checkpointer_init_failed", error=str(exc))
+
     # Register Langfuse as LiteLLM success callback (best-effort)
     if settings.langfuse_public_key:
         try:
@@ -86,6 +94,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Shutdown ──────────────────────────────────────────────────────────
     logger.info("shutdown")
+    try:
+        from app.checkpointer import close_checkpointer
+
+        await close_checkpointer()
+    except Exception as exc:
+        logger.warning("checkpointer_close_failed", error=str(exc))
 
 
 def create_app() -> FastAPI:

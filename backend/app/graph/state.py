@@ -51,9 +51,10 @@ class TripState(dict):  # type: ignore[type-arg]
     self_drive_intent: bool  # set by OrchestratorAgent
 
     # ── Clarification gate (F) ─────────────────────────────────────────────
-    needs_clarification: bool  # True → graph halts at clarification node
-    clarification_prompts: list[ClarificationPrompt]  # one per missing field
+    needs_clarification: bool  # kept for backward-compat; no longer written by orchestrator
+    clarification_prompts: list[ClarificationPrompt]  # kept for backward-compat
     parse_confidence: dict[str, float]  # field → confidence score 0–1
+    clarification_round: int  # number of completed clarification rounds
 
     # ── Layer 1: Destination Intelligence ─────────────────────────────────
     destination_context_report: DestinationContextReport | None
@@ -106,6 +107,7 @@ def initial_state(
         "needs_clarification": False,
         "clarification_prompts": [],
         "parse_confidence": {},
+        "clarification_round": 0,
         # Layer 1
         "destination_context_report": None,
         "scam_safety_report": None,

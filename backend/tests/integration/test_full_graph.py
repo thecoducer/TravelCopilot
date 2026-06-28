@@ -412,8 +412,16 @@ class TestFullGraph:
                         f"Day {day.day_number} {slot.slot} total {total:.1f}h > {slot_limit_hours}h"
                     )
 
-    # Case 7: clarification gate — vague query triggers clarification
+    # Case 7: clarification gate — vague query triggers interrupt()
     def test_vague_query_triggers_clarification(self) -> None:
+        """When required fields are missing the orchestrator calls interrupt().
+
+        With a MemorySaver checkpointer, ainvoke() returns a partial state and
+        the graph is paused.  The checkpoint snapshot's tasks carry the interrupt
+        payload with the clarification prompts.
+        """
+        from langgraph.checkpoint.memory import MemorySaver
+
         from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
 
         vague_response = _ParsedQuery(
@@ -442,20 +450,36 @@ class TestFullGraph:
 
         import asyncio
 
-        async def _run() -> dict[str, Any]:
+        async def _run() -> tuple[dict, Any]:
             factory = ToolFactory(mock=True)
-            compiled = build_graph(tool_factory=factory, llm=mock_llm)
+            checkpointer = MemorySaver()
+            compiled = build_graph(
+                tool_factory=factory, llm=mock_llm, checkpointer=checkpointer
+            )
             state = initial_state(query="plan a trip to Tokyo", session_id="vague-test")
-            return await compiled.ainvoke(state)
+            config = {"configurable": {"thread_id": "vague-test"}}
+            result = await compiled.ainvoke(state, config=config)
+            snapshot = compiled.get_state(config)
+            return result, snapshot
 
-        result = asyncio.run(_run())
+        result, snapshot = asyncio.run(_run())
 
-        assert result.get("needs_clarification") is True, "Should trigger clarification"
+        # Graph is paused at orchestrator — next step is still 'orchestrator'
+        assert "orchestrator" in snapshot.next, (
+            f"Graph should be paused at orchestrator, got next={snapshot.next}"
+        )
         assert result.get("itinerary") is None, "No itinerary when clarification needed"
-        prompts = result.get("clarification_prompts", [])
-        assert len(prompts) >= 1, "Must have at least one clarification prompt"
-        fields = [p.field for p in prompts]
-        assert "destination" in fields or "dates" in fields or "travelers" in fields
+
+        # Interrupt payload must contain clarification prompts
+        assert snapshot.tasks, "Snapshot must have tasks when paused"
+        interrupts = snapshot.tasks[0].interrupts
+        assert interrupts, "Paused task must have interrupts"
+        payload = interrupts[0].value
+        assert "prompts" in payload, "Interrupt payload must contain 'prompts'"
+        fields = [p["field"] for p in payload["prompts"]]
+        assert any(f in fields for f in ("destination", "dates", "travelers")), (
+            f"Expected a required field in clarification prompts, got: {fields}"
+        )
 
     # Case 8: visa sources + confidence populated (G)
     def test_visa_sources_and_confidence(self) -> None:

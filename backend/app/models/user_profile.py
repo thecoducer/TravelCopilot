@@ -47,6 +47,9 @@ class ClarificationPrompt(BaseModel):
     field: str  # e.g. "dates"
     question: str  # e.g. "What dates are you travelling?"
     reason: str  # e.g. "Needed to check availability and prices"
+    input_type: str = "text"  # "text" | "date" | "number" | "select"
+    options: list[str] = Field(default_factory=list)  # for "select" only
+    extracted_value: str | None = None  # LLM's low-confidence guess (shown as placeholder)
 
 
 class UserProfile(BaseModel):
