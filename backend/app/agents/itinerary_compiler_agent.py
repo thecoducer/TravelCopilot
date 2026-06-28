@@ -109,7 +109,7 @@ class ItineraryCompilerAgent:
         self_drive_report = state.get("self_drive_report")
         budget_report = state.get("budget_report")
         reviews_summary = state.get("reviews_summary", {})
-        restaurant_recs = state.get("restaurant_recommendations", {})
+        restaurant_recs = state.get("food_recommendations", {})
         user_profile = state.get("user_profile")
 
         log = logger.bind(

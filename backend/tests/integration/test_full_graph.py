@@ -310,10 +310,7 @@ def _run_graph_with_fake_llm(
             state.update(extra_state)
         return await compiled.ainvoke(state)
 
-    return asyncio.get_event_loop().run_until_complete(_run())
-
-
-# ── Test cases ────────────────────────────────────────────────────────────────
+    return asyncio.run(_run())
 
 
 class TestFullGraph:
@@ -451,7 +448,7 @@ class TestFullGraph:
             state = initial_state(query="plan a trip to Tokyo", session_id="vague-test")
             return await compiled.ainvoke(state)
 
-        result = asyncio.get_event_loop().run_until_complete(_run())
+        result = asyncio.run(_run())
 
         assert result.get("needs_clarification") is True, "Should trigger clarification"
         assert result.get("itinerary") is None, "No itinerary when clarification needed"

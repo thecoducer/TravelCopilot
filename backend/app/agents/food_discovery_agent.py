@@ -43,12 +43,43 @@ def _parse_food_venue(item: dict[str, Any]) -> FoodVenue | None:
         return None
 
 
+def _parse_tavily_venue(result: dict[str, Any], neighbourhood: str) -> FoodVenue | None:
+    """Extract a minimal FoodVenue from a Tavily search result item."""
+    title = result.get("title", "").strip()
+    content = result.get("content", "")
+    if not title or len(title) < 3:
+        return None
+    # Heuristic: skip results that are clearly not venue names (articles, guides)
+    skip_words = ("best", "top", "guide", "list", "things", "where to", "places to", "how")
+    if any(title.lower().startswith(w) for w in skip_words):
+        return None
+    # Infer cuisine from content keywords
+    cuisine = "Local cuisine"
+    for kw in ("italian", "chinese", "indian", "japanese", "thai", "mexican", "french", "korean"):
+        if kw in content.lower():
+            cuisine = kw.capitalize()
+            break
+    try:
+        return FoodVenue(
+            name=title,
+            category="restaurant",
+            cuisine=cuisine,
+            price_range="Moderate",
+            rating=3.5,
+            address=neighbourhood,
+            neighbourhood=neighbourhood,
+        )
+    except Exception:
+        return None
+
+
 class FoodDiscoveryAgent:
     """Layer 4 — Restaurant discovery per neighbourhood per day."""
 
     def __init__(self, tool_factory: ToolFactory | None = None) -> None:
         factory = tool_factory or ToolFactory()
         self._places_tool = factory.get("search_places")
+        self._tavily_tool = factory.get("tavily_search")
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         destination: str = state.get("destination", "")
@@ -97,14 +128,44 @@ class FoodDiscoveryAgent:
                     venues.append(venue)
             return venues
 
-        area_results = await asyncio.gather(
-            *[_fetch_for_area(a) for a in areas[:4]],  # cap to 4 areas
+        async def _fetch_tavily_for_area(area: str) -> list[FoodVenue]:
+            """Supplement Places results with Tavily neighbourhood food search."""
+            venues: list[FoodVenue] = []
+            queries = [
+                f"best food in {area} {destination} locals recommend",
+                f"best street food in {destination} {area}",
+            ]
+            for query in queries:
+                try:
+                    result = await self._tavily_tool.run(query=query, destination=destination)
+                    for item in result.get("results", []):
+                        venue = _parse_tavily_venue(item, area)
+                        if venue and venue.name not in {v.name for v in venues}:
+                            venues.append(venue)
+                except Exception:
+                    pass
+            return venues
+
+        places_task = asyncio.gather(
+            *[_fetch_for_area(a) for a in areas[:4]],
             return_exceptions=True,
         )
+        tavily_task = asyncio.gather(
+            *[_fetch_tavily_for_area(a) for a in areas[:4]],
+            return_exceptions=True,
+        )
+        area_results, tavily_results = await asyncio.gather(places_task, tavily_task)
 
         # Build a flat pool of venues, deduplicated by name
+        # Places results take priority; Tavily supplements with lower-confidence entries
         venue_pool: dict[str, FoodVenue] = {}
         for r in area_results:
+            if isinstance(r, Exception):
+                continue
+            for v in r:
+                if v.name not in venue_pool:
+                    venue_pool[v.name] = v
+        for r in tavily_results:
             if isinstance(r, Exception):
                 continue
             for v in r:
@@ -114,7 +175,7 @@ class FoodDiscoveryAgent:
         all_venues = sorted(venue_pool.values(), key=lambda v: v.rating, reverse=True)
 
         # Assign 3 venues (breakfast / lunch / dinner) per day
-        restaurant_recommendations: dict[str, list[Any]] = {}
+        food_recommendations: dict[str, list[Any]] = {}
         for i, (day_date, _location) in enumerate(day_locations):
             day_key = day_date.isoformat()
             # Rotate through the pool so each day gets slightly different picks
@@ -128,7 +189,7 @@ class FoodDiscoveryAgent:
                 ).model_dump()
                 for j, (meal, v) in enumerate(zip(meal_types, day_venues, strict=False))
             ]
-            restaurant_recommendations[day_key] = food_opts
+            food_recommendations[day_key] = food_opts
 
-        log.info("agent_done", days_covered=len(restaurant_recommendations), venues=len(all_venues))
-        return {"restaurant_recommendations": restaurant_recommendations}
+        log.info("agent_done", days_covered=len(food_recommendations), venues=len(all_venues))
+        return {"food_recommendations": food_recommendations}

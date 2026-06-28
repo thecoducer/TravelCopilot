@@ -42,33 +42,40 @@ graph TD
     OA --> L1["LAYER 1 — Intelligence (parallel)"]
     OA --> L2["LAYER 2 — Supply Search (parallel)"]
 
-    L1 --> DCA["DestinationContextAgent"]
-    L1 --> SCA["ScamSafetyAgent"]
-    L1 --> VA["VisaAgent (intl only)"]
+    L1 --> DCA["DestinationContextAgent (LLM)"]
+    L1 --> SCA["ScamSafetyAgent (LLM)"]
+    L1 --> VA["VisaAgent (LLM · intl only)"]
 
-    L2 --> TSA["TransportSearchAgent"]
-    L2 --> SSA["StaySearchAgent"]
-    L2 --> LEA["LocalExperiencesAgent"]
+    L2 --> TSA["TransportSearchAgent (tools only)"]
+    L2 --> SSA["StaySearchAgent (tools only)"]
+    L2 --> LEA["LocalExperiencesAgent (tools only)"]
 
-    TSA --> TOA["TransportOptimizerAgent (LLM)"]
-    SSA --> SAA["StayAnalystAgent (LLM)"]
-    TSA --> SDSA["SelfDriveSearchAgent (conditional)"]
+    TSA --> L3["LAYER 3 — Analysis (parallel)"]
+    SSA --> L3
+
+    L3 --> TOA["TransportOptimizerAgent (LLM)"]
+    L3 --> SAA["StayAnalystAgent (LLM)"]
+    L3 --> SDSA["SelfDriveSearchAgent (conditional · LLM)"]
 
     TOA --> L4["LAYER 4 — Enrichment (parallel)"]
     SAA --> L4
     LEA --> L4
 
-    L4 --> RA["ReviewsAgent"]
-    L4 --> FDA["FoodDiscoveryAgent"]
-    L4 --> BPA["BudgetPlannerAgent"]
+    L4 --> RA["ReviewsAgent (LLM)"]
+    L4 --> FDA["FoodDiscoveryAgent (tools only)"]
+    L4 --> BPA["BudgetPlannerAgent (LLM)"]
+    DCA --> BPA
+    VA --> BPA
 
-    RA --> IC["ItineraryCompilerAgent\ngeo-cluster · self-critique · compile"]
-    FDA --> IC
-    BPA --> IC
-    DCA --> IC
-    SCA --> IC
-    VA --> IC
-    SDSA --> IC
+    RA --> L5["LAYER 5 — Synthesis"]
+    FDA --> L5
+    BPA --> L5
+    DCA --> L5
+    SCA --> L5
+    VA --> L5
+    SDSA --> L5
+
+    L5 --> IC["ItineraryCompilerAgent (LLM)\ngeo-cluster · self-critique · compile"]
 
     IC --> DB["Cloud SQL + Memorystore"]
     IC -->|usage_summary SSE| FE
