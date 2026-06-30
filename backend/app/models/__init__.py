@@ -1,5 +1,8 @@
 """Pydantic models for TravelCopilot — zero business logic lives here."""
 
+from app.models.clarification import (
+    ClarificationPrompt as ClarificationPrompt,
+)
 from app.models.itinerary import (
     ActivityOption as ActivityOption,
 )
@@ -86,9 +89,6 @@ from app.models.user_profile import (
 )
 from app.models.user_profile import (
     BudgetTier as BudgetTier,
-)
-from app.models.user_profile import (
-    ClarificationPrompt as ClarificationPrompt,
 )
 from app.models.user_profile import (
     HotelStyle as HotelStyle,

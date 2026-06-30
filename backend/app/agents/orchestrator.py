@@ -30,10 +30,10 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.llm import get_llm
+from app.models.clarification import ClarificationPrompt
 from app.models.user_profile import (
     BudgetPreference,
     BudgetTier,
-    ClarificationPrompt,
     TripDates,
     UserProfile,
 )

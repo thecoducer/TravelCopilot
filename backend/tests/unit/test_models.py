@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import (
     ActivityOption,
     ClarificationRequest,
@@ -34,7 +35,6 @@ from app.models.transport import RouteLeg, StayOption
 from app.models.user_profile import (
     BudgetPreference,
     BudgetTier,
-    ClarificationPrompt,
     HotelStyle,
     TripDates,
     UserProfile,

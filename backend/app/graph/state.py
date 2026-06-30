@@ -17,6 +17,7 @@ from typing import Annotated, Any
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
+from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import Experience, Itinerary
 from app.models.reports import (
     AgentTokenUsage,
@@ -28,7 +29,7 @@ from app.models.reports import (
     VisaReport,
 )
 from app.models.transport import StayOption, TransportRecommendation
-from app.models.user_profile import BudgetPreference, ClarificationPrompt, TripDates, UserProfile
+from app.models.user_profile import BudgetPreference, TripDates, UserProfile
 
 
 class TripState(dict):  # type: ignore[type-arg]
