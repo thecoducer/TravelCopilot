@@ -28,7 +28,7 @@ services:
       retries: 5
 
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:2  # v3 requires ClickHouse; pin to v2 for local dev
     ports:
       - "3000:3000"
     environment:

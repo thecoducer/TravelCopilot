@@ -5,13 +5,15 @@ No API keys are needed.  Tests verify:
   2. Agent handles empty / missing inputs gracefully
   3. Conditional agents (visa, self_drive) no-op correctly
   4. The full LangGraph compiles without errors
+  5. OrchestratorAgent raises NodeInterrupt for ambiguous queries
+  6. Clarification helpers (UserProfile pre-fill, max rounds, answers) work correctly
 """
 
 from __future__ import annotations
 
 from datetime import date
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -127,7 +129,8 @@ class TestOrchestratorAgent:
         assert result.get("is_international") is False
         assert result.get("self_drive_intent") is False
         assert result.get("travelers") == 2
-        assert result.get("needs_clarification") is False
+        # orchestrator no longer writes needs_clarification on the happy path
+        assert "needs_clarification" not in result
 
     @pytest.mark.asyncio
     async def test_self_drive_keyword_detected(self) -> None:
@@ -153,7 +156,11 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_clarification_triggered_when_destination_missing(self) -> None:
+        """When required fields are missing, the orchestrator calls interrupt()
+        with a payload containing the clarification prompts.
+        """
         from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.config import settings
 
         mock_response = _ParsedQuery(
             source_city=_FieldConfidence(value="unknown", confidence=0.3),
@@ -168,10 +175,24 @@ class TestOrchestratorAgent:
             confidence=0.3,
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
-        result = await agent({"query": "plan a trip", "session_id": "s3"})
-        assert result.get("needs_clarification") is True
-        prompts = result.get("clarification_prompts", [])
-        assert len(prompts) >= 1
+
+        call_args: list[dict] = []
+
+        def mock_interrupt(val: dict) -> dict:
+            call_args.append(val)
+            return {}  # empty answers — loop continues until max rounds
+
+        with (
+            patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt),
+            patch.object(settings, "max_clarification_rounds", 1),
+        ):
+            await agent({"query": "plan a trip", "session_id": "s3"})
+
+        assert len(call_args) >= 1, "interrupt() was not called"
+        payload = call_args[0]
+        assert "prompts" in payload
+        fields = [p["field"] for p in payload["prompts"]]
+        assert "destination" in fields
 
     @pytest.mark.asyncio
     async def test_fully_specified_query_no_clarification(self) -> None:
@@ -194,12 +215,121 @@ class TestOrchestratorAgent:
         result = await agent(
             {"query": "3 days Osaka from Kolkata in October with 2 people", "session_id": "s4"}
         )
-        assert result.get("needs_clarification") is False
+        # No interrupt — result contains destination and source directly
+        assert result.get("destination") == "Osaka"
+        assert result.get("source") == "Kolkata"
 
     def test_quick_extract_days(self) -> None:
         assert quick_extract_days("3 days trip to Goa") == 3
         assert quick_extract_days("10 day vacation") == 10
         assert quick_extract_days("weekend trip") is None
+
+    @pytest.mark.asyncio
+    async def test_clarification_interrupt_contains_input_type(self) -> None:
+        """Interrupt payload prompts include input_type for frontend rendering."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.config import settings
+
+        mock_response = _ParsedQuery(
+            source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
+            destination=_FieldConfidence(value=None, confidence=0.0),
+            departure_date=None,
+            trip_days=3,
+            travelers=_FieldConfidence(value="1", confidence=0.8),
+            budget_tier="mid",
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=0.0,
+            confidence=0.4,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(mock_response))
+
+        call_args: list[dict] = []
+
+        def mock_interrupt(val: dict) -> dict:
+            call_args.append(val)
+            return {}
+
+        with (
+            patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt),
+            patch.object(settings, "max_clarification_rounds", 1),
+        ):
+            await agent({"query": "trip somewhere", "session_id": "s5"})
+
+        assert len(call_args) >= 1
+        prompts = call_args[0]["prompts"]
+        destination_prompt = next(p for p in prompts if p["field"] == "destination")
+        assert destination_prompt["input_type"] == "text"
+        dates_prompt = next((p for p in prompts if p["field"] == "dates"), None)
+        if dates_prompt:
+            assert dates_prompt["input_type"] == "date"
+
+    @pytest.mark.asyncio
+    async def test_userprofile_prefill_skips_source_clarification(self) -> None:
+        """When UserProfile.home_city is set, source is pre-filled without interrupt."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+
+        # LLM returns source as missing, but profile has home_city
+        mock_response = _ParsedQuery(
+            source_city=_FieldConfidence(value=None, confidence=0.0),
+            destination=_FieldConfidence(value="Leh", confidence=0.95),
+            departure_date="2026-07-15",
+            trip_days=4,
+            travelers=_FieldConfidence(value="1", confidence=0.8),
+            budget_tier="mid",
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=0.85,
+            confidence=0.85,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(mock_response))
+        state = {
+            "query": "4 days in Leh in July",
+            "session_id": "s6",
+            "user_profile": UserProfile(user_id="u1", home_city="Kolkata"),
+        }
+        # Should NOT raise NodeInterrupt (source pre-filled from profile)
+        result = await agent(state)
+        assert result.get("source") == "Kolkata"
+        assert result.get("destination") == "Leh"
+
+    @pytest.mark.asyncio
+    async def test_max_clarification_rounds_exhausted_proceeds_with_defaults(self) -> None:
+        """After max_clarification_rounds, orchestrator proceeds with best-effort defaults."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.config import settings
+
+        ambiguous_response = _ParsedQuery(
+            source_city=_FieldConfidence(value="unknown", confidence=0.1),
+            destination=_FieldConfidence(value=None, confidence=0.0),
+            departure_date=None,
+            trip_days=3,
+            travelers=_FieldConfidence(value="1", confidence=0.8),
+            budget_tier="mid",
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=0.0,
+            confidence=0.1,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(ambiguous_response))
+
+        call_count = 0
+
+        def mock_interrupt(val: dict) -> dict:
+            nonlocal call_count
+            call_count += 1
+            return {}  # return empty answers — fields remain missing
+
+        with (
+            patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt),
+            patch.object(settings, "max_clarification_rounds", 2),
+        ):
+            result = await agent({"query": "plan a trip", "session_id": "s7"})
+
+        # interrupt() should have been called exactly max_clarification_rounds times
+        assert call_count == 2
+        # Orchestrator should have applied defaults and returned a usable state
+        assert "destination" in result  # may be "unknown destination" but key must exist
 
 
 # ── DestinationContextAgent ───────────────────────────────────────────────────

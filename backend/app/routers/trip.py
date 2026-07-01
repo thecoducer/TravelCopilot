@@ -1,12 +1,13 @@
 """FastAPI trip planning router -- Phase 3 endpoints.
 
-POST /api/trip/plan              -- SSE stream, runs full LangGraph
-GET  /api/trip/{session_id}      -- full itinerary JSON (from DB)
-PUT  /api/trip/{id}/itinerary    -- persist drag-drop reorder
-GET  /api/trip/{id}/usage        -- token + cost breakdown
-GET  /api/trip/public/{slug}     -- public shareable itinerary
-POST /api/trip/{id}/pdf          -- WeasyPrint PDF
-POST /api/trip/{id}/feedback     -- Langfuse user score
+POST /api/trip/plan                 -- SSE stream, runs full LangGraph
+POST /api/trip/{session_id}/clarify -- resume a paused graph after clarification
+GET  /api/trip/{session_id}         -- full itinerary JSON (from DB)
+PUT  /api/trip/{id}/itinerary       -- persist drag-drop reorder
+GET  /api/trip/{id}/usage           -- token + cost breakdown
+GET  /api/trip/public/{slug}        -- public shareable itinerary
+POST /api/trip/{id}/pdf             -- WeasyPrint PDF
+POST /api/trip/{id}/feedback        -- Langfuse user score
 
 SSE event types:
   agent_start | agent_done | needs_clarification | complete | usage_summary | error
@@ -22,9 +23,10 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from langgraph.types import Command
 from pydantic import BaseModel, Field
 
-from app.graph.graph import build_graph
+from app.graph.graph import get_compiled_graph
 from app.graph.state import initial_state
 
 logger = structlog.get_logger(__name__)
@@ -44,6 +46,16 @@ class PlanRequest(BaseModel):
 
 class ItineraryUpdateRequest(BaseModel):
     segments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ClarifyRequest(BaseModel):
+    """Structured answers to the clarification prompts.
+
+    Keys correspond to the ``field`` values from the ``needs_clarification`` SSE event.
+    Example: ``{"destination": "Leh", "dates": "July 15-20", "travelers": "2"}``
+    """
+
+    answers: dict[str, str]
 
 
 class FeedbackRequest(BaseModel):
@@ -118,35 +130,31 @@ async def _stream_graph(
     try:
         yield _sse("agent_start", {"agent": "orchestrator", "session_id": session_id})
 
-        compiled = build_graph()
+        compiled = await get_compiled_graph()
         state = initial_state(query=query, session_id=session_id)
         state.update(overrides)
 
         langfuse_handler = get_langfuse_handler(session_id=session_id)
-        config: dict[str, Any] = {}
+        config: dict[str, Any] = {"configurable": {"thread_id": session_id}}
         if langfuse_handler:
             config["callbacks"] = [langfuse_handler]
 
-        # Stream updates node-by-node
-        node_outputs: dict[str, Any] = {}
         async for chunk in compiled.astream(state, stream_mode="updates", config=config):
+            # Detect interrupt() from OrchestratorAgent — graph is paused
+            if "__interrupt__" in chunk:
+                interrupt_val = chunk["__interrupt__"][0]
+                payload = interrupt_val.value if hasattr(interrupt_val, "value") else interrupt_val
+                yield _sse(
+                    "needs_clarification",
+                    {
+                        "session_id": session_id,
+                        "prompts": payload.get("prompts", []),
+                        "round": payload.get("round", 0),
+                    },
+                )
+                return  # stream closes; client POSTs to /{session_id}/clarify
+
             for node_name, node_output in chunk.items():
-                node_outputs[node_name] = node_output
-
-                # Clarification gate — emit special event and stop cleanly
-                if node_name == "orchestrator" and node_output.get("needs_clarification"):
-                    yield _sse(
-                        "needs_clarification",
-                        {
-                            "session_id": session_id,
-                            "prompts": [
-                                {"field": p.field, "question": p.question}
-                                for p in node_output.get("clarification_prompts", [])
-                            ],
-                        },
-                    )
-                    return  # No `complete` event — client re-POSTs with clarified query
-
                 yield _sse(
                     "agent_done",
                     {
@@ -157,49 +165,128 @@ async def _stream_graph(
                     },
                 )
 
-        # Collect final state by re-invoking (streaming doesn't return final state directly)
-        final_state = await compiled.ainvoke(state, config=config)
+        # Graph completed — get final state from checkpoint
+        snapshot = compiled.get_state(config)
+        final_state: dict[str, Any] = snapshot.values if snapshot else {}
 
-        itinerary = final_state.get("itinerary")
-        itinerary_id = str(uuid.uuid4())
-        if itinerary and hasattr(itinerary, "model_copy"):
-            itinerary = itinerary.model_copy(update={"id": itinerary_id})
-
-        # Persist to DB (best-effort)
-        await _persist_trip(
+        async for event in _emit_completion_events(
+            final_state=final_state,
             session_id=session_id,
-            trip_id=itinerary_id,
             query=query,
-            state=final_state,
-            itinerary=itinerary,
-        )
-
-        token_usage = final_state.get("token_usage", {})
-        total_tokens = sum(u.total_tokens for u in token_usage.values())
-
-        yield _sse(
-            "complete",
-            {
-                "itinerary_id": itinerary_id,
-                "session_id": session_id,
-                "itinerary": itinerary.model_dump() if itinerary else None,
-            },
-        )
-        yield _sse(
-            "usage_summary",
-            {
-                "session_id": session_id,
-                "total_tokens": total_tokens,
-                "per_agent": {
-                    name: {"tokens": u.total_tokens, "cost_usd": u.cost_usd}
-                    for name, u in token_usage.items()
-                },
-            },
-        )
+            compiled=compiled,
+            config=config,
+        ):
+            yield event
 
     except Exception as exc:
         logger.error("stream_graph_error", error=str(exc), session_id=session_id)
         yield _sse("error", {"message": str(exc), "session_id": session_id})
+
+
+async def _stream_resumed_graph(
+    session_id: str,
+    answers: dict[str, str],
+    query: str,
+) -> AsyncGenerator[str, None]:
+    """Resume a paused graph after the user answers clarification prompts."""
+    from app.observability.langfuse import get_langfuse_handler
+
+    try:
+        compiled = await get_compiled_graph()
+
+        langfuse_handler = get_langfuse_handler(session_id=session_id)
+        config: dict[str, Any] = {"configurable": {"thread_id": session_id}}
+        if langfuse_handler:
+            config["callbacks"] = [langfuse_handler]
+
+        async for chunk in compiled.astream(
+            Command(resume=answers), stream_mode="updates", config=config
+        ):
+            if "__interrupt__" in chunk:
+                # Another round of clarification needed
+                interrupt_val = chunk["__interrupt__"][0]
+                payload = interrupt_val.value if hasattr(interrupt_val, "value") else interrupt_val
+                yield _sse(
+                    "needs_clarification",
+                    {
+                        "session_id": session_id,
+                        "prompts": payload.get("prompts", []),
+                        "round": payload.get("round", 0),
+                    },
+                )
+                return
+
+            for node_name, node_output in chunk.items():
+                yield _sse(
+                    "agent_done",
+                    {
+                        "agent": node_name,
+                        "layer": _AGENT_LAYERS.get(node_name, -1),
+                        "session_id": session_id,
+                        "preview": _preview(node_name, node_output),
+                    },
+                )
+
+        snapshot = compiled.get_state(config)
+        final_state: dict[str, Any] = snapshot.values if snapshot else {}
+
+        async for event in _emit_completion_events(
+            final_state=final_state,
+            session_id=session_id,
+            query=query,
+            compiled=compiled,
+            config=config,
+        ):
+            yield event
+
+    except Exception as exc:
+        logger.error("stream_resumed_error", error=str(exc), session_id=session_id)
+        yield _sse("error", {"message": str(exc), "session_id": session_id})
+
+
+async def _emit_completion_events(
+    final_state: dict[str, Any],
+    session_id: str,
+    query: str,
+    compiled: Any,
+    config: dict[str, Any],
+) -> AsyncGenerator[str, None]:
+    """Emit ``complete`` and ``usage_summary`` SSE events after the graph finishes."""
+    itinerary = final_state.get("itinerary")
+    itinerary_id = str(uuid.uuid4())
+    if itinerary and hasattr(itinerary, "model_copy"):
+        itinerary = itinerary.model_copy(update={"id": itinerary_id})
+
+    await _persist_trip(
+        session_id=session_id,
+        trip_id=itinerary_id,
+        query=query,
+        state=final_state,
+        itinerary=itinerary,
+    )
+
+    token_usage = final_state.get("token_usage", {})
+    total_tokens = sum(u.total_tokens for u in token_usage.values())
+
+    yield _sse(
+        "complete",
+        {
+            "itinerary_id": itinerary_id,
+            "session_id": session_id,
+            "itinerary": itinerary.model_dump() if itinerary else None,
+        },
+    )
+    yield _sse(
+        "usage_summary",
+        {
+            "session_id": session_id,
+            "total_tokens": total_tokens,
+            "per_agent": {
+                name: {"tokens": u.total_tokens, "cost_usd": u.cost_usd}
+                for name, u in token_usage.items()
+            },
+        },
+    )
 
 
 async def _persist_trip(
@@ -268,6 +355,41 @@ async def plan_trip(request: PlanRequest) -> StreamingResponse:
 
     return StreamingResponse(
         _stream_graph(query=request.query, session_id=session_id, overrides=overrides),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/{session_id}/clarify")
+async def clarify_trip(session_id: str, request: ClarifyRequest) -> StreamingResponse:
+    """Resume a paused planning graph with the user's clarification answers.
+
+    Called after a ``needs_clarification`` SSE event.  The ``answers`` dict
+    should map each prompted ``field`` to the user's response string, e.g.::
+
+        {"destination": "Leh", "dates": "July 15-20", "travelers": "2"}
+    """
+    logger.info(
+        "clarify_trip_resume",
+        session_id=session_id,
+        fields=list(request.answers.keys()),
+    )
+
+    # Retrieve the original query from the checkpoint so _persist_trip can record it
+    try:
+        compiled = await get_compiled_graph()
+        config = {"configurable": {"thread_id": session_id}}
+        snapshot = compiled.get_state(config)
+        query = (snapshot.values or {}).get("query", "") if snapshot else ""
+    except Exception:
+        query = ""
+
+    return StreamingResponse(
+        _stream_resumed_graph(
+            session_id=session_id,
+            answers=request.answers,
+            query=query,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

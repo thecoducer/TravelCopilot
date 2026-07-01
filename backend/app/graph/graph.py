@@ -1,14 +1,12 @@
-"""LangGraph StateGraph — 14 agent nodes with clarification gate.
+"""LangGraph StateGraph — 14 agent nodes with interrupt-based clarification.
 
-Routing after OrchestratorAgent:
-  • ``needs_clarification == True``  → ``clarification`` node → END
-  • ``needs_clarification == False`` → ``ready_to_plan`` pass-through node
-                                       → fan-out to all Layer 1 + Layer 2 nodes
+The OrchestratorAgent uses LangGraph ``interrupt()`` to pause the graph when
+the user query is ambiguous.  The client resumes via
+``POST /api/trip/{session_id}/clarify`` — no full re-POST is needed.
 
-The ``ready_to_plan`` node exists purely as a fan-out source so that we can
-use ``conditional_edges`` from ``orchestrator`` (which only supports a single
-return value per call) while still enabling parallel execution for all
-Layer 1 + 2 agents.
+After the orchestrator finishes (with or without clarification rounds) control
+flows directly to ``ready_to_plan``, which fans out to all Layer 1 + 2 nodes
+in parallel.
 """
 
 from __future__ import annotations
@@ -34,16 +32,7 @@ from app.agents.visa_agent import VisaAgent
 from app.graph.state import TripState, initial_state
 from app.tools.factory import ToolFactory
 
-# ── Clarification pass-through node ──────────────────────────────────────────
-
-
-async def _clarification_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Terminal node reached when the query is ambiguous.
-
-    Emits no changes — the graph simply halts here and the SSE router
-    emits a ``needs_clarification`` event to the client.
-    """
-    return {}  # state already has needs_clarification=True + prompts
+# ── Pass-through fan-out node ──────────────────────────────────────────────────
 
 
 async def _ready_to_plan_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -51,22 +40,22 @@ async def _ready_to_plan_node(state: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _route_after_orchestrator(state: dict[str, Any]) -> str:
-    if state.get("needs_clarification"):
-        return "clarification"
-    return "ready_to_plan"
+# ── Graph builder ──────────────────────────────────────────────────────────────
 
 
-# ── Graph builder ─────────────────────────────────────────────────────────────
-
-
-def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = None) -> Any:
+def build_graph(
+    tool_factory: ToolFactory | None = None,
+    llm: object | None = None,
+    checkpointer: object | None = None,
+) -> Any:
     """Construct and compile the full planning graph.
 
     Args:
         tool_factory: Injected factory (mock or real).
         llm: Optional shared LLM instance injected into all agents.
              Primarily used in tests to avoid real API calls.
+        checkpointer: LangGraph checkpointer for interrupt/resume support.
+                      Pass ``None`` in tests; use ``AsyncPostgresSaver`` in production.
     """
     factory = tool_factory or ToolFactory()
 
@@ -89,7 +78,6 @@ def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = No
 
     # Control nodes
     graph.add_node("orchestrator", orchestrator)
-    graph.add_node("clarification", _clarification_node)
     graph.add_node("ready_to_plan", _ready_to_plan_node)
 
     # Layer 1
@@ -118,13 +106,9 @@ def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = No
     # ── Edges ──────────────────────────────────────────────────────────────
     graph.add_edge(START, "orchestrator")
 
-    # Conditional: clarification gate
-    graph.add_conditional_edges(
-        "orchestrator",
-        _route_after_orchestrator,
-        {"clarification": "clarification", "ready_to_plan": "ready_to_plan"},
-    )
-    graph.add_edge("clarification", END)
+    # Orchestrator → ready_to_plan (interrupt() inside the orchestrator handles
+    # clarification; the graph pauses mid-node and resumes transparently)
+    graph.add_edge("orchestrator", "ready_to_plan")
 
     # Fan-out from ready_to_plan → all Layer 1+2 nodes in parallel
     for node in [
@@ -167,16 +151,48 @@ def build_graph(tool_factory: ToolFactory | None = None, llm: object | None = No
 
     graph.add_edge("itinerary_compiler", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 _compiled_graph: Any | None = None
+_graph_init_lock: Any | None = None
 
 
 def get_graph() -> Any:
+    """Return the compiled graph without a checkpointer.
+
+    Used in tests and scripts where no persistent checkpoint is needed.
+    For production use ``get_compiled_graph()`` instead.
+    """
     global _compiled_graph
     if _compiled_graph is None:
         _compiled_graph = build_graph()
+    return _compiled_graph
+
+
+async def get_compiled_graph() -> Any:
+    """Return the production compiled graph (with checkpointer), initialising lazily.
+
+    Async-safe singleton using a lock — safe to call from multiple concurrent
+    request handlers.
+    """
+    import asyncio
+
+    global _compiled_graph, _graph_init_lock
+
+    if _compiled_graph is not None:
+        return _compiled_graph
+
+    if _graph_init_lock is None:
+        _graph_init_lock = asyncio.Lock()
+
+    async with _graph_init_lock:
+        if _compiled_graph is None:
+            from app.checkpointer import get_checkpointer
+
+            checkpointer = await get_checkpointer()
+            _compiled_graph = build_graph(checkpointer=checkpointer)
+
     return _compiled_graph
 
 
@@ -184,6 +200,7 @@ async def run_graph(query: str, session_id: str, **overrides: Any) -> dict[str, 
     """Run the full planning graph for a query.  Returns the final TripState dict."""
     state = initial_state(query=query, session_id=session_id)
     state.update(overrides)
-    compiled = get_graph()
-    result: dict[str, Any] = await compiled.ainvoke(state)
+    compiled = await get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id}}
+    result: dict[str, Any] = await compiled.ainvoke(state, config=config)
     return result
