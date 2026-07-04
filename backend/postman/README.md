@@ -36,9 +36,10 @@ correctly by earlier requests before later ones use them.
 - Final `usage_summary` event shows per-agent token counts.
 
 ### 6 — Clarification gate
-- Response body includes `needs_clarification` event.
-- No `complete` event (graph halted — client must re-POST with clarified query).
+- Response body includes `needs_clarification` event with `prompts[]`.
+- Stream closes after the event — graph is **paused**, not terminated.
 - `prompts` array contains at least one entry for `dates` or `travelers`.
+- To resume: call `POST /api/trip/{session_id}/clarify` with the user's answers (no full re-POST to `/plan` needed).
 
 ### 10 — Generate PDF
 - `Content-Type: application/pdf`.

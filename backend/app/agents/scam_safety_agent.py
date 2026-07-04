@@ -1,7 +1,13 @@
-"""ScamSafetyAgent — Layer 1: safety advisories, scam warnings, emergency contacts.
+"""ScamSafetyAgent — Layer 4: venue-aware safety advisories and scam warnings.
 
-Uses Tavily to search for destination-specific safety information and
-synthesises a ``ScamSafetyReport`` via LLM.
+Runs after FoodDiscoveryAgent so it has the actual experience spots, restaurants,
+and neighbourhoods in state.  This allows the report to cross-reference specific
+venues rather than issuing only generic destination-level warnings.
+
+Inputs consumed from state:
+  - ``destination``        — for Tavily queries
+  - ``experiences_raw``    — attraction / activity names and areas
+  - ``food_recommendations`` — restaurant / cafe names per day
 """
 
 from __future__ import annotations
@@ -18,13 +24,15 @@ from app.tools.factory import ToolFactory
 logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are a travel safety analyst. Based on the search results below, produce a structured
-safety report for travellers visiting the given destination.
+You are a travel safety analyst. Based on the search results and venue list below, produce a
+structured safety report for travellers visiting the given destination.
 
 Rules:
 - ``advisory_level`` should reflect official government guidance: "Exercise normal caution" |
   "Exercise increased caution" | "Reconsider travel" | "Do not travel".
 - ``top_scams`` should include 2–5 specific, actionable scam entries with how-to-avoid advice.
+  Where a scam is associated with a venue or neighbourhood listed in the traveller's actual
+  itinerary (see Venues section), mention that venue by name so the warning is immediately useful.
 - ``safe_areas`` should name specific neighbourhoods or districts travellers can rely on.
 - ``emergency_contacts`` must include police, ambulance, and tourist helpline numbers if available.
 - ``women_safety_notes`` and ``medical_facilities`` should only be populated with concrete, useful
@@ -33,7 +41,11 @@ Rules:
 
 
 class ScamSafetyAgent:
-    """Layer 1 — Scam warnings, safety advisories, and emergency contacts."""
+    """Layer 4 — Venue-aware scam warnings, safety advisories, and emergency contacts.
+
+    Runs after FoodDiscoveryAgent so ``experiences_raw`` and ``food_recommendations``
+    are already populated in state, enabling venue-specific warnings.
+    """
 
     def __init__(
         self,
@@ -67,7 +79,6 @@ class ScamSafetyAgent:
             if isinstance(r, Exception):
                 log.warning("tavily_error", error=str(r))
                 continue
-            # Include the Tavily answer summary if present
             if r.get("answer"):
                 snippets.append(f"Summary: {r['answer']}")
             for item in r.get("results", []):
@@ -75,13 +86,40 @@ class ScamSafetyAgent:
 
         context = "\n".join(snippets) if snippets else "No search results available."
 
+        # ── Build venue context from state ────────────────────────────────────
+        experiences_raw: list[Any] = state.get("experiences_raw", [])
+        food_recommendations: dict[str, list[Any]] = state.get("food_recommendations", {})
+
+        experience_names: list[str] = [
+            e.name if hasattr(e, "name") else e.get("name", "")
+            for e in experiences_raw
+            if e
+        ]
+        food_names: list[str] = [
+            v.name if hasattr(v, "name") else v.get("name", "")
+            for day_venues in food_recommendations.values()
+            for v in day_venues
+            if v
+        ]
+        venue_section = ""
+        if experience_names or food_names:
+            venue_section = "\n\nVenues in this traveller's itinerary:\n"
+            if experience_names:
+                venue_section += "Experiences: " + ", ".join(experience_names[:20]) + "\n"
+            if food_names:
+                venue_section += "Food outlets: " + ", ".join(food_names[:20]) + "\n"
+
         chain = self._llm.with_structured_output(ScamSafetyReport)  # type: ignore[union-attr]
         try:
             report: ScamSafetyReport = chain.invoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
-                        content=f"Destination: {destination}\n\nSearch results:\n{context}"
+                        content=(
+                            f"Destination: {destination}\n\n"
+                            f"Search results:\n{context}"
+                            f"{venue_section}"
+                        )
                     ),
                 ]
             )

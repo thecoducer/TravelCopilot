@@ -1,6 +1,6 @@
 # Multi-Agent AI Trip Planner — Full System Design Plan
 
-> Version 6 — Updated 2026-06-15
+> Version 7 — Updated 2026-07-02
 > Status: Approved, ready for implementation
 > Dev Roadmap: See `dev-roadmap.md`
 
@@ -35,7 +35,7 @@ Based on Google's Agent whitepaper and ReAct framework:
 graph TD
     %% ── Styling ──────────────────────────────────────────────────
     classDef control fill:#1e1e2e,stroke:#cba6f7,stroke-width:2px,color:#cdd6f4
-    classDef gate fill:#313244,stroke:#f38ba8,stroke-width:2px,color:#f38ba8,stroke-dasharray:5
+    classDef interrupt fill:#2a2040,stroke:#f9e2af,stroke-width:2px,color:#f9e2af,stroke-dasharray:5
     classDef layer1 fill:#1e3a5f,stroke:#89b4fa,stroke-width:2px,color:#cdd6f4
     classDef layer2 fill:#1a4731,stroke:#a6e3a1,stroke-width:2px,color:#cdd6f4
     classDef layer3 fill:#4a3728,stroke:#fab387,stroke-width:2px,color:#cdd6f4
@@ -47,53 +47,49 @@ graph TD
     START((START)):::control --> orchestrator
 
     %% ── Layer 0: Routing & Orchestration ─────────────────────────
-    orchestrator["🎯 OrchestratorAgent\n─────────────────\nparse query → structured params\ndetect is_international\ndetect self_drive_intent\nclarification gate check"]:::control
+    orchestrator["LAYER 0 · Control\n🎯 OrchestratorAgent\n─────────────────\nparse query → structured params\ndetect is_international\ndetect self_drive_intent\ninterrupt() if ambiguous"]:::control
 
-    %% ── Conditional Routing ──────────────────────────────────────
-    orchestrator -->|"needs_clarification\n== true"| clarification
-    orchestrator -->|"needs_clarification\n== false"| ready_to_plan
+    clarification_note["interrupt() · clarification\n💬\n─────────────────\ngraph pauses mid-node\nclient resumes via POST /clarify\nup to N rounds · then proceed"]:::interrupt
 
-    clarification["⚠️ Clarification Node\n─────────────────\nterminal · emits SSE\nclarification_prompts[]"]:::gate
-    clarification --> END_NODE((END)):::terminal
+    orchestrator -. "ambiguous query →\ninterrupt() ↔ resume" .-> clarification_note
 
-    ready_to_plan["✅ ready_to_plan\n─────────────────\npass-through fan-out"]:::control
+    %% ── Orchestrator always proceeds to ready_to_plan ────────────
+    orchestrator --> ready_to_plan
+
+    ready_to_plan["LAYER 0 · Control\n✅ ready_to_plan\n─────────────────\npass-through fan-out\nLayer 1 + 2 fire in parallel"]:::control
 
     %% ── Layer 1: Destination Intelligence (parallel) ─────────────
     ready_to_plan --> destination_context
-    ready_to_plan --> scam_safety
     ready_to_plan --> visa
 
-    destination_context["🌍 DestinationContextAgent\n─────────────────\nLLM · Tavily search\nseasonality · crowds\ncosts · weather · risks"]:::layer1
+    destination_context["LAYER 1 · Destination Intelligence\n🌍 DestinationContextAgent\n─────────────────\nLLM · Tavily search\nseasonality · crowds\ncosts · weather · risks"]:::layer1
 
-    scam_safety["🛡️ ScamSafetyAgent\n─────────────────\nLLM · Tavily search\nscams · safety tips\nemergency contacts"]:::layer1
-
-    visa["🛂 VisaAgent\n─────────────────\nLLM · Tavily + Places\nintl trips only\nvisa type · process · fees"]:::layer1
+    visa["LAYER 1 · Destination Intelligence\n🛂 VisaAgent\n─────────────────\nLLM · Tavily + Places\nintl trips only\nvisa type · process · fees"]:::layer1
 
     %% ── Layer 2: Supply Search (parallel) ────────────────────────
     ready_to_plan --> transport_search
     ready_to_plan --> stay_search
     ready_to_plan --> local_experiences
 
-    transport_search["✈️ TransportSearchAgent\n─────────────────\ntools only · no LLM\nflights · trains · buses\nSerpAPI + Google Routes"]:::layer2
+    transport_search["LAYER 2 · Supply Search\n✈️ TransportSearchAgent\n─────────────────\nLLM hub-ID + tools\nflights · trains · buses\nSerpAPI + Google Routes"]:::layer2
 
-    stay_search["🏨 StaySearchAgent\n─────────────────\ntools only · no LLM\nhotels · stays\nSerpAPI Google Hotels"]:::layer2
+    stay_search["LAYER 2 · Supply Search\n🏨 StaySearchAgent\n─────────────────\ntools only · no LLM\nhotels · stays\nSerpAPI Google Hotels"]:::layer2
 
-    local_experiences["🎭 LocalExperiencesAgent\n─────────────────\ntools only · no LLM\nattractions · activities\nGoogle Places + Tavily"]:::layer2
+    local_experiences["LAYER 2 · Supply Search\n🎭 LocalExperiencesAgent\n─────────────────\ntools only · no LLM\nattractions · activities\nGoogle Places + Tavily"]:::layer2
 
     %% ── Layer 3: Analysis ────────────────────────────────────────
     transport_search --> transport_optimizer
     transport_search --> self_drive_search
     stay_search --> stay_analyst
 
-    transport_optimizer["🔀 TransportOptimizerAgent\n─────────────────\nLLM reasoning\nbest route selection\nbudget-filtered alternatives"]:::layer3
+    transport_optimizer["LAYER 3 · Analysis\n🔀 TransportOptimizerAgent\n─────────────────\nLLM reasoning\nbest route + 2 alternatives\nbudget-filtered"]:::layer3
 
-    stay_analyst["📊 StayAnalystAgent\n─────────────────\nLLM reasoning\nranked shortlist · rationale\npersonalization scoring"]:::layer3
+    stay_analyst["LAYER 3 · Analysis\n📊 StayAnalystAgent\n─────────────────\nLLM reasoning\nshortlist 3–5 · rationale\npersonalization scoring"]:::layer3
 
-    self_drive_search["🚗 SelfDriveSearchAgent\n─────────────────\nconditional · LLM\nrentals · fuel estimate\nonly if self_drive_intent"]:::layer3
+    self_drive_search["LAYER 3 · Analysis\n🚗 SelfDriveSearchAgent\n─────────────────\nconditional · LLM\nrentals · fuel estimate\nonly if self_drive_intent"]:::layer3
 
-    %% ── Layer 1 + Layer 3 → BudgetPlanner (barrier join) ─────────
+    %% ── Layer 1 + Layer 3 → BudgetPlanner (barrier join: 5 inputs)
     destination_context --> budget_planner
-    scam_safety --> budget_planner
     visa --> budget_planner
     transport_optimizer --> budget_planner
     stay_analyst --> budget_planner
@@ -107,20 +103,24 @@ graph TD
     local_experiences --> food_discovery
 
     %% ── Layer 4: Enrichment ──────────────────────────────────────
-    budget_planner["💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join\naggregate all costs\nbudget verdict + tips"]:::layer4
+    budget_planner["LAYER 4 · Enrichment\n💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join (5)\naggregate all costs · FX\nbudget verdict + tips"]:::layer4
 
-    reviews["⭐ ReviewsAgent\n─────────────────\nLLM · Places API\nreviews + photos\nfor stays + experiences"]:::layer4
+    reviews["LAYER 4 · Enrichment\n⭐ ReviewsAgent\n─────────────────\nLLM · Places API\nreviews + photos\nfor stays + experiences"]:::layer4
 
-    food_discovery["🍜 FoodDiscoveryAgent\n─────────────────\ntools only · no LLM\nrestaurants · cafes\nstreet food per day"]:::layer4
+    food_discovery["LAYER 4 · Enrichment\n🍜 FoodDiscoveryAgent\n─────────────────\ntools only · no LLM\nrestaurants · cafes\nstreet food per day"]:::layer4
+
+    food_discovery --> scam_safety
+
+    scam_safety["LAYER 4 · Enrichment\n🛡️ ScamSafetyAgent\n─────────────────\nLLM · Tavily search\nvenue-aware · scam warnings\nexperiences · food · area risks"]:::layer4
 
     %% ── Layer 5: Synthesis ───────────────────────────────────────
     budget_planner --> itinerary_compiler
     reviews --> itinerary_compiler
-    food_discovery --> itinerary_compiler
+    scam_safety --> itinerary_compiler
 
-    itinerary_compiler["📋 ItineraryCompilerAgent\n─────────────────\nLLM · geo-cluster\ncompile · self-critique\ndeterministic gate · finalise"]:::layer5
+    itinerary_compiler["LAYER 5 · Synthesis\n📋 ItineraryCompilerAgent\n─────────────────\nLLM · geo-cluster\ncompile · self-critique\ndeterministic gate · finalise"]:::layer5
 
-    itinerary_compiler --> END_NODE
+    itinerary_compiler --> END_NODE((END)):::terminal
 ```
 
 ---
@@ -130,13 +130,16 @@ graph TD
 ```
 LAYER 0 — ROUTING & ORCHESTRATION
   └── OrchestratorAgent
-        Dual role: (1) parse user query → structured params,
-        (2) route via LangGraph conditional_edges to fire agent groups.
-        This IS the LangGraph supervisor/router node.
+        Parses the free-text query into structured trip params (source,
+        destination, dates, budget, travelers) with per-field parse_confidence.
+        Uses LangGraph interrupt() to pause the graph mid-node when required
+        fields are missing or low-confidence — the graph resumes via
+        POST /clarify, no full re-POST needed.  After up to N clarification
+        rounds the graph always proceeds to ready_to_plan, which fans out to
+        all Layer 1 + 2 nodes simultaneously.
 
 LAYER 1 — DESTINATION INTELLIGENCE  (all parallel, no supply data needed)
   ├── DestinationContextAgent  seasonality · crowd · practical costs · local constraints
-  ├── ScamSafetyAgent          safety · scams · advisories
   └── VisaAgent                international trips only
 
 LAYER 2 — SUPPLY SEARCH  (all parallel, pure tool calls — no LLM)
@@ -152,7 +155,8 @@ LAYER 3 — ANALYSIS  (parallel, LLM-heavy, each waits for its Layer 2 parent)
 LAYER 4 — ENRICHMENT  (parallel, after Layer 3 + LocalExperiences complete)
   ├── ReviewsAgent             Google Places reviews + photos for stays + experiences
   ├── FoodDiscoveryAgent       meal-time food search per day cluster: restaurants, cafes, street food
-  └── BudgetPlannerAgent       aggregate all costs → budget verdict + savings tips
+  ├── BudgetPlannerAgent       aggregate all costs → budget verdict + savings tips
+  └── ScamSafetyAgent          runs after FoodDiscovery — venue-aware scam warnings using actual experiences + food outlets
 
 LAYER 5 — SYNTHESIS
   └── ItineraryCompilerAgent   geo-cluster → compile → self-critique → finalise
@@ -163,51 +167,54 @@ LAYER 5 — SYNTHESIS
 ## Shared TripState (`graph/state.py`)
 
 ```python
-class TripState(TypedDict):
+class TripState(dict):  # subclasses dict for LangGraph compatibility
     # ── Input ──────────────────────────────────────────────────────
     query:             str
     session_id:        str
     source:            str
     destination:       str
-    dates:             TripDates
+    dates:             TripDates | None
     budget:            BudgetPreference
     travelers:         int
     user_profile:      UserProfile | None
     is_international:  bool          # set by OrchestratorAgent
     self_drive_intent: bool          # set by OrchestratorAgent
 
-    # ── Clarification gate (set by OrchestratorAgent) ──────────────
-    needs_clarification:  bool                    # True when critical fields missing/low-confidence
-    clarification_prompts: list[ClarificationPrompt]  # questions to ask the user
-    parse_confidence:     dict[str, float]        # per-field confidence (0–1) from the parse
+    # ── Clarification (interrupt-based — OrchestratorAgent) ────────
+    needs_clarification:  bool              # kept for backward-compat
+    clarification_prompts: list[ClarificationPrompt]  # kept for backward-compat
+    parse_confidence:     dict[str, float]  # per-field confidence (0–1)
+    clarification_round:  int               # completed clarification rounds
 
-    # ── Layer 1: Intelligence ──────────────────────────────────────
+    # ── Layer 1: Destination Intelligence ─────────────────────────
     destination_context_report: DestinationContextReport | None
     scam_safety_report: ScamSafetyReport | None
-    visa_report:       VisaReport | None
+    visa_report:        VisaReport | None
 
     # ── Layer 2: Supply Search ─────────────────────────────────────
-    transport_hubs:        list[str]           # from hub-ID LLM call
-    transport_legs_raw:    dict[str, list]     # keyed by "KOL→DEL"
-    stays_raw:             list[StayOption]
-    experiences_raw:       list[Experience]
+    transport_hubs:     list[str]           # from hub-ID LLM call in TransportSearchAgent
+    transport_legs_raw: dict[str, list]     # keyed by "KOL→DEL"
+    stays_raw:          list[StayOption]
+    experiences_raw:    list[Experience]
 
     # ── Layer 3: Analysis ──────────────────────────────────────────
     transport_recommendation: TransportRecommendation | None
-    stays_pick:            StayOption | None
-    stays_rationale:       str
-    self_drive_report:     SelfDriveReport | None
+    transport_alternatives:   list[TransportRecommendation]  # top-2 budget-filtered
+    stays_shortlist:   list[StayOption]     # 3–5 ranked options with personalization_reason
+    stays_pick:        StayOption | None    # recommended default (first in shortlist)
+    stays_rationale:   str
+    self_drive_report: SelfDriveReport | None
 
     # ── Layer 4: Enrichment ────────────────────────────────────────
-    reviews_summary:        dict[str, ReviewSummary]  # keyed by place name
-    food_recommendations: dict[str, list[FoodVenue]]  # keyed by day ISO date
-    budget_report:          BudgetReport | None
+    reviews_summary:      Annotated[dict[str, ReviewSummary], operator.or_]  # merged
+    food_recommendations: Annotated[dict[str, list], operator.or_]           # merged
+    budget_report:        BudgetReport | None
 
     # ── Output ─────────────────────────────────────────────────────
-    itinerary:    Itinerary | None
-    token_usage:  dict[str, AgentTokenUsage]
-    messages:     list[BaseMessage]
-    next_agent:   str
+    itinerary:   Itinerary | None
+    token_usage: Annotated[dict[str, AgentTokenUsage], operator.or_]  # merged
+    messages:    Annotated[list[BaseMessage], add_messages]            # appended
+    error:       str | None
     error:        str | None
 ```
 
@@ -371,9 +378,9 @@ All agents receive `list[BaseTool]` via constructor injection. In unit tests, `T
 
 ### 5. LangGraph StateGraph wiring (`graph/graph.py`)
 
-All 14 agent nodes wired with parallel edges per layer. `OrchestratorAgent` uses `conditional_edges` to route based on `state["next_agent"]`. Conditional nodes (`VisaAgent`, `SelfDriveSearchAgent`) skipped via routing when flags are false.
+All 14 agent nodes wired with direct and parallel edges per layer. There are no `conditional_edges` — `VisaAgent` and `SelfDriveSearchAgent` run unconditionally but return immediately when their guard conditions (`is_international`, `self_drive_intent`) are false, writing no output to state.
 
-**Clarification gate**: after the OrchestratorAgent parse, a `conditional_edge` checks `state["needs_clarification"]`. If `True`, the graph routes to a terminal `clarification` node that emits a `needs_clarification` SSE event with `clarification_prompts[]` and halts — no downstream agents fire, no API quota spent. The user answers, the frontend re-POSTs `/api/trip/plan` with the merged query, and the graph runs to completion. If `False`, routing proceeds to Layer 1 + Layer 2 as normal.
+**Clarification via `interrupt()`**: the `OrchestratorAgent` uses LangGraph's `interrupt()` primitive to pause the graph mid-node when required fields are missing or low-confidence. The graph checkpointer persists state; the client resumes by calling `POST /api/trip/{session_id}/clarify` with the user's answers — no full re-POST to `/api/trip/plan` is needed. Up to `settings.max_clarification_rounds` rounds are attempted; after that the agent proceeds with best-effort defaults. The graph then flows unconditionally: `orchestrator → ready_to_plan → [all Layer 1 + 2 nodes in parallel]`.
 
 ---
 
@@ -391,9 +398,9 @@ All 14 agent nodes wired with parallel edges per layer. `OrchestratorAgent` uses
 - Sets `is_international` by comparing origin vs destination country
 - Detects `self_drive_intent` from keywords: "rent a bike", "scooter", "self-drive", "motorcycle", "hire a car", or destination type (Goa, hill stations, road trip)
 - Loads `UserProfile` from DB by session UUID if exists
-- **Clarification gate (F)**: before any downstream agent fires, checks every field in `settings.clarification_required_fields` (default: `destination`, `dates`, `travelers`). If any is missing, ambiguous, or has `parse_confidence` below `settings.parse_confidence_threshold` (default 0.6), it sets `needs_clarification = True` and populates `clarification_prompts[]` — one concise question per missing/uncertain field (e.g. *"What dates are you travelling? I need them to check weather, prices, and availability."*). The graph then routes to the `clarification` node and halts. **The system never silently guesses critical inputs.** Optional fields (budget, interests) fall back to profile defaults and do **not** trigger the gate.
-- **On every subsequent call**: uses `conditional_edges` to route to the correct next layer — does NOT re-call LLM for routing, only for initial parse
-- Writes `next_agent` to state
+- **Clarification gate (F)**: after the LLM parse, checks every field in `settings.clarification_required_fields` (default: `destination`, `dates`, `travelers`). If any is missing, ambiguous, or has `parse_confidence` below `settings.parse_confidence_threshold` (default 0.6), the agent calls `interrupt()` with a list of `ClarificationPrompt` objects — one concise question per missing/uncertain field (e.g. *"What dates are you travelling?"*). The graph pauses mid-node; the client resumes via `POST /api/trip/{session_id}/clarify`. **The system never silently guesses critical inputs.** Optional fields (budget, interests) fall back to profile defaults and do **not** trigger the gate. After up to `max_clarification_rounds` the agent proceeds regardless.
+- **Profile pre-fill**: before triggering clarification, silently resolves missing `source` city and `budget_tier` from the saved `UserProfile` — reducing unnecessary interrupts for returning users.
+- Always proceeds to `ready_to_plan` after completing — no conditional routing in the graph edges.
 
 ---
 
@@ -413,10 +420,6 @@ All 14 agent nodes wired with parallel edges per layer. `OrchestratorAgent` uses
   - `seasonal_weather_summary`: brief seasonal expectation for the travel window
   - `seasonal_risks[]`: e.g. "Typhoon season may affect ferries", "Mountain roads can close after early snowfall"
 - No score, no verdict, no recommendation — the decision to travel is entirely the user’s
-
-**ScamSafetyAgent** (`agents/scam_safety_agent.py`)
-- Tavily: `"tourist scams {destination} 2026"`, `"safety tips {destination}"`, fetches travel.state.gov + gov.uk/foreign-travel-advice
-- LLM synthesizes `ScamSafetyReport`: `advisory_level`, `top_scams[]` (name, description, how-to-avoid), `safe_areas[]`, `emergency_contacts` (police, ambulance, tourist helpline)
 
 **VisaAgent** (`agents/visa_agent.py`) ← *international trips only*
 - Tools:
@@ -524,6 +527,12 @@ LLM enumerates plausible route combinations using geographic knowledge:
 - Returns: breakfast, lunch, dinner, coffee/snack suggestions per day — each with name, category, cuisine, price range, rating, address, google_maps_url, photos[]
 - Writes `state["food_recommendations"]` keyed by day ISO date
 
+**ScamSafetyAgent** (`agents/scam_safety_agent.py`) ← *venue-aware, runs after FoodDiscovery*
+- Waits for: `food_recommendations` (FoodDiscovery) + `experiences_raw` (already in state from LocalExperiences)
+- Tavily: `"tourist scams {destination}"`, `"safety tips {destination}"`
+- Builds a venue list from `experiences_raw` names and `food_recommendations` names and passes it as extra context to the LLM, enabling venue-specific scam warnings
+- Writes `state["scam_safety_report"]`; feeds directly into `ItineraryCompilerAgent`
+
 **BudgetPlannerAgent** (`agents/budget_planner_agent.py`) ← *new*
 - Waits for: `transport_recommendation` (Layer 3) + `stays_pick` (Layer 3) + `destination_context_report` (Layer 1) + `visa_report` if applicable + `self_drive_report` if applicable
 - Tools: `CurrencyConvertTool` **(H)** — converts any per-leg or per-category amount between currencies using a live FX rate (cached 12h). Returns `rate` and `fetched_at` so the conversion is auditable.
@@ -593,7 +602,7 @@ GET  /metrics                    → Prometheus metrics
 
 **Postman collection** at `backend/postman/TripPlanner.postman_collection.json` covers every endpoint. Run with `local.postman_environment.json` (`base_url=http://localhost:8000`).
 
-SSE event types: `agent_start`, `agent_done` (with preview text), `needs_clarification` (with `clarification_prompts[]` — graph halts, user answers, re-POST), `complete` (with itinerary_id), `usage_summary`
+SSE event types: `agent_start`, `agent_done` (with preview text), `needs_clarification` (emitted when `interrupt()` fires — client calls `POST /api/trip/{session_id}/clarify` to resume, no full re-POST), `complete` (with itinerary_id), `usage_summary`
 
 ### Redis Cache TTLs
 
@@ -957,13 +966,13 @@ sequenceDiagram
     U->>FE: "5 days Tokyo from Mumbai"
     FE->>OA: POST /api/trip/plan (SSE)
     OA-->>FE: SSE agent_start
-    OA->>L1: fire all Layer 1 agents
-    OA->>L2: fire all Layer 2 agents
-    Note over L1,L2: Layers 1 & 2 run fully in parallel
+    OA-->>FE: SSE needs_clarification (if dates/dest missing → client POSTs /clarify)
+    OA-->>FE: SSE agent_done (parse complete)
+    Note over OA: orchestrator → ready_to_plan (always)
+    Note over L1,L2: ready_to_plan fans out — Layers 1 & 2 run fully in parallel
 
-    L1-->>FE: SSE: TripReality done (Peak season · High crowds)
-    L1-->>FE: SSE: Weather done (sunny 18-24°C)
-    L1-->>FE: SSE: ScamSafety done (3 scams)
+    L1-->>FE: SSE: DestinationContext done (Peak season · High crowds · 18-24°C)
+    L1-->>FE: SSE: ScamSafety done (3 scams flagged)
     L1-->>FE: SSE: Visa done (tourist visa required)
     L2-->>FE: SSE: TransportSearch done
     L2-->>FE: SSE: StaySearch done
@@ -996,7 +1005,7 @@ sequenceDiagram
 **Text summary:**
 
 ```
-Step 1:  OrchestratorAgent               (sequential — parse + detect + route)
+Step 1:  OrchestratorAgent               (sequential — parse + detect + interrupt() clarification)
 
 Step 2:  ┌─── Layer 1 + Layer 2 — fully parallel ──────────────────────────────┐
          │  Layer 1:  DestinationContextAgent                                   │
@@ -1016,6 +1025,8 @@ Step 4:  ReviewsAgent                    (after StayAnalyst + LocalExperiences)
          FoodDiscoveryAgent              (after LocalExperiences; needs day-cluster context)
          BudgetPlannerAgent              (after TransportOptimizer + StayAnalyst + Layer 1)
          — parallel with each other
+         ScamSafetyAgent                 (after FoodDiscovery — venue-aware scam report)
+         — sequential after FoodDiscovery, feeds directly into ItineraryCompiler
 
 Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
            → geo-cluster activities by proximity
@@ -1043,7 +1054,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/config.py` | `Settings` (pydantic-settings) + LiteLLM factory + `UsageLogger` |
 | `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + clarification gate + detect intent + conditional_edges |
 | `backend/app/agents/destination_context_agent.py` | Layer 1: seasonality · crowd level · hidden fees · seasonal conditions |
-| `backend/app/agents/scam_safety_agent.py` | Layer 1: Tavily + advisories |
+| `backend/app/agents/scam_safety_agent.py` | Layer 4: venue-aware scam warnings (after FoodDiscovery) — Tavily + experiences + food outlets |
 | `backend/app/agents/visa_agent.py` | Layer 1: visa requirements + embassy + application centre discovery (international only) |
 | `backend/app/agents/transport_search_agent.py` | Layer 2: hub ID + SerpAPI flights + Google Routes API transit |
 | `backend/app/agents/stay_search_agent.py` | Layer 2: SerpAPI Google Hotels |

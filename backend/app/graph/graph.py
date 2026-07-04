@@ -113,7 +113,6 @@ def build_graph(
     # Fan-out from ready_to_plan → all Layer 1+2 nodes in parallel
     for node in [
         "destination_context",
-        "scam_safety",
         "visa",
         "transport_search",
         "stay_search",
@@ -126,10 +125,9 @@ def build_graph(
     graph.add_edge("transport_search", "self_drive_search")
     graph.add_edge("stay_search", "stay_analyst")
 
-    # Layer 1+3 → budget_planner (barrier: waits for all 6)
+    # Layer 1+3 → budget_planner (barrier: waits for all 5)
     for node in [
         "destination_context",
-        "scam_safety",
         "visa",
         "transport_optimizer",
         "stay_analyst",
@@ -144,10 +142,13 @@ def build_graph(
     # Layer 2 → food_discovery
     graph.add_edge("local_experiences", "food_discovery")
 
-    # Layer 4 → itinerary_compiler
+    # food_discovery → scam_safety: agent runs after food outlets + experiences are in state
+    graph.add_edge("food_discovery", "scam_safety")
+
+    # Layer 4 + scam_safety → itinerary_compiler (barrier: 3 inputs)
     graph.add_edge("budget_planner", "itinerary_compiler")
     graph.add_edge("reviews", "itinerary_compiler")
-    graph.add_edge("food_discovery", "itinerary_compiler")
+    graph.add_edge("scam_safety", "itinerary_compiler")
 
     graph.add_edge("itinerary_compiler", END)
 
