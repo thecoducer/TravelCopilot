@@ -1,7 +1,7 @@
 # Multi-Agent AI Trip Planner — Full System Design Plan
 
 > Version 7 — Updated 2026-07-02
-> Status: Approved, ready for implementation
+> Status: Approved, ready for implementation · Clarification gate redesigned around LangGraph `interrupt()` / `Command(resume=...)` native pause-resume
 > Dev Roadmap: See `dev-roadmap.md`
 
 ---
@@ -47,11 +47,14 @@ graph TD
     START((START)):::control --> orchestrator
 
     %% ── Layer 0: Routing & Orchestration ─────────────────────────
-    orchestrator["LAYER 0 · Control\n🎯 OrchestratorAgent\n─────────────────\nparse query → structured params\ndetect is_international\ndetect self_drive_intent\ninterrupt() if ambiguous"]:::control
+    orchestrator["🎯 OrchestratorAgent\n─────────────────\nparse query → structured params\nUserProfile pre-fill\ndetect is_international\ndetect self_drive_intent\ninterrupt() clarification gate"]:::control
 
-    clarification_note["interrupt() · clarification\n💬\n─────────────────\ngraph pauses mid-node\nclient resumes via POST /clarify\nup to N rounds · then proceed"]:::interrupt
+    %% ── Clarification pause/resume (native LangGraph interrupt) ──
+    orchestrator -.->|"interrupt()\nfield missing/low-confidence"| paused
+    paused -.->|"Command(resume=answers)\nvia POST /{session_id}/clarify"| orchestrator
+    orchestrator -->|"all required fields\nsatisfied"| ready_to_plan
 
-    orchestrator -. "ambiguous query →\ninterrupt() ↔ resume" .-> clarification_note
+    paused["⏸️ Paused — awaiting clarification\n─────────────────\nsame node, not terminal\ncheckpointed via AsyncPostgresSaver\nSSE: needs_clarification"]:::gate
 
     %% ── Orchestrator always proceeds to ready_to_plan ────────────
     orchestrator --> ready_to_plan
@@ -130,13 +133,13 @@ graph TD
 ```
 LAYER 0 — ROUTING & ORCHESTRATION
   └── OrchestratorAgent
-        Parses the free-text query into structured trip params (source,
-        destination, dates, budget, travelers) with per-field parse_confidence.
-        Uses LangGraph interrupt() to pause the graph mid-node when required
-        fields are missing or low-confidence — the graph resumes via
-        POST /clarify, no full re-POST needed.  After up to N clarification
-        rounds the graph always proceeds to ready_to_plan, which fans out to
-        all Layer 1 + 2 nodes simultaneously.
+        Dual role: (1) parse user query → structured params,
+        (2) route via a direct edge to fire all downstream agent groups
+        once required fields are satisfied.
+        This IS the LangGraph supervisor/router node.
+        Clarification is handled in-place via LangGraph interrupt() —
+        the graph pauses and resumes at this same node; there is no
+        separate terminal clarification node or conditional_edge.
 
 LAYER 1 — DESTINATION INTELLIGENCE  (all parallel, no supply data needed)
   ├── DestinationContextAgent  seasonality · crowd · practical costs · local constraints
@@ -180,11 +183,12 @@ class TripState(dict):  # subclasses dict for LangGraph compatibility
     is_international:  bool          # set by OrchestratorAgent
     self_drive_intent: bool          # set by OrchestratorAgent
 
-    # ── Clarification (interrupt-based — OrchestratorAgent) ────────
-    needs_clarification:  bool              # kept for backward-compat
-    clarification_prompts: list[ClarificationPrompt]  # kept for backward-compat
-    parse_confidence:     dict[str, float]  # per-field confidence (0–1)
-    clarification_round:  int               # completed clarification rounds
+    # ── Clarification gate (set by OrchestratorAgent) ──────────────
+    # The graph pauses via `interrupt()` inside OrchestratorAgent itself and
+    # resumes via `Command(resume=answers)` — there is no boolean gate flag;
+    # `needs_clarification`/`clarification_prompts` are no longer written to state.
+    clarification_round:  int                     # interrupt() rounds consumed so far
+    parse_confidence:     dict[str, float]        # per-field confidence (0–1) from the parse
 
     # ── Layer 1: Destination Intelligence ─────────────────────────
     destination_context_report: DestinationContextReport | None
@@ -252,11 +256,12 @@ trip-planner/
 │   │   │       ├── geo_tools.py   # ClusterByProximityTool implemented fully (pure math)
 │   │   │       ├── fx_tools.py    # CurrencyConvertTool — live FX rates, cached
 │   │   │       └── hub_tools.py
-│   │   ├── graph/           # state.py, graph.py, router.py
-│   │   ├── models/          # Pydantic models only — zero business logic
+│   │   ├── graph/           # state.py, graph.py — direct edges only, no separate router.py
+│   │   ├── models/          # Pydantic models only — zero business logic (incl. clarification.py)
 │   │   ├── routers/         # FastAPI route handlers only
 │   │   ├── services/        # pdf_service, cache_service
 │   │   ├── observability/   # otel.py, langfuse.py, metrics.py
+│   │   ├── checkpointer.py  # LangGraph checkpointer singleton (AsyncPostgresSaver → MemorySaver fallback)
 │   │   ├── config.py        # all config from env via pydantic-settings
 │   │   └── main.py
 │   ├── migrations/
@@ -313,8 +318,12 @@ class Settings(BaseSettings):
     fx_api_key:         str = ""   # currency exchange-rate provider (e.g. exchangerate.host / OXR)
 
     # Critical fields that trigger the clarification gate when missing/low-confidence.
-    clarification_required_fields: list[str] = ["destination", "dates", "travelers"]
-    parse_confidence_threshold:    float     = 0.6
+    clarification_required_fields: str   = "destination,dates,travelers"   # comma-separated
+    # Per-field confidence thresholds (comma-separated field:threshold pairs);
+    # falls back to parse_confidence_threshold for fields not listed.
+    clarification_field_thresholds: str  = "destination:0.7,dates:0.6,travelers:0.4,source:0.3"
+    parse_confidence_threshold:    float = 0.6
+    max_clarification_rounds:      int   = 3   # after this many interrupt() rounds, apply best-effort defaults
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
@@ -380,7 +389,7 @@ All agents receive `list[BaseTool]` via constructor injection. In unit tests, `T
 
 All 14 agent nodes wired with direct and parallel edges per layer. There are no `conditional_edges` — `VisaAgent` and `SelfDriveSearchAgent` run unconditionally but return immediately when their guard conditions (`is_international`, `self_drive_intent`) are false, writing no output to state.
 
-**Clarification via `interrupt()`**: the `OrchestratorAgent` uses LangGraph's `interrupt()` primitive to pause the graph mid-node when required fields are missing or low-confidence. The graph checkpointer persists state; the client resumes by calling `POST /api/trip/{session_id}/clarify` with the user's answers — no full re-POST to `/api/trip/plan` is needed. Up to `settings.max_clarification_rounds` rounds are attempted; after that the agent proceeds with best-effort defaults. The graph then flows unconditionally: `orchestrator → ready_to_plan → [all Layer 1 + 2 nodes in parallel]`.
+**Clarification gate (native LangGraph pause/resume)**: instead of a terminal `clarification` node reached via `conditional_edge`, the OrchestratorAgent calls LangGraph's `interrupt()` **in place** whenever a required field is missing or below its per-field confidence threshold. `interrupt()` serializes the entire graph state to the `AsyncPostgresSaver` checkpoint (falling back to in-process `MemorySaver` when Postgres is unavailable) and suspends execution — no downstream agents fire, no API quota spent. The router (`_stream_graph`) detects the `__interrupt__` chunk in `astream()`, emits a `needs_clarification` SSE event with the prompts, and closes the HTTP stream. The client calls `POST /api/trip/{session_id}/clarify` with the answers; the router resumes the *same* run via `Command(resume=answers)`, re-entering `OrchestratorAgent` exactly where it paused — already-confirmed fields are never re-parsed by the LLM. Up to `settings.max_clarification_rounds` rounds are allowed before the agent proceeds with best-effort defaults. Once all required fields are satisfied, execution proceeds via a direct edge to `ready_to_plan` — there is no separate `clarification` node or `conditional_edge` in the compiled graph.
 
 ---
 
@@ -398,9 +407,10 @@ All 14 agent nodes wired with direct and parallel edges per layer. There are no 
 - Sets `is_international` by comparing origin vs destination country
 - Detects `self_drive_intent` from keywords: "rent a bike", "scooter", "self-drive", "motorcycle", "hire a car", or destination type (Goa, hill stations, road trip)
 - Loads `UserProfile` from DB by session UUID if exists
-- **Clarification gate (F)**: after the LLM parse, checks every field in `settings.clarification_required_fields` (default: `destination`, `dates`, `travelers`). If any is missing, ambiguous, or has `parse_confidence` below `settings.parse_confidence_threshold` (default 0.6), the agent calls `interrupt()` with a list of `ClarificationPrompt` objects — one concise question per missing/uncertain field (e.g. *"What dates are you travelling?"*). The graph pauses mid-node; the client resumes via `POST /api/trip/{session_id}/clarify`. **The system never silently guesses critical inputs.** Optional fields (budget, interests) fall back to profile defaults and do **not** trigger the gate. After up to `max_clarification_rounds` the agent proceeds regardless.
-- **Profile pre-fill**: before triggering clarification, silently resolves missing `source` city and `budget_tier` from the saved `UserProfile` — reducing unnecessary interrupts for returning users.
-- Always proceeds to `ready_to_plan` after completing — no conditional routing in the graph edges.
+- **UserProfile pre-fill**: before checking for missing fields, silently resolves `source` (home city) and `budget_tier` from the user's saved `UserProfile` when the LLM left them blank/low-confidence — no question asked for fields the system can already infer.
+- **Clarification gate (F)**: for every field in `settings.clarification_fields` (default: `destination`, `dates`, `travelers`; `source` is also gated but usually resolved via profile pre-fill), checks confidence against a **per-field threshold** (`settings.field_thresholds`, e.g. `destination:0.7`, `dates:0.6`, `travelers:0.4`, `source:0.3`). If any field is missing or below its threshold, the agent calls **`interrupt()`** — pausing the graph in place and returning a `ClarificationPrompt` per field (`question`, `reason`, `input_type`: text/date/number/select, contextual wording that references the value it half-understood, e.g. *"You mentioned 'next month' — what dates specifically?"*). The graph resumes via `Command(resume=answers)` when the client calls `POST /api/trip/{session_id}/clarify` — **no full query re-POST needed**, and no LLM re-parse of already-confirmed fields. Up to `settings.max_clarification_rounds` rounds are attempted; after that, best-effort defaults are applied and planning proceeds anyway rather than looping forever. **The system never silently guesses on the first attempt.** Optional fields (budget, interests) fall back to profile defaults and do **not** trigger the gate.
+- **On every subsequent call**: uses `conditional_edges` to route to the correct next layer — does NOT re-call LLM for routing, only for initial parse
+- Writes `next_agent` to state
 
 ---
 
@@ -586,6 +596,7 @@ LLM enumerates plausible route combinations using geographic knowledge:
 
 ```
 POST /api/trip/plan              → SSE stream, runs full LangGraph
+POST /api/trip/{session_id}/clarify → resume a paused (interrupt()) graph with clarification answers
 PUT  /api/user/profile           → upsert UserProfile
 GET  /api/user/profile           → read UserProfile
 GET  /api/trip/{session_id}      → full itinerary JSON
@@ -602,7 +613,7 @@ GET  /metrics                    → Prometheus metrics
 
 **Postman collection** at `backend/postman/TripPlanner.postman_collection.json` covers every endpoint. Run with `local.postman_environment.json` (`base_url=http://localhost:8000`).
 
-SSE event types: `agent_start`, `agent_done` (with preview text), `needs_clarification` (emitted when `interrupt()` fires — client calls `POST /api/trip/{session_id}/clarify` to resume, no full re-POST), `complete` (with itinerary_id), `usage_summary`
+SSE event types: `agent_start`, `agent_done` (with preview text), `needs_clarification` (with `prompts[]` and `round` — graph is *paused in-place* via `interrupt()`, checkpointed to Postgres; client resumes via `POST /{session_id}/clarify`, not a full re-POST), `complete` (with itinerary_id), `usage_summary`
 
 ### Redis Cache TTLs
 
@@ -763,7 +774,7 @@ Alerts: P95 latency > 30s, any agent error rate > 5%, LLM cost > $10/day.
 5-question dismissible overlay after first message: airlines, hotel style, interests, dietary restrictions, budget tier. Calls `PUT /api/user/profile`.
 
 ### ClarificationPrompt (`components/ClarificationPrompt.tsx`) ← *new* **(F)**
-When the planning stream emits a `needs_clarification` event (a critical field — destination, dates, or travellers — was missing or ambiguous), the feed pauses and this component renders the `clarification_prompts[]` as a short inline question set (e.g. *"What dates are you travelling?"*, *"How many travellers?"*). On submit it merges the answers into the original query and re-POSTs `/api/trip/plan`. The system asks rather than guesses, so the user never receives a confidently-wrong plan built on assumed inputs.
+When the planning stream emits a `needs_clarification` event (a critical field — destination, dates, or travellers — was missing or ambiguous), the feed pauses and this component renders the `prompts[]` as a short inline question set, using each prompt's `input_type` (text/date/number/select) to pick the right form control, and pre-filling with `extracted_value` when the system has a low-confidence guess (e.g. *"You mentioned 'next month' — what dates specifically?"*). On submit it calls `POST /api/trip/{session_id}/clarify` with the answers — the underlying LangGraph run resumes exactly where it paused via `interrupt()`; **no full query re-POST, no re-parsing of already-confirmed fields**. If fields are still missing (up to `max_clarification_rounds`), another `needs_clarification` event follows. The system asks rather than guesses, so the user never receives a confidently-wrong plan built on assumed inputs.
 
 ### AgentProgressFeed (`components/AgentProgressFeed.tsx`)
 SSE timeline with per-agent icons grouped by layer:
@@ -966,10 +977,19 @@ sequenceDiagram
     U->>FE: "5 days Tokyo from Mumbai"
     FE->>OA: POST /api/trip/plan (SSE)
     OA-->>FE: SSE agent_start
-    OA-->>FE: SSE needs_clarification (if dates/dest missing → client POSTs /clarify)
-    OA-->>FE: SSE agent_done (parse complete)
-    Note over OA: orchestrator → ready_to_plan (always)
-    Note over L1,L2: ready_to_plan fans out — Layers 1 & 2 run fully in parallel
+
+    opt Clarification gate — required field missing/low-confidence
+        OA->>OA: interrupt() — pause graph, checkpoint to Postgres
+        OA-->>FE: SSE needs_clarification (prompts[], round)
+        Note over FE: HTTP stream closes; graph is paused, not aborted
+        U->>FE: answers the prompts
+        FE->>OA: POST /api/trip/{session_id}/clarify {answers}
+        OA->>OA: Command(resume=answers) — resumes at the interrupt() call site
+    end
+
+    OA->>L1: fire all Layer 1 agents
+    OA->>L2: fire all Layer 2 agents
+    Note over L1,L2: Layers 1 & 2 run fully in parallel
 
     L1-->>FE: SSE: DestinationContext done (Peak season · High crowds · 18-24°C)
     L1-->>FE: SSE: ScamSafety done (3 scams flagged)
@@ -1046,13 +1066,15 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 |---|---|
 | `backend/app/graph/state.py` | `TripState` TypedDict — all 14 agent fields |
 | `backend/app/graph/graph.py` | LangGraph `StateGraph` wiring — all layers + parallel edges |
-| `backend/app/graph/router.py` | `conditional_edges` routing logic + clarification gate (halt when `needs_clarification`) |
-| `backend/app/models/user_profile.py` | `UserProfile`, `TripDates`, `BudgetPreference`, `ClarificationPrompt` |
+| `backend/app/graph/router.py` | *(removed — routing is a direct edge in `graph.py`; the clarification gate lives inside `OrchestratorAgent` via `interrupt()`, not a router)* → see `backend/app/checkpointer.py` below |
+| `backend/app/checkpointer.py` | LangGraph checkpointer singleton — `AsyncPostgresSaver` (falls back to `MemorySaver` if Postgres unavailable) |
+| `backend/app/models/user_profile.py` | `UserProfile`, `TripDates`, `BudgetPreference` |
+| `backend/app/models/clarification.py` | `ClarificationPrompt` — transient interaction model (not persistent user data) |
 | `backend/app/models/itinerary.py` | `Itinerary`, `Day`, `Place`, `FoodVenue`, `Experience` |
 | `backend/app/models/transport.py` | `TransportRecommendation`, `RouteLeg`, `RouteWaypoint` |
 | `backend/app/models/reports.py` | `DestinationContextReport`, `ScamSafetyReport`, `VisaReport` (+ `sources[]`, `last_verified_at`, `confidence`, `disclaimer`), `SelfDriveReport`, `BudgetReport` (+ FX fields) |
 | `backend/app/config.py` | `Settings` (pydantic-settings) + LiteLLM factory + `UsageLogger` |
-| `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + clarification gate + detect intent + conditional_edges |
+| `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + `interrupt()` clarification gate + detect intent + direct-edge routing |
 | `backend/app/agents/destination_context_agent.py` | Layer 1: seasonality · crowd level · hidden fees · seasonal conditions |
 | `backend/app/agents/scam_safety_agent.py` | Layer 4: venue-aware scam warnings (after FoodDiscovery) — Tavily + experiences + food outlets |
 | `backend/app/agents/visa_agent.py` | Layer 1: visa requirements + embassy + application centre discovery (international only) |
@@ -1124,7 +1146,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `frontend/src/app/i/[slug]/page.tsx` | Public shareable itinerary |
 | `frontend/src/components/PreferenceSetup.tsx` | 5-question onboarding overlay |
 | `frontend/src/components/AgentProgressFeed.tsx` | SSE timeline feed grouped by layer |
-| `frontend/src/components/ClarificationPrompt.tsx` | (F) Renders `needs_clarification` questions; collects answers; re-POSTs `/api/trip/plan` |
+| `frontend/src/components/ClarificationPrompt.tsx` | (F) Renders `needs_clarification` prompts (input_type-aware); collects answers; `POST`s to `/api/trip/{session_id}/clarify` to resume the paused graph |
 | `frontend/src/components/TripConditionsPanel.tsx` | Season badge · crowd level · weather · hidden fees (no score) |
 | `frontend/src/components/RouteMap.tsx` | Google Maps JS route visualisation |
 | `frontend/src/components/ItineraryView.tsx` | Day tabs + drag-drop |
@@ -1174,7 +1196,9 @@ FX_API_KEY=              # currency exchange-rate provider (e.g. exchangerate.ho
 
 # Clarification gate — critical fields that must be present before planning starts
 CLARIFICATION_REQUIRED_FIELDS=destination,dates,travelers
+CLARIFICATION_FIELD_THRESHOLDS=destination:0.7,dates:0.6,travelers:0.4,source:0.3
 PARSE_CONFIDENCE_THRESHOLD=0.6
+MAX_CLARIFICATION_ROUNDS=3
 
 # Observability
 # Langfuse — open-source LLM tracing + evals (self-hosted locally, cloud in prod)
@@ -1203,7 +1227,7 @@ GCP_REGION=asia-south1
 5. **Opening hours**: All places in every slot are open on the assigned travel date and time — `enforce_opening_hours()` output shows zero unresolved conflicts
 6. **Duration check**: No day slot exceeds 10h total (activities + transit) — `validate_day_duration()` output shows zero overloaded flags
 6b. **Deterministic final gate (I)**: re-running `enforce_opening_hours()` and `validate_day_duration()` on the *final* compiled itinerary returns zero conflicts; deliberately inject a closed-venue/overpacked case and confirm the compiler auto-resolves it (the Python tools, not the LLM, have the final say)
-6c. **Clarification gate (F)**: "plan a trip to Tokyo" (no dates, no travellers) → stream emits `needs_clarification` with prompts for dates + travellers and produces **no** itinerary; after answering and re-POSTing, a full itinerary is returned. A complete query never triggers the gate.
+6c. **Clarification gate (F)**: "plan a trip to Tokyo" (no dates, no travellers) → stream emits `needs_clarification` with prompts for dates + travellers (graph *paused* via `interrupt()`, checkpointed — not aborted) and produces **no** itinerary; `POST /api/trip/{session_id}/clarify` with the answers resumes the same run via `Command(resume=...)` and a full itinerary is returned without re-parsing already-confirmed fields. A complete query never triggers the gate. Answering only some fields triggers another `needs_clarification` round (up to `max_clarification_rounds`), after which best-effort defaults are applied.
 3. **International**: "5 days Tokyo from Mumbai" → VisaPanel: Japan tourist visa, docs checklist, nearest Japanese embassy Mumbai, nearest application centre (e.g. VFS Global for Japan in India), ~5 business days processing; centre name is dynamically discovered, not hardcoded
 3b. **Visa sources & disclaimer (G)**: the VisaPanel shows a non-empty `sources[]` (at least one official-domain URL), a "Checked on {date}" stamp, and the confirm-with-consulate disclaimer; a corridor with no official source resolves to `confidence="low"` with a prominent verify-directly warning
 4. TripConditionsPanel shows season badge (e.g. “Peak season”), crowd level, weather summary, hidden fees — no score or verdict displayed
@@ -1234,7 +1258,7 @@ GCP_REGION=asia-south1
 - **Personalization rationale (C)**: Every recommended hotel, transport route, and activity slot carries a `personalization_reason` field — a 1-sentence explanation tied to the user’s stated profile. Makes the personalization visible, not invisible.
 - **Tavily grounding check (D)**: Tavily-sourced experiences verified via Google Places before entering the itinerary. Unverifiable venue names dropped silently. Eliminates hallucinated place names.
 - **Price freshness disclaimer (E)**: Every `RouteLeg` and `StayOption` carries `price_cached_at` (datetime) and a human-readable `price_disclaimer`. Shown in the UI so users verify before booking.
-- **Clarification gate (F)**: The OrchestratorAgent never silently guesses critical inputs. If destination, dates, or traveller count are missing or low-confidence, the graph halts at a `clarification` node, emits a `needs_clarification` SSE event, and asks the user — before spending any API quota or generating a plan built on assumptions. Optional fields fall back to profile defaults.
+- **Clarification gate (F)**: The OrchestratorAgent never silently guesses critical inputs on the first attempt. If destination, dates, traveller count, or source city are missing or below their per-field confidence threshold, it calls LangGraph's `interrupt()` **in place** — no separate terminal node — pausing the graph (checkpointed via `AsyncPostgresSaver`) and emitting a `needs_clarification` SSE event, before spending any API quota or generating a plan built on assumptions. The client resumes the exact same run with `Command(resume=answers)` via `POST /api/trip/{session_id}/clarify`. `UserProfile` pre-fill resolves `source`/`budget_tier` silently when possible, and a `max_clarification_rounds` guard falls back to best-effort defaults instead of looping forever. Optional fields fall back to profile defaults and never trigger the gate.
 - **Visa is advisory with sources (G)**: `VisaReport` always carries `sources[]` (preferring official `.gov`/consulate domains), a `last_verified_at` timestamp, a `confidence` level, and a fixed "confirm with the consulate" disclaimer. The system never asserts a visa requirement without a grounding source; if no official source is found, confidence is `low` and the UI warns the user prominently. High-stakes information is framed as guidance, never authority.
 - **FX normalisation (H)**: A dedicated `CurrencyConvertTool` (live rates, cached 12h) converts every mixed-currency amount into the destination currency before the budget total is summed. `BudgetReport` records the exact `fx_rates_used` with their `fetched_at` and shows an FX disclaimer — so multi-currency totals are correct, auditable, and honestly caveated.
 - **Deterministic final gate (I)**: The LLM self-critique handles only soft qualities (gaps, pace, rain). The hard constraints — opening hours (A) and per-day duration (B) — are enforced by re-running the pure-Python tools on the *final* compiled itinerary and looping on the **tools' output, not the LLM's opinion**. An LLM revision can never reintroduce a closed-venue or overpacked-day violation.
