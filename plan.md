@@ -56,9 +56,6 @@ graph TD
 
     paused["⏸️ Paused — awaiting clarification\n─────────────────\nsame node, not terminal\ncheckpointed via AsyncPostgresSaver\nSSE: needs_clarification"]:::gate
 
-    %% ── Orchestrator always proceeds to ready_to_plan ────────────
-    orchestrator --> ready_to_plan
-
     ready_to_plan["LAYER 0 · Control\n✅ ready_to_plan\n─────────────────\npass-through fan-out\nLayer 1 + 2 fire in parallel"]:::control
 
     %% ── Layer 1: Destination Intelligence (parallel) ─────────────
