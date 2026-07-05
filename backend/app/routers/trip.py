@@ -15,6 +15,7 @@ SSE event types:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator
@@ -127,6 +128,9 @@ async def _stream_graph(
     overrides: dict[str, Any],
 ) -> AsyncGenerator[str, None]:
     from app.observability.langfuse import get_langfuse_handler
+    from app.llm import reset_active_llm_session_id, set_active_llm_session_id
+
+    llm_session_token = set_active_llm_session_id(session_id)
 
     try:
         yield _sse("agent_start", {"agent": "orchestrator", "session_id": session_id})
@@ -193,6 +197,8 @@ async def _stream_graph(
     except Exception as exc:
         logger.error("stream_graph_error", error=str(exc), session_id=session_id)
         yield _sse("error", {"message": str(exc), "session_id": session_id})
+    finally:
+        reset_active_llm_session_id(llm_session_token)
 
 
 async def _stream_resumed_graph(
@@ -203,6 +209,9 @@ async def _stream_resumed_graph(
 ) -> AsyncGenerator[str, None]:
     """Resume a paused graph after the user answers clarification prompts."""
     from app.observability.langfuse import get_langfuse_handler
+    from app.llm import reset_active_llm_session_id, set_active_llm_session_id
+
+    llm_session_token = set_active_llm_session_id(session_id)
 
     try:
         compiled = await get_compiled_graph()
@@ -256,6 +265,8 @@ async def _stream_resumed_graph(
     except Exception as exc:
         logger.error("stream_resumed_error", error=str(exc), session_id=session_id)
         yield _sse("error", {"message": str(exc), "session_id": session_id})
+    finally:
+        reset_active_llm_session_id(llm_session_token)
 
 
 async def _emit_completion_events(
@@ -271,16 +282,16 @@ async def _emit_completion_events(
     if itinerary and hasattr(itinerary, "model_copy"):
         itinerary = itinerary.model_copy(update={"id": trip_id})
 
+    usage_summary = await _build_usage_summary(final_state=final_state, session_id=session_id)
+
     await _persist_trip(
         session_id=session_id,
         trip_id=trip_id,
         query=query,
         state=final_state,
         itinerary=itinerary,
+        usage_summary=usage_summary,
     )
-
-    token_usage = final_state.get("token_usage", {})
-    total_tokens = sum(u.total_tokens for u in token_usage.values())
 
     yield _sse(
         "complete",
@@ -294,13 +305,111 @@ async def _emit_completion_events(
         "usage_summary",
         {
             "session_id": session_id,
-            "total_tokens": total_tokens,
-            "per_agent": {
-                name: {"tokens": u.total_tokens, "cost_usd": u.cost_usd}
-                for name, u in token_usage.items()
+            "total_tokens": usage_summary["total_tokens"],
+            "total_cost_usd": usage_summary["total_cost_usd"],
+            "headroom": {
+                "total_tokens_saved": usage_summary["headroom_tokens_saved"],
+                "avg_compression_ratio": usage_summary["headroom_avg_compression_ratio"],
             },
+            "per_agent": usage_summary["per_agent"],
         },
     )
+
+
+async def _build_usage_summary(final_state: dict[str, Any], session_id: str) -> dict[str, Any]:
+    """Build usage summary from Redis usage cache; fallback to graph state when absent."""
+    per_agent: dict[str, dict[str, Any]] = {}
+    total_tokens = 0
+    total_cost_usd = 0.0
+    headroom_tokens_saved = 0
+    headroom_ratio_sum = 0.0
+    headroom_ratio_count = 0
+
+    # Preferred source: live per-agent cache written by UsageLogger callbacks.
+    try:
+        from app.services.cache_service import CacheService
+
+        cache = CacheService()
+        for attempt in range(4):
+            per_agent = {}
+            total_tokens = 0
+            total_cost_usd = 0.0
+            headroom_tokens_saved = 0
+            headroom_ratio_sum = 0.0
+            headroom_ratio_count = 0
+
+            for agent in _AGENT_LAYERS:
+                row = await cache.get(CacheService.usage_key(session_id, agent))
+                if not row:
+                    continue
+
+                prompt_tokens = int(row.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(row.get("completion_tokens", 0) or 0)
+                agent_total = int(row.get("total_tokens", prompt_tokens + completion_tokens) or 0)
+                cost_usd = float(row.get("cost_usd", 0.0) or 0.0)
+                hr_saved = int(row.get("headroom_tokens_saved", 0) or 0)
+                hr_applied = int(row.get("headroom_applied_calls", 0) or 0)
+                hr_calls = int(row.get("headroom_calls", 0) or 0)
+                hr_ratio_sum = float(row.get("headroom_ratio_sum", 0.0) or 0.0)
+                hr_ratio_count = int(row.get("headroom_ratio_count", 0) or 0)
+                hr_avg = (hr_ratio_sum / hr_ratio_count) if hr_ratio_count > 0 else None
+
+                per_agent[agent] = {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": agent_total,
+                    "cost_usd": cost_usd,
+                    "headroom": {
+                        "calls": hr_calls,
+                        "applied_calls": hr_applied,
+                        "tokens_saved": hr_saved,
+                        "avg_compression_ratio": hr_avg,
+                    },
+                }
+                total_tokens += agent_total
+                total_cost_usd += cost_usd
+                headroom_tokens_saved += hr_saved
+                headroom_ratio_sum += hr_ratio_sum
+                headroom_ratio_count += hr_ratio_count
+
+            if per_agent or attempt == 3:
+                break
+            await asyncio.sleep(0.1)
+    except Exception as exc:
+        logger.warning("usage_cache_read_failed", session_id=session_id, error=str(exc))
+
+    # Fallback source: token_usage reducer in graph state.
+    if not per_agent:
+        token_usage = final_state.get("token_usage", {}) or {}
+        for name, usage in token_usage.items():
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            agent_total = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
+            cost_usd = float(getattr(usage, "cost_usd", 0.0) or 0.0)
+            per_agent[name] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": agent_total,
+                "cost_usd": cost_usd,
+                "headroom": {
+                    "calls": 0,
+                    "applied_calls": 0,
+                    "tokens_saved": 0,
+                    "avg_compression_ratio": None,
+                },
+            }
+            total_tokens += agent_total
+            total_cost_usd += cost_usd
+
+    return {
+        "total_tokens": total_tokens,
+        "total_cost_usd": total_cost_usd,
+        "headroom_tokens_saved": headroom_tokens_saved,
+        "headroom_avg_compression_ratio": (
+            headroom_ratio_sum / headroom_ratio_count if headroom_ratio_count > 0 else None
+        ),
+        "per_agent": per_agent,
+    }
 
 
 async def _persist_trip(
@@ -309,6 +418,7 @@ async def _persist_trip(
     query: str,
     state: dict[str, Any],
     itinerary: Any,
+    usage_summary: dict[str, Any] | None = None,
 ) -> None:
     """Persist the completed trip to the database.  Best-effort — never blocks SSE."""
     try:
@@ -326,15 +436,18 @@ async def _persist_trip(
                 ctx.crowd_level, 50
             )
 
-        # Serialise per-agent token usage so GET /{id}/usage can read it back
-        token_usage = state.get("token_usage", {}) or {}
-        token_usage_json = json.dumps(
-            {
-                name: (u.model_dump() if hasattr(u, "model_dump") else u)
-                for name, u in token_usage.items()
-            },
-            default=str,
-        )
+        # Serialise per-agent token/headroom usage so GET /{id}/usage can read it back
+        if usage_summary and usage_summary.get("per_agent"):
+            token_usage_json = json.dumps(usage_summary, default=str)
+        else:
+            token_usage = state.get("token_usage", {}) or {}
+            token_usage_json = json.dumps(
+                {
+                    name: (u.model_dump() if hasattr(u, "model_dump") else u)
+                    for name, u in token_usage.items()
+                },
+                default=str,
+            )
 
         async with AsyncSessionLocal() as session:
             await session.execute(

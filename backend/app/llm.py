@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextvars import ContextVar, Token
 from typing import Any
 
 import structlog
@@ -32,6 +33,24 @@ from app.config import settings
 logger = structlog.get_logger(__name__)
 
 _HEADROOM_IMPORT_FAILED = False
+_ACTIVE_SESSION_ID: ContextVar[str] = ContextVar("active_llm_session_id", default="")
+
+
+def set_active_llm_session_id(session_id: str) -> Token[str]:
+    """Bind a session_id to the current async context for LLM usage logging."""
+    return _ACTIVE_SESSION_ID.set(session_id)
+
+
+def reset_active_llm_session_id(token: Token[str]) -> None:
+    """Reset the session_id context binding."""
+    _ACTIVE_SESSION_ID.reset(token)
+
+
+def _effective_session_id(metadata: dict[str, Any]) -> str:
+    sid = metadata.get("session_id")
+    if isinstance(sid, str) and sid:
+        return sid
+    return _ACTIVE_SESSION_ID.get()
 
 
 def _extract_text_content(content: Any) -> str:
@@ -216,7 +235,7 @@ try:
             try:
                 metadata: dict[str, Any] = kwargs.get("metadata") or {}
                 agent_name: str = metadata.get("agent_name", "unknown")
-                session_id: str = metadata.get("session_id", "")
+                session_id = _effective_session_id(metadata)
                 usage = getattr(response_obj, "usage", None)
                 if not usage:
                     return
@@ -225,6 +244,18 @@ try:
                 total_t: int = getattr(usage, "total_tokens", prompt_t + completion_t) or 0
                 if total_t == 0:
                     return
+
+                headroom_applied = bool(metadata.get("headroom_applied", False))
+                headroom_tokens_saved = metadata.get("headroom_tokens_saved")
+                headroom_ratio = metadata.get("headroom_compression_ratio")
+                try:
+                    headroom_tokens_saved_i = int(headroom_tokens_saved or 0)
+                except (TypeError, ValueError):
+                    headroom_tokens_saved_i = 0
+                try:
+                    headroom_ratio_f = float(headroom_ratio) if headroom_ratio is not None else 0.0
+                except (TypeError, ValueError):
+                    headroom_ratio_f = 0.0
 
                 # Fire-and-forget Redis write in a daemon thread
                 import threading
@@ -240,6 +271,20 @@ try:
                             ex["prompt_tokens"] = ex.get("prompt_tokens", 0) + prompt_t
                             ex["completion_tokens"] = ex.get("completion_tokens", 0) + completion_t
                             ex["total_tokens"] = ex.get("total_tokens", 0) + total_t
+                            ex["calls"] = ex.get("calls", 0) + 1
+                            ex["headroom_calls"] = ex.get("headroom_calls", 0) + 1
+                            ex["headroom_applied_calls"] = ex.get("headroom_applied_calls", 0) + (
+                                1 if headroom_applied else 0
+                            )
+                            ex["headroom_tokens_saved"] = ex.get("headroom_tokens_saved", 0) + (
+                                headroom_tokens_saved_i
+                            )
+                            ex["headroom_ratio_sum"] = ex.get("headroom_ratio_sum", 0.0) + (
+                                headroom_ratio_f
+                            )
+                            ex["headroom_ratio_count"] = ex.get("headroom_ratio_count", 0) + (
+                                1 if headroom_ratio is not None else 0
+                            )
                             await c.set(k, ex, ttl=604800)
                         except Exception as ce:
                             logger.warning("usage_cache_failed", agent=agent_name, error=str(ce))
@@ -330,9 +375,12 @@ try:
 
             req_metadata = {
                 **self.metadata,
+                "session_id": _effective_session_id(self.metadata),
                 "headroom_enabled": headroom["enabled"],
                 "headroom_applied": headroom["applied"],
                 "headroom_reason": headroom["reason"],
+                "headroom_tokens_saved": headroom["tokens_saved"],
+                "headroom_compression_ratio": headroom["compression_ratio"],
             }
 
             kw: dict[str, Any] = {
@@ -373,9 +421,12 @@ try:
 
             req_metadata = {
                 **self.metadata,
+                "session_id": _effective_session_id(self.metadata),
                 "headroom_enabled": headroom["enabled"],
                 "headroom_applied": headroom["applied"],
                 "headroom_reason": headroom["reason"],
+                "headroom_tokens_saved": headroom["tokens_saved"],
+                "headroom_compression_ratio": headroom["compression_ratio"],
             }
 
             kw: dict[str, Any] = {
@@ -440,9 +491,12 @@ try:
 
                 req_metadata = {
                     **self.metadata,
+                    "session_id": _effective_session_id(self.metadata),
                     "headroom_enabled": headroom["enabled"],
                     "headroom_applied": headroom["applied"],
                     "headroom_reason": headroom["reason"],
+                    "headroom_tokens_saved": headroom["tokens_saved"],
+                    "headroom_compression_ratio": headroom["compression_ratio"],
                 }
 
                 def _completion(request_messages: list[dict[str, Any]]) -> Any:
