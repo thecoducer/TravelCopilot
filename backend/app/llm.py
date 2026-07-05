@@ -31,6 +31,114 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
+_HEADROOM_IMPORT_FAILED = False
+
+
+def _extract_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+            elif isinstance(item, str):
+                parts.append(item)
+            else:
+                parts.append(str(item))
+        return "\n".join(parts)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _estimate_chars(messages: list[dict[str, Any]]) -> int:
+    return sum(len(_extract_text_content(m.get("content", ""))) for m in messages)
+
+
+def _maybe_add_terse_system_note(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not (settings.headroom_enabled and settings.headroom_output_terse_enabled):
+        return messages
+
+    terse_note = (
+        "Answer tersely. Avoid restating prior context. "
+        "Focus only on required outputs and key facts."
+    )
+    updated = list(messages)
+    for i in range(len(updated) - 1, -1, -1):
+        if updated[i].get("role") == "system":
+            content = _extract_text_content(updated[i].get("content", ""))
+            updated[i] = {**updated[i], "content": f"{content}\n\n{terse_note}".strip()}
+            return updated
+
+    return [{"role": "system", "content": terse_note}, *updated]
+
+
+def _maybe_compress_messages(
+    messages: list[dict[str, Any]],
+    *,
+    model: str,
+    metadata: dict[str, Any],
+    structured: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    telemetry = {
+        "enabled": settings.headroom_enabled,
+        "applied": False,
+        "reason": "disabled",
+        "tokens_saved": None,
+        "compression_ratio": None,
+    }
+    if not settings.headroom_enabled:
+        return messages, telemetry
+
+    msg_count = len(messages)
+    char_count = _estimate_chars(messages)
+    if msg_count < settings.headroom_min_messages and char_count < settings.headroom_min_chars:
+        telemetry["reason"] = "below_threshold"
+        return messages, telemetry
+
+    global _HEADROOM_IMPORT_FAILED
+    try:
+        from headroom import compress  # type: ignore[import]
+    except Exception as exc:
+        if not _HEADROOM_IMPORT_FAILED:
+            logger.warning("headroom_unavailable", error=str(exc))
+            _HEADROOM_IMPORT_FAILED = True
+        telemetry["reason"] = "import_failed"
+        return messages, telemetry
+
+    try:
+        result = compress(messages, model=model)
+        compressed = getattr(result, "messages", None)
+        if not isinstance(compressed, list) or not compressed:
+            telemetry["reason"] = "invalid_result"
+            return messages, telemetry
+
+        telemetry["applied"] = True
+        telemetry["reason"] = "ok"
+        telemetry["tokens_saved"] = getattr(result, "tokens_saved", None)
+        telemetry["compression_ratio"] = getattr(result, "compression_ratio", None)
+
+        logger.info(
+            "headroom_compress",
+            agent=metadata.get("agent_name", "unknown"),
+            session_id=metadata.get("session_id", ""),
+            structured=structured,
+            tokens_saved=telemetry["tokens_saved"],
+            compression_ratio=telemetry["compression_ratio"],
+        )
+        return compressed, telemetry
+    except Exception as exc:
+        logger.warning(
+            "headroom_compress_failed",
+            agent=metadata.get("agent_name", "unknown"),
+            session_id=metadata.get("session_id", ""),
+            structured=structured,
+            error=str(exc),
+        )
+        telemetry["reason"] = "compress_failed"
+        return messages, telemetry
+
 
 # ── Sync provider API keys so LiteLLM can find them ──────────────────────────
 
@@ -211,11 +319,27 @@ try:
         ) -> ChatResult:
             import litellm as _litellm
 
+            raw_messages = _lc_to_litellm(messages)
+            compressed_messages, headroom = _maybe_compress_messages(
+                raw_messages,
+                model=self.model,
+                metadata=self.metadata,
+                structured=False,
+            )
+            request_messages = _maybe_add_terse_system_note(compressed_messages)
+
+            req_metadata = {
+                **self.metadata,
+                "headroom_enabled": headroom["enabled"],
+                "headroom_applied": headroom["applied"],
+                "headroom_reason": headroom["reason"],
+            }
+
             kw: dict[str, Any] = {
                 "model": self.model,
-                "messages": _lc_to_litellm(messages),
+                "messages": request_messages,
                 "temperature": self.temperature,
-                "metadata": self.metadata,
+                "metadata": req_metadata,
                 "num_retries": self.max_retries,
             }
             if self.api_base:
@@ -238,11 +362,27 @@ try:
         ) -> ChatResult:
             import litellm as _litellm
 
+            raw_messages = _lc_to_litellm(messages)
+            compressed_messages, headroom = _maybe_compress_messages(
+                raw_messages,
+                model=self.model,
+                metadata=self.metadata,
+                structured=False,
+            )
+            request_messages = _maybe_add_terse_system_note(compressed_messages)
+
+            req_metadata = {
+                **self.metadata,
+                "headroom_enabled": headroom["enabled"],
+                "headroom_applied": headroom["applied"],
+                "headroom_reason": headroom["reason"],
+            }
+
             kw: dict[str, Any] = {
                 "model": self.model,
-                "messages": _lc_to_litellm(messages),
+                "messages": request_messages,
                 "temperature": self.temperature,
-                "metadata": self.metadata,
+                "metadata": req_metadata,
                 "num_retries": self.max_retries,
             }
             if self.api_base:
@@ -290,19 +430,48 @@ try:
             def _invoke_with_tools(messages: list[BaseMessage]) -> Any:
                 import litellm as _litellm
 
-                kw: dict[str, Any] = {
-                    "model": self.model,
-                    "messages": _lc_to_litellm(messages),
-                    "temperature": self.temperature,
-                    "metadata": self.metadata,
-                    "tools": [tool_def],
-                    "tool_choice": {"type": "function", "function": {"name": schema_name}},
-                    "num_retries": self.max_retries,
-                }
-                if self.api_base:
-                    kw["api_base"] = self.api_base
+                raw_messages = _lc_to_litellm(messages)
+                compressed_messages, headroom = _maybe_compress_messages(
+                    raw_messages,
+                    model=self.model,
+                    metadata=self.metadata,
+                    structured=True,
+                )
 
-                response = _litellm.completion(**kw)
+                req_metadata = {
+                    **self.metadata,
+                    "headroom_enabled": headroom["enabled"],
+                    "headroom_applied": headroom["applied"],
+                    "headroom_reason": headroom["reason"],
+                }
+
+                def _completion(request_messages: list[dict[str, Any]]) -> Any:
+                    kw: dict[str, Any] = {
+                        "model": self.model,
+                        "messages": request_messages,
+                        "temperature": self.temperature,
+                        "metadata": req_metadata,
+                        "tools": [tool_def],
+                        "tool_choice": {"type": "function", "function": {"name": schema_name}},
+                        "num_retries": self.max_retries,
+                    }
+                    if self.api_base:
+                        kw["api_base"] = self.api_base
+                    return _litellm.completion(**kw)
+
+                try:
+                    response = _completion(compressed_messages)
+                except Exception:
+                    if not headroom.get("applied"):
+                        raise
+                    logger.warning(
+                        "headroom_structured_retry_uncompressed",
+                        agent=self.metadata.get("agent_name", "unknown"),
+                        session_id=self.metadata.get("session_id", ""),
+                        reason="completion_failed",
+                    )
+                    response = _completion(raw_messages)
+
                 choice = response.choices[0]
 
                 # Extract JSON from tool_calls or content
@@ -312,7 +481,25 @@ try:
                 else:
                     raw_json = choice.message.content or "{}"
 
-                parsed: dict[str, Any] = json.loads(raw_json)
+                try:
+                    parsed: dict[str, Any] = json.loads(raw_json)
+                except json.JSONDecodeError:
+                    if not headroom.get("applied"):
+                        raise
+                    logger.warning(
+                        "headroom_structured_retry_uncompressed",
+                        agent=self.metadata.get("agent_name", "unknown"),
+                        session_id=self.metadata.get("session_id", ""),
+                        reason="json_decode_failed",
+                    )
+                    response = _completion(raw_messages)
+                    choice = response.choices[0]
+                    if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+                        raw_json = choice.message.tool_calls[0].function.arguments
+                    else:
+                        raw_json = choice.message.content or "{}"
+                    parsed = json.loads(raw_json)
+
                 if is_pydantic:
                     return schema.model_validate(parsed)
                 return parsed

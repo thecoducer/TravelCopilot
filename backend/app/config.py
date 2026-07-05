@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
     llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama
 
+    # Headroom compression (feature-flagged, runtime-safe)
+    headroom_enabled: bool = False
+    headroom_min_messages: int = 3
+    headroom_min_chars: int = 1200
+    # Adds a short terseness steer on non-structured calls to reduce output tokens.
+    headroom_output_terse_enabled: bool = False
+
     # Mock flag — when True all tools return fixture data, no network calls
     mock_external_apis: bool = True
 
