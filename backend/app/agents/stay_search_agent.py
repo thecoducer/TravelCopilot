@@ -6,6 +6,7 @@ writing results to state.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import structlog
@@ -15,6 +16,111 @@ from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
 
 logger = structlog.get_logger(__name__)
+
+
+_CURRENCY_SYMBOL_TO_CODE = {
+    "$": "USD",
+    "€": "EUR",
+    "£": "GBP",
+    "₹": "INR",
+    "¥": "JPY",
+}
+
+
+def _parse_number(value: object, default: float = 0.0) -> float:
+    """Parse numbers from heterogeneous internet payloads safely.
+
+    Handles values like "8,200", "₹ 8,200", "1.234,56", "4.5/5", "1,203 reviews".
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return default
+
+    # Keep digits/sign and common separators only.
+    token = re.sub(r"[^\d,\.\-]", "", raw)
+    if not token:
+        return default
+
+    if "," in token and "." in token:
+        # Last separator is most likely decimal separator.
+        if token.rfind(",") > token.rfind("."):
+            token = token.replace(".", "").replace(",", ".")
+        else:
+            token = token.replace(",", "")
+    elif "," in token:
+        # Treat as decimal comma only for short trailing precision, else thousands separators.
+        frac = token.split(",")[-1]
+        if token.count(",") == 1 and len(frac) in {1, 2}:
+            token = token.replace(",", ".")
+        else:
+            token = token.replace(",", "")
+
+    try:
+        return float(token)
+    except ValueError:
+        return default
+
+
+def _parse_int(value: object, default: int = 0) -> int:
+    parsed = _parse_number(value, default=float(default))
+    if parsed < 0:
+        return default
+    return int(parsed)
+
+
+def _list_of_str(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _extract_rate_lowest(prop: dict[str, Any]) -> object:
+    rate = prop.get("rate_per_night", {})
+    if isinstance(rate, dict):
+        return rate.get("lowest", 0)
+    return rate
+
+
+def _extract_currency(prop: dict[str, Any], price_source: object) -> str:
+    explicit = prop.get("currency")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip().upper()
+
+    price_text = str(price_source or "")
+    for symbol, code in _CURRENCY_SYMBOL_TO_CODE.items():
+        if symbol in price_text:
+            return code
+    return "INR"
+
+
+def _extract_coords(prop: dict[str, Any]) -> tuple[float | None, float | None]:
+    gps = prop.get("gps_coordinates")
+    if not isinstance(gps, dict):
+        return None, None
+
+    lat = _parse_number(gps.get("latitude"), default=0.0)
+    lng = _parse_number(gps.get("longitude"), default=0.0)
+    if lat == 0.0 and lng == 0.0:
+        return None, None
+    return lat, lng
+
+
+def _extract_maps_url(prop: dict[str, Any], lat: float | None, lng: float | None) -> str | None:
+    direct = prop.get("google_maps_url")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    if lat is not None and lng is not None:
+        return f"https://maps.google.com/?q={lat},{lng}"
+    return None
 
 
 class StaySearchAgent:
@@ -55,24 +161,41 @@ class StaySearchAgent:
 
         for prop in raw_properties:
             try:
-                price = float(prop.get("rate_per_night", {}).get("lowest", 0) or 0)
+                price_source = _extract_rate_lowest(prop)
+                price = max(0.0, _parse_number(price_source, default=0.0))
+                rating = _parse_number(prop.get("overall_rating", 0), default=0.0)
+                rating = max(0.0, min(5.0, rating))
+                review_count = _parse_int(prop.get("reviews", 0), default=0)
+                lat, lng = _extract_coords(prop)
+                currency_code = _extract_currency(prop, price_source)
+
                 stays.append(
                     StayOption(
-                        name=prop.get("name", "Unknown Hotel"),
-                        address=prop.get("address", destination),
+                        name=str(prop.get("name", "Unknown Hotel") or "Unknown Hotel"),
+                        address=str(prop.get("address", destination) or destination),
                         city=destination,
                         price_per_night=price,
-                        currency_code=prop.get("currency", "INR"),
-                        rating=float(prop.get("overall_rating", 0) or 0),
-                        review_count=int(prop.get("reviews", 0) or 0),
-                        amenities=prop.get("amenities", []),
-                        photos=prop.get("images", []),
-                        google_maps_url=prop.get("gps_coordinates") and None,
-                        booking_url=prop.get("link"),
+                        currency_code=currency_code,
+                        rating=rating,
+                        review_count=review_count,
+                        amenities=_list_of_str(prop.get("amenities", [])),
+                        photos=_list_of_str(prop.get("images", [])),
+                        google_maps_url=_extract_maps_url(prop, lat, lng),
+                        booking_url=(str(prop.get("link")).strip() if prop.get("link") else None),
                         hotel_style=user_profile.hotel_style if user_profile else None,
-                        price_tier=budget_tier_str,
-                        check_in=prop.get("check_in_time"),
-                        check_out=prop.get("check_out_time"),
+                        price_tier=str(budget_tier_str),
+                        lat=lat,
+                        lng=lng,
+                        check_in=(
+                            str(prop.get("check_in_time")).strip()
+                            if prop.get("check_in_time")
+                            else None
+                        ),
+                        check_out=(
+                            str(prop.get("check_out_time")).strip()
+                            if prop.get("check_out_time")
+                            else None
+                        ),
                     )
                 )
             except Exception as exc:
