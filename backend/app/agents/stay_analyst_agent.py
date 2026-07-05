@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.llm import get_llm
 from app.models.transport import StayOption
-from app.models.user_profile import BudgetTier
+from app.models.user_profile import BudgetTier, budget_from_state
 
 logger = structlog.get_logger(__name__)
 
@@ -75,7 +75,7 @@ class StayAnalystAgent:
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         stays_raw: list[StayOption] = state.get("stays_raw", [])
         user_profile = state.get("user_profile")
-        budget = state.get("budget")
+        budget = budget_from_state(state.get("budget"))
         session_id: str = state.get("session_id", "")
 
         log = logger.bind(agent="stay_analyst", session_id=session_id)

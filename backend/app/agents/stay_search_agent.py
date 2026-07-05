@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from app.models.transport import StayOption
+from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +29,7 @@ class StaySearchAgent:
         dates = state.get("dates")
         travelers: int = state.get("travelers", 1)
         user_profile = state.get("user_profile")
-        budget = state.get("budget")
+        budget = budget_from_state(state.get("budget"))
         session_id: str = state.get("session_id", "")
 
         log = logger.bind(agent="stay_search", destination=destination, session_id=session_id)

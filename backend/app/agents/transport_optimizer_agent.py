@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.llm import get_llm
 from app.models.transport import TransportRecommendation
+from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
 
 logger = structlog.get_logger(__name__)
@@ -74,7 +75,7 @@ class TransportOptimizerAgent:
         destination: str = state.get("destination", "")
         legs_raw: dict[str, list[Any]] = state.get("transport_legs_raw", {})
         dates = state.get("dates")
-        budget = state.get("budget")
+        budget = budget_from_state(state.get("budget"))
         travelers: int = state.get("travelers", 1)
         session_id: str = state.get("session_id", "")
 

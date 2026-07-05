@@ -29,7 +29,7 @@ from app.models.reports import (
     VisaReport,
 )
 from app.models.transport import StayOption, TransportRecommendation
-from app.models.user_profile import BudgetPreference, TripDates, UserProfile
+from app.models.user_profile import TripDates, UserProfile
 
 
 class TripState(dict):  # type: ignore[type-arg]
@@ -45,7 +45,7 @@ class TripState(dict):  # type: ignore[type-arg]
     source: str
     destination: str
     dates: TripDates | None
-    budget: BudgetPreference
+    budget: dict[str, str | float | None]
     travelers: int
     user_profile: UserProfile | None
     is_international: bool  # set by OrchestratorAgent
@@ -99,7 +99,7 @@ def initial_state(
         "source": "",
         "destination": "",
         "dates": None,
-        "budget": BudgetPreference(),
+        "budget": {"tier": "mid", "total_budget_inr": None, "per_day_budget_inr": None},
         "travelers": 1,
         "user_profile": None,
         "is_international": False,

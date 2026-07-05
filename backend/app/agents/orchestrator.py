@@ -36,6 +36,7 @@ from app.models.user_profile import (
     BudgetTier,
     TripDates,
     UserProfile,
+    budget_to_state,
 )
 
 logger = structlog.get_logger(__name__)
@@ -520,7 +521,7 @@ class OrchestratorAgent:
             if parsed.budget_tier in BudgetTier.__members__.values()
             else BudgetTier.mid
         )
-        budget = BudgetPreference(tier=tier)
+        budget = budget_to_state(BudgetPreference(tier=tier))
 
         try:
             travelers = max(1, int(parsed.travelers.value or 1))
