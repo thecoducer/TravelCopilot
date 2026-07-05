@@ -88,9 +88,10 @@ graph TD
 
     self_drive_search["LAYER 3 · Analysis\n🚗 SelfDriveSearchAgent\n─────────────────\nconditional · LLM\nrentals · fuel estimate\nonly if self_drive_intent"]:::layer3
 
-    %% ── Layer 1 + Layer 3 → BudgetPlanner (barrier join: 5 inputs)
-    destination_context --> budget_planner
-    visa --> budget_planner
+    %% ── Layer 3 → BudgetPlanner (barrier join: 3 direct inputs; reads L1 state)
+    %% destination_context_report and visa_report are already written to TripState
+    %% by super-step 3, so no direct edge is needed — and adding one would cause
+    %% BudgetPlannerAgent to fire twice (once after L1 and again after L3).
     transport_optimizer --> budget_planner
     stay_analyst --> budget_planner
     self_drive_search --> budget_planner
@@ -103,7 +104,7 @@ graph TD
     local_experiences --> food_discovery
 
     %% ── Layer 4: Enrichment ──────────────────────────────────────
-    budget_planner["LAYER 4 · Enrichment\n💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join (5)\naggregate all costs · FX\nbudget verdict + tips"]:::layer4
+    budget_planner["LAYER 4 · Enrichment\n💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join (3 direct)\nreads L1 reports from state\naggregate all costs · FX\nbudget verdict + tips"]:::layer4
 
     reviews["LAYER 4 · Enrichment\n⭐ ReviewsAgent\n─────────────────\nLLM · Places API\nreviews + photos\nfor stays + experiences"]:::layer4
 
@@ -1040,10 +1041,14 @@ Step 3:  TransportOptimizerAgent         (after TransportSearch)
 
 Step 4:  ReviewsAgent                    (after StayAnalyst + LocalExperiences)
          FoodDiscoveryAgent              (after LocalExperiences; needs day-cluster context)
-         BudgetPlannerAgent              (after TransportOptimizer + StayAnalyst + Layer 1)
-         — parallel with each other
+         BudgetPlannerAgent              (after TransportOptimizer + StayAnalyst + SelfDriveSearch;
+                                          reads DestinationContext + Visa reports from state —
+                                          no direct graph edge from L1 to avoid duplicate firing)
+         — all three parallel with each other
          ScamSafetyAgent                 (after FoodDiscovery — venue-aware scam report)
          — sequential after FoodDiscovery, feeds directly into ItineraryCompiler
+         Note: ReviewsAgent, BudgetPlannerAgent, and ScamSafetyAgent all reach
+         depth-5 in the same super-step, so ItineraryCompilerAgent fires exactly once.
 
 Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
            → geo-cluster activities by proximity

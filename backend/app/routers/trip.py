@@ -105,7 +105,7 @@ def _preview(agent_name: str, output: dict[str, Any]) -> str:
 _AGENT_LAYERS: dict[str, int] = {
     "orchestrator": 0,
     "destination_context": 1,
-    "scam_safety": 1,
+    "scam_safety": 4,
     "visa": 1,
     "transport_search": 2,
     "stay_search": 2,
@@ -123,6 +123,7 @@ _AGENT_LAYERS: dict[str, int] = {
 async def _stream_graph(
     query: str,
     session_id: str,
+    trip_id: str,
     overrides: dict[str, Any],
 ) -> AsyncGenerator[str, None]:
     from app.observability.langfuse import get_langfuse_handler
@@ -133,6 +134,16 @@ async def _stream_graph(
         compiled = await get_compiled_graph()
         state = initial_state(query=query, session_id=session_id)
         state.update(overrides)
+
+        # Persist a stub row immediately so session_id is stored even if the
+        # graph pauses for clarification or fails before completion.
+        await _persist_trip(
+            session_id=session_id,
+            trip_id=trip_id,
+            query=query,
+            state=state,
+            itinerary=None,
+        )
 
         langfuse_handler = get_langfuse_handler(session_id=session_id)
         config: dict[str, Any] = {"configurable": {"thread_id": session_id}}
@@ -166,12 +177,13 @@ async def _stream_graph(
                 )
 
         # Graph completed — get final state from checkpoint
-        snapshot = compiled.get_state(config)
+        snapshot = await compiled.aget_state(config)
         final_state: dict[str, Any] = snapshot.values if snapshot else {}
 
         async for event in _emit_completion_events(
             final_state=final_state,
             session_id=session_id,
+            trip_id=trip_id,
             query=query,
             compiled=compiled,
             config=config,
@@ -185,6 +197,7 @@ async def _stream_graph(
 
 async def _stream_resumed_graph(
     session_id: str,
+    trip_id: str,
     answers: dict[str, str],
     query: str,
 ) -> AsyncGenerator[str, None]:
@@ -227,12 +240,13 @@ async def _stream_resumed_graph(
                     },
                 )
 
-        snapshot = compiled.get_state(config)
+        snapshot = await compiled.aget_state(config)
         final_state: dict[str, Any] = snapshot.values if snapshot else {}
 
         async for event in _emit_completion_events(
             final_state=final_state,
             session_id=session_id,
+            trip_id=trip_id,
             query=query,
             compiled=compiled,
             config=config,
@@ -247,19 +261,19 @@ async def _stream_resumed_graph(
 async def _emit_completion_events(
     final_state: dict[str, Any],
     session_id: str,
+    trip_id: str,
     query: str,
     compiled: Any,
     config: dict[str, Any],
 ) -> AsyncGenerator[str, None]:
     """Emit ``complete`` and ``usage_summary`` SSE events after the graph finishes."""
     itinerary = final_state.get("itinerary")
-    itinerary_id = str(uuid.uuid4())
     if itinerary and hasattr(itinerary, "model_copy"):
-        itinerary = itinerary.model_copy(update={"id": itinerary_id})
+        itinerary = itinerary.model_copy(update={"id": trip_id})
 
     await _persist_trip(
         session_id=session_id,
-        trip_id=itinerary_id,
+        trip_id=trip_id,
         query=query,
         state=final_state,
         itinerary=itinerary,
@@ -271,7 +285,7 @@ async def _emit_completion_events(
     yield _sse(
         "complete",
         {
-            "itinerary_id": itinerary_id,
+            "itinerary_id": trip_id,
             "session_id": session_id,
             "itinerary": itinerary.model_dump() if itinerary else None,
         },
@@ -312,16 +326,29 @@ async def _persist_trip(
                 ctx.crowd_level, 50
             )
 
+        # Serialise per-agent token usage so GET /{id}/usage can read it back
+        token_usage = state.get("token_usage", {}) or {}
+        token_usage_json = json.dumps(
+            {
+                name: (u.model_dump() if hasattr(u, "model_dump") else u)
+                for name, u in token_usage.items()
+            },
+            default=str,
+        )
+
         async with AsyncSessionLocal() as session:
             await session.execute(
                 text("""
                     INSERT INTO trips
-                        (id, session_id, query, is_international, itinerary_json, reality_score)
+                        (id, session_id, query, is_international, itinerary_json,
+                         reality_score, token_usage_json)
                     VALUES
                         (:id, :session_id, :query, :is_international,
-                         CAST(:itinerary AS jsonb), :reality_score)
+                         CAST(:itinerary AS jsonb), :reality_score,
+                         CAST(:token_usage AS jsonb))
                     ON CONFLICT (id) DO UPDATE
-                    SET itinerary_json = CAST(EXCLUDED.itinerary AS jsonb),
+                    SET itinerary_json = CAST(EXCLUDED.itinerary_json AS jsonb),
+                        token_usage_json = CAST(EXCLUDED.token_usage_json AS jsonb),
                         updated_at = NOW()
                 """),
                 {
@@ -331,11 +358,33 @@ async def _persist_trip(
                     "is_international": is_intl,
                     "itinerary": itinerary_json,
                     "reality_score": reality_score,
+                    "token_usage": token_usage_json,
                 },
             )
             await session.commit()
     except Exception as exc:
         logger.warning("trip_persist_failed", error=str(exc), session_id=session_id)
+
+
+async def _get_latest_trip_id(session_id: str) -> str | None:
+    """Return the most recent trip id for a session, or None if absent."""
+    try:
+        from sqlalchemy import text
+
+        from app.db import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            row = await db.execute(
+                text(
+                    "SELECT id FROM trips WHERE session_id = :sid ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"sid": session_id},
+            )
+            result = row.fetchone()
+            return str(result.id) if result else None
+    except Exception as exc:
+        logger.warning("get_latest_trip_id_failed", error=str(exc), session_id=session_id)
+        return None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -345,6 +394,7 @@ async def _persist_trip(
 async def plan_trip(request: PlanRequest) -> StreamingResponse:
     """Start a planning session and stream SSE events."""
     session_id = request.session_id or str(uuid.uuid4())
+    trip_id = str(uuid.uuid4())
     overrides: dict[str, Any] = {}
     if request.source:
         overrides["source"] = request.source
@@ -354,7 +404,12 @@ async def plan_trip(request: PlanRequest) -> StreamingResponse:
     logger.info("plan_trip_start", session_id=session_id, query=request.query[:80])
 
     return StreamingResponse(
-        _stream_graph(query=request.query, session_id=session_id, overrides=overrides),
+        _stream_graph(
+            query=request.query,
+            session_id=session_id,
+            trip_id=trip_id,
+            overrides=overrides,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -379,14 +434,18 @@ async def clarify_trip(session_id: str, request: ClarifyRequest) -> StreamingRes
     try:
         compiled = await get_compiled_graph()
         config = {"configurable": {"thread_id": session_id}}
-        snapshot = compiled.get_state(config)
+        snapshot = await compiled.aget_state(config)
         query = (snapshot.values or {}).get("query", "") if snapshot else ""
     except Exception:
         query = ""
 
+    # Continue updating the same trip row started in /plan.
+    trip_id = await _get_latest_trip_id(session_id) or str(uuid.uuid4())
+
     return StreamingResponse(
         _stream_resumed_graph(
             session_id=session_id,
+            trip_id=trip_id,
             answers=request.answers,
             query=query,
         ),

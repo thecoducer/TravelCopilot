@@ -1,14 +1,14 @@
 # Multi-Agent AI Trip Planner — Engineering Dev Roadmap
 
 > Created: 2026-06-15  
-> Last updated: 2026-06-21  
-> Based on: System Design Plan v6  
+> Last updated: 2026-07-04  
+> Based on: System Design Plan v7  
 > Strategy: Mock-first → Real APIs → Frontend last
 
 **Phase 0 status**: ✅ All code items complete. 3 runtime-verification items (docker up, psql, log check) pending first `docker-compose up`.  
 **Phase 1 status**: ✅ Complete. 113/113 tests passing, 0 ruff violations, 0 mypy errors.  
-**Phase 2 status**: ✅ Complete. 149 tests passing (135 unit + 14 integration). All 14 agents wired, clarification gate (F), grounding (G/D), budget filters, deterministic opening-hours + duration gates (A/B/I), `stays_shortlist` with personalization, transport alternatives.  
-**Phase 3 status**: ✅ Core complete. SSE endpoint with Langfuse + clarification event, DB persistence, PDF service (WeasyPrint + Jinja2), feedback endpoint, Prometheus metrics, request-ID middleware. Postman collection pending.
+**Phase 2 status**: ✅ Complete. 149 tests passing (135 unit + 14 integration). All 14 agents wired, clarification gate via `interrupt()` (F), grounding (G/D), budget filters, deterministic opening-hours + duration gates (A/B/I), `stays_shortlist` with personalization, transport alternatives.  
+**Phase 3 status**: ✅ All code + infrastructure complete. DB migration realigned to routers (2026-07-04): `user_profiles(session_id PK, profile_json)` + `trips(id, session_id, slug, public, query, is_international, itinerary_json, reality_score, token_usage_json)`. `_persist_trip` ON CONFLICT bug fixed; `token_usage_json` now persisted. Remaining: 6 Postman test executions + `/docs` visit (require live server).
 
 **Key design decisions enacted in Phase 1:**
 - Itinerary is options-based: every time slot, stay, and food choice has 2–3 ranked options with `recommendation_reason` and `best_for` tags
@@ -65,7 +65,7 @@
 - [x] Implement `backend/app/db.py` — SQLAlchemy async engine + `AsyncSession` factory
 - [x] Write raw SQL migration file `backend/migrations/001_initial.sql` with full schema (user_profiles, trips tables + all indexes)
 - [x] Add `make migrate` target that runs migration SQL against local postgres
-- [ ] Verify tables created: `psql` → `\dt` shows all 3 tables
+- [ ] Verify tables created: `psql` → `\dt` shows both tables (`user_profiles`, `trips`)
 
 ### P0-5 · Structured Logging
 - [x] Configure `structlog` in `backend/app/main.py` — JSON output, log level from env
@@ -146,9 +146,9 @@
 
 ### P2-1 · TripState + Graph Skeleton
 - [x] Implement `backend/app/graph/state.py` — full `TripState` TypedDict with all fields from plan (incl. `needs_clarification`, `clarification_prompts`, `parse_confidence`, `stays_shortlist`, `transport_alternatives`)
-- [x] Implement `backend/app/graph/graph.py` — `StateGraph` with all 14 nodes + `clarification` + `ready_to_plan` fan-out node
-- [x] `conditional_edges` routing after orchestrator: `needs_clarification=True` → `clarification` → END; else → `ready_to_plan` → fan-out to all L1+L2
-- [x] Add `clarification` terminal node **(F)**
+- [x] Implement `backend/app/graph/graph.py` — `StateGraph` with all 14 nodes + `ready_to_plan` fan-out node
+- [x] `interrupt()`-based clarification gate inside `OrchestratorAgent` (no separate terminal node or conditional edge); graph pauses in-place, resumes via `Command(resume=answers)` **(F)**
+- [x] Direct edge `orchestrator → ready_to_plan` → fan-out to all L1+L2 in parallel
 - [x] Add `run_graph(query, session_id)` entrypoint function
 - [x] Verify graph compiles: `graph.compile()` raises no errors
 
@@ -259,10 +259,11 @@
 ### P3-2 · Trip Planning Endpoint (SSE)
 - [x] `POST /api/trip/plan` — SSE stream with `agent_start`, `agent_done` (with layer + preview), `needs_clarification` **(F)**, `complete`, `usage_summary`, `error`
 - [x] Langfuse `CallbackHandler` injected into every graph invocation
-- [x] `_persist_trip()` — DB upsert to `trips` table (best-effort, non-blocking)
+- [x] `_persist_trip()` — DB upsert to `trips` table (best-effort, non-blocking); writes `token_usage_json`; ON CONFLICT fixed (2026-07-04)
+- [x] `POST /api/trip/{session_id}/clarify` — resumes paused graph via `Command(resume=answers)`; SSE stream continues from interrupt point **(F)**
 - [x] `needs_clarification` event returns prompts array + halts stream cleanly (no `complete`)
-- [ ] Postman test: POST with `"3 days Osaka from Kolkata"` → verify all agent events + `complete`
-- [ ] Postman test (F): `"plan a trip to Tokyo"` → `needs_clarification` event + no `complete`
+- [ ] Postman test: POST with `"3 days Leh from Kolkata"` → verify all agent events + `complete` *(requires live server)*
+- [ ] Postman test (F): `"plan a trip to Leh"` (no dates/travelers) → `needs_clarification` event + no `complete` *(requires live server)*
 
 ### P3-3 · User Profile Endpoints
 - [x] `PUT /api/user/profile` — SQLAlchemy upsert to `user_profiles` table

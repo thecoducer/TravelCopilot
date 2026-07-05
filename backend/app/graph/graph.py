@@ -125,10 +125,12 @@ def build_graph(
     graph.add_edge("transport_search", "self_drive_search")
     graph.add_edge("stay_search", "stay_analyst")
 
-    # Layer 1+3 → budget_planner (barrier: waits for all 5)
+    # Layer 3 → budget_planner.
+    # destination_context_report and visa_report are already in state by the time
+    # the layer-3 agents finish — no direct edge needed from layer-1 nodes.
+    # Removing those edges keeps all budget_planner predecessors at the same
+    # graph depth so LangGraph fires it exactly once.
     for node in [
-        "destination_context",
-        "visa",
         "transport_optimizer",
         "stay_analyst",
         "self_drive_search",

@@ -1,55 +1,43 @@
 -- Migration 001: Initial schema
 -- Run via: make migrate
+--
+-- Schema is the source of truth for the FastAPI routers:
+--   app/routers/user.py  -> user_profiles(session_id, profile_json)
+--   app/routers/trip.py  -> trips(id, session_id, slug, public, query,
+--                                 is_international, itinerary_json,
+--                                 reality_score, token_usage_json)
 
 BEGIN;
 
--- user_profiles: stores traveller preferences persisted across trips
+-- user_profiles: one row per session, full UserProfile stored as JSON.
+-- Keyed by session_id to match PUT/GET /api/user/profile (X-Session-ID header).
 CREATE TABLE IF NOT EXISTS user_profiles (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         TEXT NOT NULL UNIQUE,           -- external auth identifier
-    display_name    TEXT,
-    home_city       TEXT,
-    nationality     TEXT,
-    passport_country TEXT,
-    preferred_currency TEXT DEFAULT 'INR',
-    dietary_restrictions TEXT[],
-    accessibility_needs TEXT[],
-    preferred_airlines TEXT[],
-    preferred_hotel_chains TEXT[],
-    loyalty_programs JSONB DEFAULT '{}',            -- {"airline": "program_id"}
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    session_id   TEXT PRIMARY KEY,               -- client session UUID
+    profile_json JSONB NOT NULL,                 -- serialised UserProfile model
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles (user_id);
-
--- trips: one row per planning session / trip
+-- trips: one row per generated itinerary.
+-- Multiple trips may share a session_id (latest wins on GET by session).
 CREATE TABLE IF NOT EXISTS trips (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         TEXT NOT NULL REFERENCES user_profiles (user_id) ON DELETE CASCADE,
-    session_id      TEXT NOT NULL UNIQUE,           -- LangGraph session / Redis key
-    status          TEXT NOT NULL DEFAULT 'planning'
-                        CHECK (status IN ('planning','confirmed','completed','cancelled')),
-    origin          TEXT,
-    destination     TEXT,
-    departure_date  DATE,
-    return_date     DATE,
-    num_travelers   INT DEFAULT 1,
-    trip_type       TEXT DEFAULT 'international'
-                        CHECK (trip_type IN ('domestic','international')),
-    budget_inr      NUMERIC(14,2),
-    itinerary       JSONB,                          -- serialised Itinerary model
-    state_snapshot  JSONB,                          -- latest TripState for resumption
-    token_usage     JSONB DEFAULT '{}',             -- AgentTokenUsage per agent
-    llm_spend_usd   NUMERIC(8,6) DEFAULT 0,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id       TEXT NOT NULL,              -- client session UUID
+    slug             VARCHAR(80) UNIQUE,         -- public share slug (nullable)
+    public           BOOLEAN NOT NULL DEFAULT FALSE,
+    query            TEXT,                       -- original free-text query
+    is_international  BOOLEAN NOT NULL DEFAULT FALSE,
+    itinerary_json   JSONB,                      -- serialised Itinerary model
+    reality_score    INT,                        -- derived from crowd_level (0-100)
+    token_usage_json JSONB NOT NULL DEFAULT '{}',-- per-agent AgentTokenUsage
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_trips_user_id    ON trips (user_id);
 CREATE INDEX IF NOT EXISTS idx_trips_session_id ON trips (session_id);
-CREATE INDEX IF NOT EXISTS idx_trips_status     ON trips (status);
 CREATE INDEX IF NOT EXISTS idx_trips_created_at ON trips (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trips_public     ON trips (public) WHERE public = TRUE;
+CREATE INDEX IF NOT EXISTS idx_trips_slug       ON trips (slug)   WHERE slug IS NOT NULL;
 
 -- Auto-update updated_at on row change
 CREATE OR REPLACE FUNCTION set_updated_at()

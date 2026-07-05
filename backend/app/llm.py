@@ -41,6 +41,8 @@ def _sync_api_keys() -> None:
         "ANTHROPIC_API_KEY": settings.anthropic_api_key,
         "GOOGLE_API_KEY": settings.google_api_key,
         "GROQ_API_KEY": settings.groq_api_key,
+        # LiteLLM expects OPENROUTER_API_KEY; the .env uses OPEN_ROUTER_API_KEY
+        "OPENROUTER_API_KEY": settings.openrouter_api_key,
     }
     for env_var, value in key_map.items():
         if value and not os.environ.get(env_var):
@@ -48,6 +50,44 @@ def _sync_api_keys() -> None:
 
 
 _sync_api_keys()
+
+
+def try_enable_litellm_langfuse_callbacks() -> bool:
+    """Enable LiteLLM Langfuse callbacks only when SDK compatibility is confirmed.
+
+    Some langfuse/litellm version combinations raise at request time when
+    `success_callback=["langfuse"]` is configured. This guard keeps the app
+    functional by disabling those callbacks when compatibility checks fail.
+    """
+    if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+        return False
+
+    try:
+        import langfuse  # type: ignore[import]
+        import litellm
+
+        # LiteLLM integration expects langfuse.version.__version__.
+        if not hasattr(langfuse, "version"):
+            logger.warning(
+                "langfuse_litellm_disabled",
+                reason="langfuse.version missing",
+                fallback="callbacks_off",
+            )
+            return False
+
+        litellm.success_callback = ["langfuse"]
+        litellm.failure_callback = ["langfuse"]
+        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key)
+        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key)
+        os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_host)
+        return True
+    except Exception as exc:
+        logger.warning(
+            "langfuse_litellm_disabled",
+            reason=str(exc),
+            fallback="callbacks_off",
+        )
+        return False
 
 
 # ── LiteLLM CustomLogger — sync, fired after every completion ────────────────
@@ -104,13 +144,7 @@ try:
 
     _usage_logger = UsageLogger()
     litellm.callbacks = [_usage_logger]
-
-    if settings.langfuse_public_key and settings.langfuse_secret_key:
-        litellm.success_callback = ["langfuse"]
-        litellm.failure_callback = ["langfuse"]
-        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key)
-        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key)
-        os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_host)
+    try_enable_litellm_langfuse_callbacks()
 
 except ImportError:
     logger.warning("litellm_not_installed")

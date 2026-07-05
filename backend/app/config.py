@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env from the project root regardless of working directory.
+# Local dev: backend/app/config.py → ../../.. → project root.
+# Docker:    /app/app/config.py   → / (no file); vars are injected via compose env_file.
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -17,11 +24,12 @@ class Settings(BaseSettings):
 
     # LLM — swap provider+model with two env vars, zero code changes
     # Examples:
-    #   openai   / gpt-4o                        (default)
-    #   anthropic/ claude-3-5-sonnet-20241022
-    #   gemini   / gemini-1.5-pro
-    #   ollama   / llama3                         (local)
-    #   groq     / llama3-70b-8192
+    #   openai      / gpt-4o                              (default)
+    #   anthropic   / claude-3-5-sonnet-20241022
+    #   gemini      / gemini-1.5-pro
+    #   groq        / llama3-70b-8192
+    #   openrouter  / nvidia/nemotron-3-ultra-550b-a55b:free
+    #   ollama      / llama3                              (local)
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o"
 
@@ -31,6 +39,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     google_api_key: str = ""  # Gemini / Vertex AI
     groq_api_key: str = ""  # Groq (fast Llama inference)
+    openrouter_api_key: str = ""  # reads OPEN_ROUTER_API_KEY; LiteLLM expects OPENROUTER_API_KEY
 
     # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
     llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama

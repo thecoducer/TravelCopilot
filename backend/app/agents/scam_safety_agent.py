@@ -91,9 +91,7 @@ class ScamSafetyAgent:
         food_recommendations: dict[str, list[Any]] = state.get("food_recommendations", {})
 
         experience_names: list[str] = [
-            e.name if hasattr(e, "name") else e.get("name", "")
-            for e in experiences_raw
-            if e
+            e.name if hasattr(e, "name") else e.get("name", "") for e in experiences_raw if e
         ]
         food_names: list[str] = [
             v.name if hasattr(v, "name") else v.get("name", "")

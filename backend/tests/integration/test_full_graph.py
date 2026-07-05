@@ -453,9 +453,7 @@ class TestFullGraph:
         async def _run() -> tuple[dict, Any]:
             factory = ToolFactory(mock=True)
             checkpointer = MemorySaver()
-            compiled = build_graph(
-                tool_factory=factory, llm=mock_llm, checkpointer=checkpointer
-            )
+            compiled = build_graph(tool_factory=factory, llm=mock_llm, checkpointer=checkpointer)
             state = initial_state(query="plan a trip to Tokyo", session_id="vague-test")
             config = {"configurable": {"thread_id": "vague-test"}}
             result = await compiled.ainvoke(state, config=config)

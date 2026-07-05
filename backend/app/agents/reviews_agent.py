@@ -19,6 +19,9 @@ from app.tools.factory import ToolFactory
 
 logger = structlog.get_logger(__name__)
 
+# Keep review synthesis bounded so one slow provider call cannot stall the full graph.
+_REVIEW_SUMMARY_TIMEOUT_SECONDS = 60
+
 _SYSTEM_PROMPT = """\
 You are a travel reviewer. Given the raw place details and reviews below, synthesise a
 concise reviewer summary for a traveller.
@@ -95,18 +98,28 @@ class ReviewsAgent:
 
             chain = self._llm.with_structured_output(_PlaceSummary)  # type: ignore[union-attr]
             try:
-                summary: _PlaceSummary = chain.invoke(
-                    [
-                        SystemMessage(content=_SYSTEM_PROMPT),
-                        HumanMessage(
-                            content=(
-                                f"Place: {name}\n"
-                                f"Rating: {rating}/5 ({review_count} reviews)\n\n"
-                                f"Reviews:\n{reviews_text}"
-                            )
-                        ),
-                    ]
+                summary: _PlaceSummary = await asyncio.wait_for(
+                    chain.ainvoke(
+                        [
+                            SystemMessage(content=_SYSTEM_PROMPT),
+                            HumanMessage(
+                                content=(
+                                    f"Place: {name}\n"
+                                    f"Rating: {rating}/5 ({review_count} reviews)\n\n"
+                                    f"Reviews:\n{reviews_text}"
+                                )
+                            ),
+                        ]
+                    ),
+                    timeout=_REVIEW_SUMMARY_TIMEOUT_SECONDS,
                 )
+            except TimeoutError:
+                log.warning(
+                    "llm_timeout",
+                    place=name,
+                    timeout_seconds=_REVIEW_SUMMARY_TIMEOUT_SECONDS,
+                )
+                summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")
             except Exception as exc:
                 log.warning("llm_failed", place=name, error=str(exc))
                 summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")

@@ -20,27 +20,78 @@ from app.config import settings
 
 
 def configure_logging() -> None:
-    """Configure structlog for JSON output with shared context fields."""
+    """Configure structured logging.
+
+    All log output — from app code (structlog) and third-party libraries
+    (LiteLLM, uvicorn, SQLAlchemy via stdlib logging) — flows through a
+    single pipeline so each event appears exactly once.
+
+    Development: human-readable ConsoleRenderer (coloured, aligned).
+    Production:  JSON lines.
+    """
+    level_int = logging.getLevelName(settings.log_level.upper())
+
+    # Processors shared by both structlog and stdlib foreign-log chains.
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+    ]
+
+    # Final renderer: pretty for dev, JSON for prod.
+    if settings.app_env == "development":
+        final_renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(
+            colors=True, exception_formatter=structlog.dev.plain_traceback
+        )
+    else:
+        final_renderer = structlog.processors.JSONRenderer()
+
     structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(settings.log_level.upper())
-        ),
+        processors=shared_processors + [final_renderer],
+        wrapper_class=structlog.make_filtering_bound_logger(level_int),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=False,
+        # Route through stdlib so both structlog + stdlib share one handler.
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
     )
-    logging.basicConfig(
-        format="%(message)s",
-        level=logging.getLevelName(settings.log_level.upper()),
+
+    # Single stdlib handler using structlog's ProcessorFormatter so foreign
+    # logs (LiteLLM, uvicorn, SQLAlchemy) are also rendered consistently.
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processor=final_renderer,
+        foreign_pre_chain=shared_processors,
     )
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.handlers.clear()  # remove any handlers added before us
+    root.addHandler(handler)
+    root.setLevel(level_int)
+
+    # Silence extremely noisy debug-level libraries that flood logs with
+    # HTTP wire frames, model-mapping warnings, etc.
+    _silence = [
+        "httpcore",
+        "httpx",
+        "hpack",
+        "litellm",
+        "LiteLLM",  # suppress per-request debug dumps
+        "opentelemetry",
+    ]
+    for name in _silence:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+    # LiteLLM has a separate verbose flag that bypasses stdlib logging.
+    try:
+        import litellm as _litellm
+
+        _litellm.set_verbose = False  # stops internal print() debug output
+    except Exception:
+        pass
 
 
 def configure_otel(app: FastAPI) -> None:
@@ -79,16 +130,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("checkpointer_init_failed", error=str(exc))
 
-    # Register Langfuse as LiteLLM success callback (best-effort)
-    if settings.langfuse_public_key:
-        try:
-            import litellm
+    # Register LiteLLM Langfuse callbacks only if integration is compatible.
+    try:
+        from app.llm import try_enable_litellm_langfuse_callbacks
 
-            litellm.success_callback = ["langfuse"]
-            litellm.failure_callback = ["langfuse"]
+        if try_enable_litellm_langfuse_callbacks():
             logger.info("litellm_langfuse_registered")
-        except Exception as exc:
-            logger.warning("litellm_langfuse_failed", error=str(exc))
+        else:
+            logger.warning("litellm_langfuse_disabled")
+    except Exception as exc:
+        logger.warning("litellm_langfuse_failed", error=str(exc))
 
     yield
 

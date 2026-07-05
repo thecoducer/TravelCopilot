@@ -31,7 +31,7 @@ lint-fix: ## Auto-fix ruff lint issues where possible
 	cd $(BACKEND_DIR) && uv run ruff check --fix app/ tests/
 
 migrate: ## Run database migrations against local postgres
-	docker compose exec postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/001_initial.sql
+	docker compose exec -T postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/001_initial.sql
 
 evals: ## Run Langfuse evals (requires LANGFUSE_* env vars)
 	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m "not golden"
