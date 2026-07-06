@@ -127,8 +127,8 @@ async def _stream_graph(
     trip_id: str,
     overrides: dict[str, Any],
 ) -> AsyncGenerator[str, None]:
-    from app.observability.langfuse import get_langfuse_handler
     from app.llm import reset_active_llm_session_id, set_active_llm_session_id
+    from app.observability.langfuse import get_langfuse_handler
 
     llm_session_token = set_active_llm_session_id(session_id)
 
@@ -208,8 +208,8 @@ async def _stream_resumed_graph(
     query: str,
 ) -> AsyncGenerator[str, None]:
     """Resume a paused graph after the user answers clarification prompts."""
-    from app.observability.langfuse import get_langfuse_handler
     from app.llm import reset_active_llm_session_id, set_active_llm_session_id
+    from app.observability.langfuse import get_langfuse_handler
 
     llm_session_token = set_active_llm_session_id(session_id)
 
@@ -384,7 +384,9 @@ async def _build_usage_summary(final_state: dict[str, Any], session_id: str) -> 
         for name, usage in token_usage.items():
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-            agent_total = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
+            agent_total = int(
+                getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
+            )
             cost_usd = float(getattr(usage, "cost_usd", 0.0) or 0.0)
             per_agent[name] = {
                 "prompt_tokens": prompt_tokens,
