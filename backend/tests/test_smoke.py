@@ -41,3 +41,23 @@ def test_structlog_json_output(capsys: object) -> None:
     parsed = json.loads(line)
     assert parsed["event"] == "smoke_test"
     assert parsed["trace_id"] == "t1"
+
+
+def test_structlog_includes_callsite_and_traceback(capsys: object) -> None:
+    """Verify logs include file/line metadata and the traceback."""
+    log = structlog.get_logger("test")
+
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        log.exception("exception_test", session_id="s2")
+
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    line = captured.out.strip().splitlines()[-1]
+    parsed = json.loads(line)
+    assert parsed["event"] == "exception_test"
+    assert parsed["session_id"] == "s2"
+    assert "filename" in parsed
+    assert "lineno" in parsed
+    assert "exception" in parsed
+    assert "ValueError: boom" in parsed["exception"]

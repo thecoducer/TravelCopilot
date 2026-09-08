@@ -21,11 +21,14 @@ logger = structlog.get_logger(__name__)
 _EXPERIENCE_TYPES = [
     "tourist_attraction",
     "museum",
+    "monuments",
+    "festivals",
+    "historical_site",
     "art_gallery",
     "park",
     "amusement_park",
     "zoo",
-    "aquarium",
+    "zoo aquarium",
     "stadium",
     "spa",
     "night_club",
@@ -34,10 +37,10 @@ _EXPERIENCE_TYPES = [
 
 # Mapping of user interests → Google Places types
 _INTEREST_TYPE_MAP: dict[str, list[str]] = {
-    "history": ["museum", "tourist_attraction"],
-    "art": ["art_gallery", "museum"],
+    "history": ["museum", "tourist_attraction", "historical_site", "monuments", "festivals"],
+    "art": ["art_gallery", "museum", "festivals"],
     "nightlife": ["night_club", "casino", "bar"],
-    "nature": ["park", "zoo", "aquarium"],
+    "nature": ["park", "zoo", "zoo aquarium", "festivals"],
     "adventure": ["tourist_attraction", "park"],
     "wellness": ["spa"],
     "sports": ["stadium"],
@@ -48,11 +51,11 @@ _INTEREST_TYPE_MAP: dict[str, list[str]] = {
 def _build_types(interests: list[str]) -> list[str]:
     """Return Google Places types relevant to the user's interests."""
     if not interests:
-        return _EXPERIENCE_TYPES[:6]
+        return _EXPERIENCE_TYPES
     types: set[str] = set()
     for interest in interests:
         types.update(_INTEREST_TYPE_MAP.get(interest.lower(), []))
-    return list(types) or _EXPERIENCE_TYPES[:6]
+    return list(types) or _EXPERIENCE_TYPES
 
 
 def _parse_experience(item: dict[str, Any], source: str) -> Experience | None:
@@ -112,14 +115,24 @@ class LocalExperiencesAgent:
 
         included_types = _build_types(interests)
 
+        dates = state.get("dates")
+        departure = getattr(dates, "departure", None)
+        return_date = getattr(dates, "return_date", None)
+        departure_str = departure.isoformat() if departure else ""
+        return_date_str = return_date.isoformat() if return_date else ""
+
         # Parallel: Google Places search + Tavily "hidden gems"
         places_task = self._places_tool.run(
             location=destination,
             query=f"top attractions {destination}",
             included_types=included_types,
         )
+        tavily_query = (
+            f"hidden gems things to do in {destination} locals recommend"
+            + (f" between {departure_str} and {return_date_str}" if departure_str and return_date_str else f" in {destination}")
+        )
         tavily_task = self._tavily_tool.run(
-            query=f"hidden gems things to do {destination} locals recommend 2026",
+            query=tavily_query,
             destination=destination,
         )
 

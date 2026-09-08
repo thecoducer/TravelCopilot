@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 
+from app.graph.state import TripStateModel
 from app.llm import get_llm
 from app.models.reports import BudgetReport, FxRateEntry
 from app.models.user_profile import budget_from_state
@@ -31,8 +32,8 @@ Rules:
 - ``total_estimated_cost`` is the sum of all per-category costs in the destination currency.
 - ``per_day_breakdown`` is a list of per-day cost estimates; length must equal trip_days.
 - ``vs_budget_verdict`` must be one of: "on-budget" | "over" | "under".
-- ``cost_saving_tips`` must only be populated when ``vs_budget_verdict == "over"``.
-- ``per_person_cost`` = total_estimated_cost / travelers.
+- ``cost_saving_tips`` are suggested actions to reduce expenses.
+- ``per_person_cost`` = total_estimated_cost / total number of travelers.
 """
 
 
@@ -49,18 +50,19 @@ class BudgetPlannerAgent:
         self._llm = llm or get_llm("budget_planner")
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        destination: str = state.get("destination", "")
-        travelers: int = state.get("travelers", 1)
-        dates = state.get("dates")
-        budget = budget_from_state(state.get("budget"))
-        user_profile = state.get("user_profile")
-        session_id: str = state.get("session_id", "")
+        s = TripStateModel.from_state(state)
+        destination = s.destination
+        travelers = s.travelers
+        dates = s.dates
+        budget = budget_from_state(s.budget)
+        user_profile = s.user_profile
+        session_id = s.session_id
 
-        transport_rec = state.get("transport_recommendation")
-        stays_pick = state.get("stays_pick")
-        destination_ctx = state.get("destination_context_report")
-        visa_report = state.get("visa_report")
-        self_drive_report = state.get("self_drive_report")
+        transport_rec = s.transport_recommendation
+        stays_pick = s.stays_pick
+        destination_ctx = s.destination_context_report
+        visa_report = s.visa_report
+        self_drive_report = s.self_drive_report
 
         log = logger.bind(agent="budget_planner", destination=destination, session_id=session_id)
         log.info("agent_start")

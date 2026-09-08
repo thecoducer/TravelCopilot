@@ -67,9 +67,6 @@ You are an expert visa and immigration adviser. Based on the search results belo
 produce a complete visa report.
 
 Critical rules:
-- Do NOT assume VFS Global handles all applications — identify the correct company
-  from the search results (BLS International, TLScontact, iData, ACSIS, etc.).
-- ``visa_type`` must be one of: tourist | e-visa | on_arrival | visa_free | null.
 - ``application_process`` must be a numbered ordered list of concrete steps.
 - Include ``disclaimer`` reminding travellers to verify with the official consulate.
 - If search results are insufficient, lean conservative: flag uncertainty in
@@ -98,8 +95,8 @@ class VisaAgent:
         destination: str = state.get("destination", "")
         session_id: str = state.get("session_id", "")
         user_profile = state.get("user_profile")
-        passport_country = (user_profile and user_profile.passport_country) or "India"
-        home_city = (user_profile and user_profile.home_city) or "Mumbai"
+        passport_country = user_profile and user_profile.passport_country
+        home_city = user_profile and user_profile.home_city
         destination_country = destination
 
         log = logger.bind(agent="visa", destination=destination, session_id=session_id)
@@ -109,7 +106,7 @@ class VisaAgent:
 
         tavily_task = self._tavily.run(
             query=(
-                f"{passport_country} passport visa requirements {destination} 2026 "
+                f"{passport_country} passport visa requirements {destination} this year "
                 "official embassy application centre"
             ),
             destination=destination,

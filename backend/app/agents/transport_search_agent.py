@@ -34,19 +34,19 @@ plausible route combinations a traveller might take.
 For each route combination return:
   - origin: IATA code or city name
   - destination: IATA code or city name
-  - mode: "flight" | "train" | "bus"
-  - via_hub: intermediate city/airport code (if applicable)
+  - mode: "flight" | "train" | "bus" | "cab" | "taxi" | "ferry" | "other"
+  - via_hub: intermediate city/IATA code (if applicable)
 
 Return between 1 and 5 route combinations — prefer direct routes first, then
-1-stop via major hubs.  For domestic Indian routes always include a train option
-where relevant (Rajdhani/Shatabdi/Vande Bharat).
+1-stop via major hubs. For domestic Indian routes always include a train option
+where relevant.
 """
 
 
 class _RouteCombo(BaseModel):
     origin: str
     destination: str
-    mode: str = Field(pattern="^(flight|train|bus)$")
+    mode: str = Field(pattern="^(flight|train|bus|cab|taxi|ferry|other)$")
     via_hub: str | None = None
 
 
@@ -123,7 +123,7 @@ class TransportSearchAgent:
                     all_flights = result.get("best_flights", []) + result.get("other_flights", [])
                     if all_flights:
                         legs_raw[leg_key] = all_flights
-                else:  # train | bus
+                else:  # train | bus | cab | taxi | ferry | other
                     result = await self._transit_tool.run(
                         origin=orig,
                         destination=dest,

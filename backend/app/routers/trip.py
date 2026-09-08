@@ -53,7 +53,7 @@ class ClarifyRequest(BaseModel):
     """Structured answers to the clarification prompts.
 
     Keys correspond to the ``field`` values from the ``needs_clarification`` SSE event.
-    Example: ``{"destination": "Leh", "dates": "July 15-20", "travelers": "2"}``
+    Example: ``{"question": "answer"}``
     """
 
     answers: dict[str, str]
@@ -195,7 +195,7 @@ async def _stream_graph(
             yield event
 
     except Exception as exc:
-        logger.error("stream_graph_error", error=str(exc), session_id=session_id)
+        logger.exception("stream_graph_error", session_id=session_id, error=str(exc))
         yield _sse("error", {"message": str(exc), "session_id": session_id})
     finally:
         reset_active_llm_session_id(llm_session_token)
@@ -263,7 +263,7 @@ async def _stream_resumed_graph(
             yield event
 
     except Exception as exc:
-        logger.error("stream_resumed_error", error=str(exc), session_id=session_id)
+        logger.exception("stream_resumed_error", session_id=session_id, error=str(exc))
         yield _sse("error", {"message": str(exc), "session_id": session_id})
     finally:
         reset_active_llm_session_id(llm_session_token)
@@ -535,14 +535,14 @@ async def clarify_trip(session_id: str, request: ClarifyRequest) -> StreamingRes
     """Resume a paused planning graph with the user's clarification answers.
 
     Called after a ``needs_clarification`` SSE event.  The ``answers`` dict
-    should map each prompted ``field`` to the user's response string, e.g.::
+    should map each prompted ``question`` to the user's response string, e.g.::
 
-        {"destination": "Leh", "dates": "July 15-20", "travelers": "2"}
+        {"question": "answer"}
     """
     logger.info(
         "clarify_trip_resume",
         session_id=session_id,
-        fields=list(request.answers.keys()),
+        questions=list(request.answers.keys()),
     )
 
     # Retrieve the original query from the checkpoint so _persist_trip can record it

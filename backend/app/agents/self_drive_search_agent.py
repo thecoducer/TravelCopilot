@@ -7,6 +7,7 @@ Returns ``self_drive_report=None`` immediately for trips without self-drive.
 from __future__ import annotations
 
 import json
+import asyncio
 from typing import Any
 
 import structlog
@@ -25,23 +26,11 @@ produce a self-drive report for the traveller.
 Rules:
 - ``recommended_vehicle`` should be a specific vehicle type (e.g. "Royal Enfield 350cc").
 - ``total_km_estimate`` should be a realistic estimate for the trip itinerary.
-- ``fuel_cost_estimate`` = total_km / mileage × fuel_price (use given mileage constants).
+- ``fuel_cost_estimate`` = total_km / mileage × fuel_price.
 - ``toll_estimate`` = 10–15% of fuel_cost for highway-heavy routes; 0 for mountain roads.
 - ``local_driving_tips`` should include altitude, road condition, permit, and traffic tips.
 - ``permits_required`` should list specific permit names with fees if known.
-- Mileage constants: scooter 40 km/L, motorcycle 30 km/L, hatchback 15 km/L, SUV 12 km/L.
 """
-
-# Typical mileage in km/L by vehicle category
-_MILEAGE: dict[str, float] = {
-    "scooter": 40.0,
-    "motorcycle": 30.0,
-    "motorbike": 30.0,
-    "hatchback": 15.0,
-    "sedan": 13.0,
-    "suv": 12.0,
-    "jeep": 10.0,
-}
 
 
 class SelfDriveSearchAgent:
@@ -70,8 +59,6 @@ class SelfDriveSearchAgent:
         log.info("agent_start")
 
         trip_days = dates.trip_days if dates else 3
-
-        import asyncio
 
         rentals_result, fuel_result = await asyncio.gather(
             self._rental_tool.run(destination=destination),
