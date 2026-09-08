@@ -112,7 +112,7 @@ graph TD
 
     food_discovery --> scam_safety
 
-    scam_safety["LAYER 4 · Enrichment\n🛡️ ScamSafetyAgent\n─────────────────\nLLM · Tavily search\nvenue-aware · scam warnings\nexperiences · food · area risks"]:::layer4
+    safety["LAYER 4 · Enrichment\n🛡️ SafetyAgent\n─────────────────\nLLM · Tavily search\nvenue-aware · scam warnings\nexperiences · food · area risks"]:::layer4
 
     %% ── Layer 5: Synthesis ───────────────────────────────────────
     budget_planner --> itinerary_compiler
@@ -157,7 +157,7 @@ LAYER 4 — ENRICHMENT  (parallel, after Layer 3 + LocalExperiences complete)
   ├── ReviewsAgent             Google Places reviews + photos for stays + experiences
   ├── FoodDiscoveryAgent       meal-time food search per day cluster: restaurants, cafes, street food
   ├── BudgetPlannerAgent       aggregate all costs → budget verdict + savings tips
-  └── ScamSafetyAgent          runs after FoodDiscovery — venue-aware scam warnings using actual experiences + food outlets
+  └── SafetyAgent          runs after FoodDiscovery — venue-aware scam warnings using actual experiences + food outlets
 
 LAYER 5 — SYNTHESIS
   └── ItineraryCompilerAgent   geo-cluster → compile → self-critique → finalise
@@ -535,7 +535,7 @@ LLM enumerates plausible route combinations using geographic knowledge:
 - Returns: breakfast, lunch, dinner, coffee/snack suggestions per day — each with name, category, cuisine, price range, rating, address, google_maps_url, photos[]
 - Writes `state["food_recommendations"]` keyed by day ISO date
 
-**ScamSafetyAgent** (`agents/scam_safety_agent.py`) ← *venue-aware, runs after FoodDiscovery*
+**SafetyAgent** (`agents/safety_agent.py`) ← *venue-aware, runs after FoodDiscovery*
 - Waits for: `food_recommendations` (FoodDiscovery) + `experiences_raw` (already in state from LocalExperiences)
 - Tavily: `"tourist scams {destination}"`, `"safety tips {destination}"`
 - Builds a venue list from `experiences_raw` names and `food_recommendations` names and passes it as extra context to the LLM, enabling venue-specific scam warnings
@@ -1027,7 +1027,7 @@ Step 1:  OrchestratorAgent               (sequential — parse + detect + interr
 
 Step 2:  ┌─── Layer 1 + Layer 2 — fully parallel ──────────────────────────────┐
          │  Layer 1:  DestinationContextAgent                                   │
-         │            ScamSafetyAgent                                           │
+         │            SafetyAgent                                           │
          │            VisaAgent           (is_international only)               │
          │  Layer 2:  TransportSearchAgent                                      │
          │            StaySearchAgent                                           │
@@ -1045,9 +1045,9 @@ Step 4:  ReviewsAgent                    (after StayAnalyst + LocalExperiences)
                                           reads DestinationContext + Visa reports from state —
                                           no direct graph edge from L1 to avoid duplicate firing)
          — all three parallel with each other
-         ScamSafetyAgent                 (after FoodDiscovery — venue-aware scam report)
+         SafetyAgent                 (after FoodDiscovery — venue-aware scam report)
          — sequential after FoodDiscovery, feeds directly into ItineraryCompiler
-         Note: ReviewsAgent, BudgetPlannerAgent, and ScamSafetyAgent all reach
+         Note: ReviewsAgent, BudgetPlannerAgent, and SafetyAgent all reach
          depth-5 in the same super-step, so ItineraryCompilerAgent fires exactly once.
 
 Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
@@ -1078,7 +1078,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/config.py` | `Settings` (pydantic-settings) + LiteLLM factory + `UsageLogger` |
 | `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + `interrupt()` clarification gate + detect intent + direct-edge routing |
 | `backend/app/agents/destination_context_agent.py` | Layer 1: seasonality · crowd level · hidden fees · seasonal conditions |
-| `backend/app/agents/scam_safety_agent.py` | Layer 4: venue-aware scam warnings (after FoodDiscovery) — Tavily + experiences + food outlets |
+| `backend/app/agents/safety_agent.py` | Layer 4: venue-aware scam warnings (after FoodDiscovery) — Tavily + experiences + food outlets |
 | `backend/app/agents/visa_agent.py` | Layer 1: visa requirements + embassy + application centre discovery (international only) |
 | `backend/app/agents/transport_search_agent.py` | Layer 2: hub ID + SerpAPI flights + Google Routes API transit |
 | `backend/app/agents/stay_search_agent.py` | Layer 2: SerpAPI Google Hotels |

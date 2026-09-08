@@ -22,7 +22,7 @@ from app.agents.itinerary_compiler_agent import ItineraryCompilerAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
 from app.agents.orchestrator import OrchestratorAgent
 from app.agents.reviews_agent import ReviewsAgent
-from app.agents.scam_safety_agent import ScamSafetyAgent
+from app.agents.safety_agent import SafetyAgent
 from app.agents.self_drive_search_agent import SelfDriveSearchAgent
 from app.agents.stay_analyst_agent import StayAnalystAgent
 from app.agents.stay_search_agent import StaySearchAgent
@@ -61,7 +61,7 @@ def build_graph(
 
     orchestrator = OrchestratorAgent(llm=llm)
     dest_context = DestinationContextAgent(tool_factory=factory, llm=llm)
-    scam_safety = ScamSafetyAgent(tool_factory=factory, llm=llm)
+    safety = SafetyAgent(tool_factory=factory, llm=llm)
     visa = VisaAgent(tool_factory=factory, llm=llm)
     transport_search = TransportSearchAgent(tool_factory=factory, llm=llm)
     stay_search = StaySearchAgent(tool_factory=factory)
@@ -82,7 +82,7 @@ def build_graph(
 
     # Layer 1
     graph.add_node("destination_context", dest_context)
-    graph.add_node("scam_safety", scam_safety)
+    graph.add_node("safety", safety)
     graph.add_node("visa", visa)
 
     # Layer 2

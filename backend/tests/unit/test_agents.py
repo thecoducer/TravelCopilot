@@ -22,7 +22,7 @@ from app.agents.food_discovery_agent import FoodDiscoveryAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
 from app.agents.orchestrator import OrchestratorAgent, quick_extract_days
 from app.agents.reviews_agent import ReviewsAgent
-from app.agents.scam_safety_agent import ScamSafetyAgent
+from app.agents.safety_agent import SafetyAgent
 from app.agents.self_drive_search_agent import SelfDriveSearchAgent
 from app.agents.stay_analyst_agent import StayAnalystAgent
 from app.agents.stay_search_agent import StaySearchAgent
@@ -380,10 +380,10 @@ class TestDestinationContextAgent:
         assert "destination_context_report" in result
 
 
-# ── ScamSafetyAgent ───────────────────────────────────────────────────────────
+# ── SafetyAgent ───────────────────────────────────────────────────────────────
 
 
-class TestScamSafetyAgent:
+class TestSafetyAgent:
     @pytest.mark.asyncio
     async def test_returns_scam_safety_report(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
@@ -400,7 +400,7 @@ class TestScamSafetyAgent:
             ],
             emergency_contacts={"police": "100", "ambulance": "108"},
         )
-        agent = ScamSafetyAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
+        agent = SafetyAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
         result = await agent(base_state)
 
         assert "scam_safety_report" in result

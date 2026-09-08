@@ -176,7 +176,7 @@
 
 ### P2-4 · LAYER 1 — Destination Intelligence Agents
 - [x] Implement `backend/app/agents/destination_context_agent.py` (3 Tavily queries, `DestinationContextReport`)
-- [x] Implement `backend/app/agents/scam_safety_agent.py` (2 Tavily queries, `ScamSafetyReport`)
+- [x] Implement `backend/app/agents/safety_agent.py` (2 Tavily queries, `ScamSafetyReport`)
 - [x] Implement `backend/app/agents/visa_agent.py`
   - [x] Conditional: no-op for domestic trips
   - [x] **(G)** `_classify_sources()` — official-domain regex → `confidence` level

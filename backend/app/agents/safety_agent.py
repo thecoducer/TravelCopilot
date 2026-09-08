@@ -1,4 +1,4 @@
-"""ScamSafetyAgent — Layer 4: venue-aware safety advisories and scam warnings.
+"""SafetyAgent — Layer 4: venue-aware safety advisories and scam warnings.
 
 Runs after FoodDiscoveryAgent so it has the actual experience spots, restaurants,
 and neighbourhoods in state.  This allows the report to cross-reference specific
@@ -40,7 +40,7 @@ Rules:
 """
 
 
-class ScamSafetyAgent:
+class SafetyAgent:
     """Layer 4 — Venue-aware scam warnings, safety advisories, and emergency contacts.
 
     Runs after FoodDiscoveryAgent so ``experiences_raw`` and ``food_recommendations``
@@ -54,13 +54,13 @@ class ScamSafetyAgent:
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._tavily = factory.get("tavily_search")
-        self._llm = llm or get_llm("scam_safety")
+        self._llm = llm or get_llm("safety")
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         destination: str = state.get("destination", "")
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="scam_safety", destination=destination, session_id=session_id)
+        log = logger.bind(agent="safety", destination=destination, session_id=session_id)
         log.info("agent_start")
 
         import asyncio
