@@ -84,10 +84,10 @@ class Settings(BaseSettings):
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate
-    clarification_required_fields: str = "destination,dates,travelers"
+    clarification_required_fields: str = "source,destination,dates,travelers"
     # Per-field confidence thresholds (comma-separated field:threshold pairs).
     # Falls back to parse_confidence_threshold for fields not listed.
-    clarification_field_thresholds: str = "destination:0.7,dates:0.6,travelers:0.4,source:0.3"
+    clarification_field_thresholds: str = "source:0.3,destination:0.7,dates:0.6,travelers:0.4"
     parse_confidence_threshold: float = 0.6
     # Maximum clarification rounds before proceeding with best-effort defaults
     max_clarification_rounds: int = 3

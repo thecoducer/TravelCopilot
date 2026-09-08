@@ -41,8 +41,6 @@ router = APIRouter(prefix="/api/trip", tags=["trip"])
 class PlanRequest(BaseModel):
     query: str = Field(min_length=3, max_length=2000)
     session_id: str | None = None
-    source: str | None = None
-    destination: str | None = None
 
 
 class ItineraryUpdateRequest(BaseModel):
@@ -125,7 +123,6 @@ async def _stream_graph(
     query: str,
     session_id: str,
     trip_id: str,
-    overrides: dict[str, Any],
 ) -> AsyncGenerator[str, None]:
     from app.llm import reset_active_llm_session_id, set_active_llm_session_id
     from app.observability.langfuse import get_langfuse_handler
@@ -137,7 +134,6 @@ async def _stream_graph(
 
         compiled = await get_compiled_graph()
         state = initial_state(query=query, session_id=session_id)
-        state.update(overrides)
 
         # Persist a stub row immediately so session_id is stored even if the
         # graph pauses for clarification or fails before completion.
@@ -510,11 +506,6 @@ async def plan_trip(request: PlanRequest) -> StreamingResponse:
     """Start a planning session and stream SSE events."""
     session_id = request.session_id or str(uuid.uuid4())
     trip_id = str(uuid.uuid4())
-    overrides: dict[str, Any] = {}
-    if request.source:
-        overrides["source"] = request.source
-    if request.destination:
-        overrides["destination"] = request.destination
 
     logger.info("plan_trip_start", session_id=session_id, query=request.query[:80])
 
@@ -523,7 +514,6 @@ async def plan_trip(request: PlanRequest) -> StreamingResponse:
             query=request.query,
             session_id=session_id,
             trip_id=trip_id,
-            overrides=overrides,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
