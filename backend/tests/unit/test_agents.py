@@ -31,7 +31,7 @@ from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.reports import (
     ScamEntry,
-    ScamSafetyReport,
+    SafetyReport,
     VisaReport,
 )
 from app.models.transport import StayOption
@@ -335,10 +335,10 @@ class TestOrchestratorAgent:
 
 class TestSafetyAgent:
     @pytest.mark.asyncio
-    async def test_returns_scam_safety_report(
+    async def test_returns_safety_report(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        mock_report = ScamSafetyReport(
+        mock_report = SafetyReport(
             destination="Leh",
             advisory_level="Exercise normal caution",
             top_scams=[
@@ -353,8 +353,8 @@ class TestSafetyAgent:
         agent = SafetyAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
         result = await agent(base_state)
 
-        assert "scam_safety_report" in result
-        report = result["scam_safety_report"]
+        assert "safety_report" in result
+        report = result["safety_report"]
         assert len(report.top_scams) >= 1
         assert report.advisory_level
 

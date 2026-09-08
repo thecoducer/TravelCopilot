@@ -49,9 +49,6 @@ from app.models.reports import (
     BudgetReport as BudgetReport,
 )
 from app.models.reports import (
-    DestinationContextReport as DestinationContextReport,
-)
-from app.models.reports import (
     FxRateEntry as FxRateEntry,
 )
 from app.models.reports import (
@@ -61,7 +58,7 @@ from app.models.reports import (
     ScamEntry as ScamEntry,
 )
 from app.models.reports import (
-    ScamSafetyReport as ScamSafetyReport,
+    SafetyReport as SafetyReport,
 )
 from app.models.reports import (
     SelfDriveReport as SelfDriveReport,

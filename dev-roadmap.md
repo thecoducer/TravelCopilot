@@ -88,7 +88,7 @@
 - [x] `backend/app/models/user_profile.py`: `UserProfile`, `TripDates`, `BudgetPreference`, `ClarificationPrompt` (`field`, `question`, `reason`)
 - [x] `backend/app/models/itinerary.py`: `Itinerary`, `TripSegment`, `Day`, `TimeSlotOptions`, `ActivityOption`, `Place`, `FoodVenue`, `FoodOptions`, `StayOptions`, `ClarificationRequest`, `Experience`
 - [x] `backend/app/models/transport.py`: `TransportRecommendation`, `RouteLeg`, `RouteWaypoint`, `StayOption`
-- [x] `backend/app/models/reports.py`: `DestinationContextReport`, `ScamSafetyReport`, `VisaReport`, `SelfDriveReport`, `BudgetReport`, `ReviewSummary`, `AgentTokenUsage`
+- [x] `backend/app/models/reports.py`: `SafetyReport`, `VisaReport`, `SelfDriveReport`, `BudgetReport`, `ReviewSummary`, `AgentTokenUsage`
   - [x] `VisaReport` includes **(G)** `sources[]` (`title`, `url`, `published_or_fetched_date`), `last_verified_at`, `confidence` (`high`/`medium`/`low`), `disclaimer`
   - [x] `BudgetReport` includes **(H)** `total_in_source_currency`, `fx_rates_used` (map of pair → `{rate, fetched_at}`), `fx_disclaimer`
 - [x] Add clarification fields to `TripState` in `state.py`: `needs_clarification: bool`, `clarification_prompts: list[ClarificationPrompt]`, `parse_confidence: dict[str, float]`
@@ -175,8 +175,7 @@
 - [x] Integration test (F): graph halts at clarification node, no itinerary produced
 
 ### P2-4 · LAYER 1 — Destination Intelligence Agents
-- [x] Implement `backend/app/agents/destination_context_agent.py` (3 Tavily queries, `DestinationContextReport`)
-- [x] Implement `backend/app/agents/safety_agent.py` (2 Tavily queries, `ScamSafetyReport`)
+- [x] Implement destination context and safety analysis in `backend/app/agents/safety_agent.py` (`SafetyReport`)
 - [x] Implement `backend/app/agents/visa_agent.py`
   - [x] Conditional: no-op for domestic trips
   - [x] **(G)** `_classify_sources()` — official-domain regex → `confidence` level

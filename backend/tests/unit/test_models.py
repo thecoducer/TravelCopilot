@@ -23,10 +23,9 @@ from app.models.itinerary import (
 from app.models.reports import (
     AgentTokenUsage,
     BudgetReport,
-    DestinationContextReport,
     FxRateEntry,
     ScamEntry,
-    ScamSafetyReport,
+    SafetyReport,
     SelfDriveReport,
     VisaReport,
     VisaSource,
@@ -668,62 +667,9 @@ class TestItinerary:
 # ── Report models ─────────────────────────────────────────────────────────────
 
 
-class TestDestinationContextReport:
-    def test_valid(self):
-        r = DestinationContextReport(
-            destination="Osaka",
-            travel_month="October",
-            is_peak_season=True,
-            season_label="Peak season",
-            season_reason="Autumn foliage season — crowds at parks",
-            crowd_level="High",
-            crowd_notes="Expect queues at Osaka Castle and Dotonbori",
-            real_daily_cost=8000,
-            currency_code="JPY",
-            seasonal_weather_summary="Cool and dry, 15–22°C",
-        )
-        assert r.is_peak_season is True
-        assert r.crowd_level in {"Low", "Moderate", "High", "Extreme"}
-        assert r.altitude_meters is None
-        assert r.acclimatization_advice is None
-
-    def test_high_altitude_destination(self):
-        r = DestinationContextReport(
-            destination="Leh",
-            travel_month="September",
-            is_peak_season=True,
-            season_label="Peak season",
-            season_reason="Roads open, clear skies",
-            crowd_level="Moderate",
-            crowd_notes="Busy but manageable",
-            real_daily_cost=3000,
-            currency_code="INR",
-            seasonal_weather_summary="Warm days, cold nights. UV very high.",
-            altitude_meters=3524,
-            acclimatization_advice="Rest Day 1. Avoid alcohol. Drink 3–4L water. Diamox optional.",
-        )
-        assert r.altitude_meters == 3524
-        assert "Diamox" in r.acclimatization_advice
-
-    def test_negative_cost_rejected(self):
-        with pytest.raises(ValueError):
-            DestinationContextReport(
-                destination="X",
-                travel_month="Jan",
-                is_peak_season=False,
-                season_label="Off",
-                season_reason="x",
-                crowd_level="Low",
-                crowd_notes="x",
-                real_daily_cost=-1,
-                currency_code="INR",
-                seasonal_weather_summary="x",
-            )
-
-
-class TestScamSafetyReport:
+class TestSafetyReport:
     def test_top_scams_non_empty(self):
-        r = ScamSafetyReport(
+        r = SafetyReport(
             destination="Tokyo",
             advisory_level="Exercise normal caution",
             top_scams=[

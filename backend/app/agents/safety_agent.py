@@ -18,7 +18,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm import get_llm
-from app.models.reports import ScamSafetyReport
+from app.models.reports import SafetyReport
 from app.tools.factory import ToolFactory
 
 logger = structlog.get_logger(__name__)
@@ -117,9 +117,9 @@ class SafetyAgent:
             if food_names:
                 venue_section += "Food outlets: " + ", ".join(food_names[:20]) + "\n"
 
-        chain = self._llm.with_structured_output(ScamSafetyReport)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(SafetyReport)  # type: ignore[union-attr]
         try:
-            report: ScamSafetyReport = chain.invoke(
+            report: SafetyReport = chain.invoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
@@ -133,7 +133,7 @@ class SafetyAgent:
             )
         except Exception as exc:
             log.error("llm_failed", error=str(exc))
-            report = ScamSafetyReport(
+            report = SafetyReport(
                 destination=destination,
                 advisory_level="Exercise normal caution",
                 travel_month=month,
@@ -141,7 +141,4 @@ class SafetyAgent:
             )
 
         log.info("agent_done", scams_found=len(report.top_scams))
-        return {
-            "scam_safety_report": report,
-            "destination_context_report": report,
-        }
+        return {"safety_report": report}

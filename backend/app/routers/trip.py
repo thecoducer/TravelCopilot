@@ -73,11 +73,8 @@ def _preview(agent_name: str, output: dict[str, Any]) -> str:
     try:
         m: dict[str, Any] = {
             "orchestrator": lambda o: f"{o.get('source', '')} → {o.get('destination', '')}",
-            "destination_context": lambda o: getattr(
-                o.get("destination_context_report"), "crowd_level", "Done"
-            ),
-            "scam_safety": lambda o: (
-                f"{len(getattr(o.get('scam_safety_report'), 'top_scams', []))} scams found"
+            "safety": lambda o: (
+                f"{len(getattr(o.get('safety_report'), 'top_scams', []))} scams found"
             ),
             "visa": lambda o: (
                 f"Visa required: {getattr(o.get('visa_report'), 'visa_required', 'N/A')}"
@@ -103,8 +100,7 @@ def _preview(agent_name: str, output: dict[str, Any]) -> str:
 
 _AGENT_LAYERS: dict[str, int] = {
     "orchestrator": 0,
-    "destination_context": 1,
-    "scam_safety": 4,
+    "safety": 4,
     "visa": 1,
     "transport_search": 2,
     "stay_search": 2,
@@ -427,7 +423,7 @@ async def _persist_trip(
         itinerary_json = itinerary.model_dump_json() if itinerary else None
         is_intl = state.get("is_international", False)
         reality_score = None
-        ctx = state.get("destination_context_report")
+        ctx = state.get("safety_report")
         if ctx and hasattr(ctx, "crowd_level"):
             # Map crowd level to a simple score for indexing
             reality_score = {"Low": 85, "Moderate": 65, "High": 45, "Extreme": 20}.get(

@@ -24,7 +24,7 @@ from app.models.reports import (
     AgentTokenUsage,
     BudgetReport,
     ReviewSummary,
-    ScamSafetyReport,
+    SafetyReport,
     SelfDriveReport,
     VisaReport,
 )
@@ -58,8 +58,7 @@ class TripState(dict):  # type: ignore[type-arg]
     clarification_round: int  # number of completed clarification rounds
 
     # ── Layer 1: Destination Intelligence ─────────────────────────────────
-    destination_context_report: ScamSafetyReport | None
-    scam_safety_report: ScamSafetyReport | None
+    safety_report: SafetyReport | None
     visa_report: VisaReport | None
 
     # ── Layer 2: Supply Search ─────────────────────────────────────────────
@@ -118,8 +117,7 @@ class TripStateModel(BaseModel):
     parse_confidence: dict[str, float] = Field(default_factory=dict)
     clarification_round: int = 0
 
-    destination_context_report: ScamSafetyReport | None = None
-    scam_safety_report: ScamSafetyReport | None = None
+    safety_report: SafetyReport | None = None
     visa_report: VisaReport | None = None
 
     transport_hubs: list[str] = Field(default_factory=list)

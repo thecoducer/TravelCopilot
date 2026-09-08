@@ -32,33 +32,13 @@ class ApplicationCentre(BaseModel):
 # ── Layer 1 reports ─────────────────────────────────────────────────────────
 
 
-class DestinationContextReport(BaseModel):
-    """Legacy shape for destination context fields now produced by SafetyAgent."""
-
-    destination: str
-    travel_month: str  # e.g. "October"
-    is_peak_season: bool
-    season_label: str  # e.g. "Shoulder season"
-    season_reason: str  # e.g. "Cherry blossom season ends; fewer crowds"
-    crowd_level: str  # "Low" | "Moderate" | "High" | "Extreme"
-    crowd_notes: str
-    real_daily_cost: float = Field(ge=0)
-    currency_code: str  # ISO 4217
-    cost_warnings: list[str] = Field(default_factory=list)
-    seasonal_weather_summary: str
-    seasonal_risks: list[str] = Field(default_factory=list)
-    # elevation of destination; triggers acclimatization advice when set
-    altitude_meters: int | None = None
-    acclimatization_advice: str | None = None  # e.g. "Rest on Day 1; avoid alcohol"
-
-
 class ScamEntry(BaseModel):
     name: str
     description: str
     how_to_avoid: str
 
 
-class ScamSafetyReport(BaseModel):
+class SafetyReport(BaseModel):
     destination: str
     advisory_level: str  # e.g. "Exercise normal caution"
     travel_month: str | None = None

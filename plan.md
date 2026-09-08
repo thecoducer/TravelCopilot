@@ -2,7 +2,7 @@
 
 This section supersedes older architecture descriptions below. `DestinationContextAgent` is removed. `SafetyAgent` owns crowd, altitude/acclimatization, seasonal weather, seasonal-risk, scam, and venue-safety analysis only. It must not estimate `real_daily_cost`, select `currency_code`, or produce budget warnings.
 
-`BudgetPlannerAgent` owns all cost concerns: destination-currency selection using ISO 4217, daily food/activity estimates, FX normalization, budget comparison, and savings tips. It must not depend on safety-report cost fields. `destination_context_report` remains a compatibility alias for non-budget destination context consumed by existing itinerary/API code.
+`BudgetPlannerAgent` owns all cost concerns: destination-currency selection using ISO 4217, daily food/activity estimates, FX normalization, budget comparison, and savings tips. It must not depend on safety-report cost fields. `safety_report` is the sole runtime report for non-budget destination context consumed by existing itinerary/API code.
 
 ## Responsibility Clarification — 2026-09-09
 
@@ -10,9 +10,9 @@ This section supersedes older architecture descriptions below. `DestinationConte
 
 ## Architecture Update — 2026-09-09
 
-`DestinationContextAgent` has been removed. `SafetyAgent` now owns destination intelligence previously assigned to that agent: crowd information, altitude and acclimatization risks, seasonal weather and risks, and practical daily-cost context. It also retains venue-aware scam and safety analysis.
+`DestinationContextAgent` has been removed. `SafetyAgent` now owns crowd information, altitude and acclimatization risks, seasonal weather and risks, plus venue-aware scam and safety analysis. BudgetPlannerAgent owns practical daily-cost context.
 
-The graph no longer registers or schedules a `destination_context` node. `SafetyAgent` runs after `FoodDiscoveryAgent`, using `experiences_raw` and `food_recommendations` alongside its Tavily searches. `ScamSafetyReport` carries the merged destination-context fields. `destination_context_report` remains only as a compatibility alias for existing budget, itinerary, and API consumers and is produced by `SafetyAgent`.
+The graph no longer registers or schedules a `destination_context` node. `SafetyAgent` runs after `FoodDiscoveryAgent`, using `experiences_raw` and `food_recommendations` alongside its Tavily searches. `SafetyReport` carries the merged safety and destination-context fields and is exposed as `safety_report`.
 
 Layer 1 now contains only `VisaAgent` for international trips. Destination context and safety are part of the Layer 4 SafetyAgent enrichment step. The file `backend/app/agents/destination_context_agent.py` is no longer part of the project.
 # Multi-Agent AI Trip Planner — Full System Design Plan
@@ -106,7 +106,7 @@ graph TD
     self_drive_search["LAYER 3 · Analysis\n🚗 SelfDriveSearchAgent\n─────────────────\nconditional · LLM\nrentals · fuel estimate\nonly if self_drive_intent"]:::layer3
 
     %% ── Layer 3 → BudgetPlanner (barrier join: 3 direct inputs; reads L1 state)
-    %% destination_context_report and visa_report are already written to TripState
+    %% safety_report and visa_report are already written to TripState
     %% by super-step 3, so no direct edge is needed — and adding one would cause
     %% BudgetPlannerAgent to fire twice (once after L1 and again after L3).
     transport_optimizer --> budget_planner
@@ -206,8 +206,7 @@ class TripState(dict):  # subclasses dict for LangGraph compatibility
     parse_confidence:     dict[str, float]        # per-field confidence (0–1) from the parse
 
     # ── Layer 1: Destination Intelligence ─────────────────────────
-    destination_context_report: DestinationContextReport | None
-    scam_safety_report: ScamSafetyReport | None
+    safety_report: SafetyReport | None
     visa_report:        VisaReport | None
 
     # ── Layer 2: Supply Search ─────────────────────────────────────
@@ -433,7 +432,7 @@ All 14 agent nodes wired with direct and parallel edges per layer. There are no 
 
 **DestinationContextAgent** (`agents/destination_context_agent.py`)
 - Tavily searches: crowds `"{destination} crowded {month} {year}"`, peak season `"is {destination} peak season {month}"`, festivals `"{destination} events {dates}"`, costs `"average daily cost {destination} 2026"`, hidden fees `"tourist tax hidden fees {destination}"`
-- LLM synthesizes `DestinationContextReport`:
+- SafetyAgent synthesizes `SafetyReport`:
   - `is_peak_season`: bool
   - `season_label`: e.g. "Peak season", "Shoulder season", "Off season"
   - `season_reason`: e.g. "Cherry blossom season — expect 2–3h queues at major attractions"
@@ -556,15 +555,15 @@ LLM enumerates plausible route combinations using geographic knowledge:
 - Waits for: `food_recommendations` (FoodDiscovery) + `experiences_raw` (already in state from LocalExperiences)
 - Tavily: `"tourist scams {destination}"`, `"safety tips {destination}"`
 - Builds a venue list from `experiences_raw` names and `food_recommendations` names and passes it as extra context to the LLM, enabling venue-specific scam warnings
-- Writes `state["scam_safety_report"]`; feeds directly into `ItineraryCompilerAgent`
+- Writes `state["safety_report"]`; feeds directly into `ItineraryCompilerAgent`
 
 **BudgetPlannerAgent** (`agents/budget_planner_agent.py`) ← *new*
-- Waits for: `transport_recommendation` (Layer 3) + `stays_pick` (Layer 3) + `destination_context_report` (Layer 1) + `visa_report` if applicable + `self_drive_report` if applicable
+- Waits for: `transport_recommendation` (Layer 3) + `stays_pick` (Layer 3) + `safety_report` + `visa_report` if applicable + `self_drive_report` if applicable
 - Tools: `CurrencyConvertTool` **(H)** — converts any per-leg or per-category amount between currencies using a live FX rate (cached 12h). Returns `rate` and `fetched_at` so the conversion is auditable.
 - Aggregates all costs:
   - Transport: sum of `recommended_legs[].cost`
   - Accommodation: `stays_pick.price_per_night × trip_days`
-  - Food: `destination_context_report.real_daily_cost × 0.35 × trip_days` in destination currency (est. 35% of daily spend on food)
+  - Food: budget-tier estimate owned by `BudgetPlannerAgent`, normalized to destination currency
   - Activities: estimated from `experiences_raw` price ranges
   - Visa fees: from `visa_report.fees` if international
   - Self-drive: from `self_drive_report.fuel_cost_estimate + toll_estimate` if applicable
@@ -1091,7 +1090,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/models/clarification.py` | `ClarificationPrompt` — transient interaction model (not persistent user data) |
 | `backend/app/models/itinerary.py` | `Itinerary`, `Day`, `Place`, `FoodVenue`, `Experience` |
 | `backend/app/models/transport.py` | `TransportRecommendation`, `RouteLeg`, `RouteWaypoint` |
-| `backend/app/models/reports.py` | `DestinationContextReport`, `ScamSafetyReport`, `VisaReport` (+ `sources[]`, `last_verified_at`, `confidence`, `disclaimer`), `SelfDriveReport`, `BudgetReport` (+ FX fields) |
+| `backend/app/models/reports.py` | `SafetyReport`, `VisaReport` (+ `sources[]`, `last_verified_at`, `confidence`, `disclaimer`), `SelfDriveReport`, `BudgetReport` (+ FX fields) |
 | `backend/app/config.py` | `Settings` (pydantic-settings) + LiteLLM factory + `UsageLogger` |
 | `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + `interrupt()` clarification gate + detect intent + direct-edge routing |
 | `backend/app/agents/destination_context_agent.py` | Layer 1: seasonality · crowd level · hidden fees · seasonal conditions |

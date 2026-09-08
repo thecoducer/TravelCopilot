@@ -103,8 +103,7 @@ class ItineraryCompilerAgent:
         transport_rec = state.get("transport_recommendation")
         transport_alts = state.get("transport_alternatives", [])
         stays_shortlist: list[StayOption] = state.get("stays_shortlist", [])
-        destination_ctx = state.get("destination_context_report")
-        scam_report = state.get("scam_safety_report")
+        safety_report = state.get("safety_report")
         visa_report = state.get("visa_report")
         self_drive_report = state.get("self_drive_report")
         budget_report = state.get("budget_report")
@@ -192,8 +191,7 @@ class ItineraryCompilerAgent:
             transport_rec=transport_rec,
             transport_alts=transport_alts,
             stays_shortlist=stays_shortlist,
-            destination_ctx=destination_ctx,
-            scam_report=scam_report,
+            safety_report=safety_report,
             visa_report=visa_report,
             self_drive_report=self_drive_report,
             budget_report=budget_report,
@@ -284,8 +282,8 @@ def _build_context(**kwargs: Any) -> str:
         f"Route: {kwargs['source']} → {kwargs['destination']}",
         f"Start date: {kwargs['start_date']}",
     ]
-    if kwargs.get("destination_ctx"):
-        ctx = kwargs["destination_ctx"]
+    if kwargs.get("safety_report"):
+        ctx = kwargs["safety_report"]
         parts.append(
             f"Destination context: {ctx.season_label}, crowd={ctx.crowd_level}, "
             f"seasonal risks={ctx.seasonal_risks}"
@@ -304,8 +302,8 @@ def _build_context(**kwargs: Any) -> str:
             for s in kwargs["stays_shortlist"][:4]
         )
         parts.append(f"Accommodation shortlist (all options): {stays_str}")
-    if kwargs.get("scam_report"):
-        sc = kwargs["scam_report"]
+    if kwargs.get("safety_report"):
+        sc = kwargs["safety_report"]
         scams = ", ".join(e.name for e in sc.top_scams[:3])
         parts.append(f"Safety: {sc.advisory_level}. Scams: {scams}")
     if kwargs.get("budget_report"):

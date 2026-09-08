@@ -34,9 +34,8 @@ from app.models.itinerary import (
 )
 from app.models.reports import (
     BudgetReport,
-    DestinationContextReport,
     ScamEntry,
-    ScamSafetyReport,
+    SafetyReport,
     SelfDriveReport,
     VisaReport,
 )
@@ -188,21 +187,15 @@ def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMo
             self_drive_intent=False,
             dates_confidence=0.9,
         ),
-        DestinationContextReport: DestinationContextReport(
+        SafetyReport: SafetyReport(
             destination=destination,
+            advisory_level="Exercise normal caution",
             travel_month="October",
-            is_peak_season=False,
             season_label="Shoulder season",
             season_reason="Post-summer, fewer crowds",
             crowd_level="Moderate",
             crowd_notes="Moderate tourist traffic",
-            real_daily_cost=5000.0,
-            currency_code="JPY",
             seasonal_weather_summary="Pleasant, 18–24°C",
-        ),
-        ScamSafetyReport: ScamSafetyReport(
-            destination=destination,
-            advisory_level="Exercise normal caution",
             top_scams=[
                 ScamEntry(
                     name="Overcharging taxis",
