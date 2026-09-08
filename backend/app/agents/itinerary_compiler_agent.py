@@ -288,7 +288,7 @@ def _build_context(**kwargs: Any) -> str:
         ctx = kwargs["destination_ctx"]
         parts.append(
             f"Destination context: {ctx.season_label}, crowd={ctx.crowd_level}, "
-            f"daily_cost={ctx.real_daily_cost} {ctx.currency_code}"
+            f"seasonal risks={ctx.seasonal_risks}"
         )
     if kwargs.get("transport_rec"):
         tr = kwargs["transport_rec"]

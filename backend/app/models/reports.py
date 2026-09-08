@@ -33,7 +33,7 @@ class ApplicationCentre(BaseModel):
 
 
 class DestinationContextReport(BaseModel):
-    """Output of DestinationContextAgent — seasonality, crowd, cost, risks."""
+    """Legacy shape for destination context fields now produced by SafetyAgent."""
 
     destination: str
     travel_month: str  # e.g. "October"
@@ -61,6 +61,16 @@ class ScamEntry(BaseModel):
 class ScamSafetyReport(BaseModel):
     destination: str
     advisory_level: str  # e.g. "Exercise normal caution"
+    travel_month: str | None = None
+    is_peak_season: bool | None = None
+    season_label: str | None = None
+    season_reason: str | None = None
+    crowd_level: str | None = None
+    crowd_notes: str | None = None
+    seasonal_weather_summary: str | None = None
+    seasonal_risks: list[str] = Field(default_factory=list)
+    altitude_meters: int | None = None
+    acclimatization_advice: str | None = None
     top_scams: list[ScamEntry] = Field(default_factory=list)
     safe_areas: list[str] = Field(default_factory=list)
     emergency_contacts: dict[str, str] = Field(default_factory=dict)

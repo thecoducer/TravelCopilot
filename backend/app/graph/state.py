@@ -23,7 +23,6 @@ from app.models.itinerary import Experience, Itinerary
 from app.models.reports import (
     AgentTokenUsage,
     BudgetReport,
-    DestinationContextReport,
     ReviewSummary,
     ScamSafetyReport,
     SelfDriveReport,
@@ -59,7 +58,7 @@ class TripState(dict):  # type: ignore[type-arg]
     clarification_round: int  # number of completed clarification rounds
 
     # ── Layer 1: Destination Intelligence ─────────────────────────────────
-    destination_context_report: DestinationContextReport | None
+    destination_context_report: ScamSafetyReport | None
     scam_safety_report: ScamSafetyReport | None
     visa_report: VisaReport | None
 
@@ -119,7 +118,7 @@ class TripStateModel(BaseModel):
     parse_confidence: dict[str, float] = Field(default_factory=dict)
     clarification_round: int = 0
 
-    destination_context_report: DestinationContextReport | None = None
+    destination_context_report: ScamSafetyReport | None = None
     scam_safety_report: ScamSafetyReport | None = None
     visa_report: VisaReport | None = None
 

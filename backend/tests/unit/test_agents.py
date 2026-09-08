@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.agents.destination_context_agent import DestinationContextAgent
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
 from app.agents.orchestrator import OrchestratorAgent, quick_extract_days
@@ -31,7 +30,6 @@ from app.agents.visa_agent import VisaAgent
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.reports import (
-    DestinationContextReport,
     ScamEntry,
     ScamSafetyReport,
     VisaReport,
@@ -330,54 +328,6 @@ class TestOrchestratorAgent:
         assert call_count == 2
         # Orchestrator should have applied defaults and returned a usable state
         assert "destination" in result  # may be "unknown destination" but key must exist
-
-
-# ── DestinationContextAgent ───────────────────────────────────────────────────
-
-
-class TestDestinationContextAgent:
-    @pytest.mark.asyncio
-    async def test_returns_destination_context_report(
-        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
-    ) -> None:
-        mock_report = DestinationContextReport(
-            destination="Leh",
-            travel_month="July",
-            is_peak_season=True,
-            season_label="Peak season",
-            season_reason="Summer trekking season",
-            crowd_level="High",
-            crowd_notes="Many tourists in July",
-            real_daily_cost=2500.0,
-            currency_code="INR",
-            seasonal_weather_summary="Sunny and dry",
-        )
-        agent = DestinationContextAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
-        result = await agent(base_state)
-
-        assert "destination_context_report" in result
-        report = result["destination_context_report"]
-        assert report.destination == "Leh"
-        assert report.crowd_level in ("Low", "Moderate", "High", "Extreme")
-        assert isinstance(report.real_daily_cost, float)
-
-    @pytest.mark.asyncio
-    async def test_fallback_on_empty_destination(self, mock_tool_factory: ToolFactory) -> None:
-        mock_report = DestinationContextReport(
-            destination="",
-            travel_month="July",
-            is_peak_season=False,
-            season_label="Unknown",
-            season_reason="No data",
-            crowd_level="Moderate",
-            crowd_notes="",
-            real_daily_cost=0.0,
-            currency_code="USD",
-            seasonal_weather_summary="",
-        )
-        agent = DestinationContextAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
-        result = await agent({"destination": "", "session_id": "s"})
-        assert "destination_context_report" in result
 
 
 # ── SafetyAgent ───────────────────────────────────────────────────────────────

@@ -28,6 +28,10 @@ You are a travel safety analyst. Based on the search results and venue list belo
 structured safety report for travellers visiting the given destination.
 
 Rules:
+- ``crowd_level`` must be exactly one of: Low, Moderate, High, Extreme. Include concrete
+    ``crowd_notes`` for the travel month.
+- Set ``altitude_meters`` only for destinations above 1500 m and provide ``acclimatization_advice``
+    when relevant. Include concrete ``seasonal_risks`` and ``seasonal_weather_summary``.
 - ``advisory_level`` should reflect official government guidance: "Exercise normal caution" |
   "Exercise increased caution" | "Reconsider travel" | "Do not travel".
 - ``top_scams`` should include 2–5 specific, actionable scam entries with how-to-avoid advice.
@@ -41,7 +45,7 @@ Rules:
 
 
 class SafetyAgent:
-    """Layer 4 — Venue-aware scam warnings, safety advisories, and emergency contacts.
+    """Layer 4 — Destination context, scam warnings, and emergency contacts.
 
     Runs after FoodDiscoveryAgent so ``experiences_raw`` and ``food_recommendations``
     are already populated in state, enabling venue-specific warnings.
@@ -59,6 +63,9 @@ class SafetyAgent:
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         destination: str = state.get("destination", "")
         session_id: str = state.get("session_id", "")
+        dates = state.get("dates")
+        month = dates.departure.strftime("%B") if dates else "June"
+        year = dates.departure.year if dates else 2026
 
         log = logger.bind(agent="safety", destination=destination, session_id=session_id)
         log.info("agent_start")
@@ -68,6 +75,9 @@ class SafetyAgent:
         queries = [
             f"tourist scams {destination} 2026 how to avoid",
             f"safety tips {destination} travel advisory",
+            f"{destination} crowded {month} {year} tourist season",
+            f"{destination} altitude elevation risks acclimatization",
+            f"{destination} seasonal risks weather {month} travel advisory",
         ]
         results = await asyncio.gather(
             *[self._tavily.run(query=q, destination=destination) for q in queries],
@@ -126,7 +136,12 @@ class SafetyAgent:
             report = ScamSafetyReport(
                 destination=destination,
                 advisory_level="Exercise normal caution",
+                travel_month=month,
+                seasonal_weather_summary="Data unavailable",
             )
 
         log.info("agent_done", scams_found=len(report.top_scams))
-        return {"scam_safety_report": report}
+        return {
+            "scam_safety_report": report,
+            "destination_context_report": report,
+        }

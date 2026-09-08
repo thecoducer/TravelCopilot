@@ -1,3 +1,20 @@
+## Current Ownership Override — 2026-09-09
+
+This section supersedes older architecture descriptions below. `DestinationContextAgent` is removed. `SafetyAgent` owns crowd, altitude/acclimatization, seasonal weather, seasonal-risk, scam, and venue-safety analysis only. It must not estimate `real_daily_cost`, select `currency_code`, or produce budget warnings.
+
+`BudgetPlannerAgent` owns all cost concerns: destination-currency selection using ISO 4217, daily food/activity estimates, FX normalization, budget comparison, and savings tips. It must not depend on safety-report cost fields. `destination_context_report` remains a compatibility alias for non-budget destination context consumed by existing itinerary/API code.
+
+## Responsibility Clarification — 2026-09-09
+
+`SafetyAgent` does not estimate daily cost or choose currency. `BudgetPlannerAgent` owns cost estimation, food-budget allocation, and ISO 4217 currency selection. SafetyAgent owns crowd, altitude, seasonal, and scam/safety analysis only.
+
+## Architecture Update — 2026-09-09
+
+`DestinationContextAgent` has been removed. `SafetyAgent` now owns destination intelligence previously assigned to that agent: crowd information, altitude and acclimatization risks, seasonal weather and risks, and practical daily-cost context. It also retains venue-aware scam and safety analysis.
+
+The graph no longer registers or schedules a `destination_context` node. `SafetyAgent` runs after `FoodDiscoveryAgent`, using `experiences_raw` and `food_recommendations` alongside its Tavily searches. `ScamSafetyReport` carries the merged destination-context fields. `destination_context_report` remains only as a compatibility alias for existing budget, itinerary, and API consumers and is produced by `SafetyAgent`.
+
+Layer 1 now contains only `VisaAgent` for international trips. Destination context and safety are part of the Layer 4 SafetyAgent enrichment step. The file `backend/app/agents/destination_context_agent.py` is no longer part of the project.
 # Multi-Agent AI Trip Planner — Full System Design Plan
 
 > Version 7 — Updated 2026-07-02

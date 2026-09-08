@@ -16,7 +16,6 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.budget_planner_agent import BudgetPlannerAgent
-from app.agents.destination_context_agent import DestinationContextAgent
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
 from app.agents.itinerary_compiler_agent import ItineraryCompilerAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
@@ -60,7 +59,6 @@ def build_graph(
     factory = tool_factory or ToolFactory()
 
     orchestrator = OrchestratorAgent(llm=llm)
-    dest_context = DestinationContextAgent(tool_factory=factory, llm=llm)
     safety = SafetyAgent(tool_factory=factory, llm=llm)
     visa = VisaAgent(tool_factory=factory, llm=llm)
     transport_search = TransportSearchAgent(tool_factory=factory, llm=llm)
@@ -81,7 +79,6 @@ def build_graph(
     graph.add_node("ready_to_plan", _ready_to_plan_node)
 
     # Layer 1
-    graph.add_node("destination_context", dest_context)
     graph.add_node("safety", safety)
     graph.add_node("visa", visa)
 
@@ -112,7 +109,6 @@ def build_graph(
 
     # Fan-out from ready_to_plan → all Layer 1+2 nodes in parallel
     for node in [
-        "destination_context",
         "visa",
         "transport_search",
         "stay_search",
@@ -144,13 +140,13 @@ def build_graph(
     # Layer 2 → food_discovery
     graph.add_edge("local_experiences", "food_discovery")
 
-    # food_discovery → scam_safety: agent runs after food outlets + experiences are in state
-    graph.add_edge("food_discovery", "scam_safety")
+    # food_discovery → safety: agent runs after food outlets + experiences are in state
+    graph.add_edge("food_discovery", "safety")
 
-    # Layer 4 + scam_safety → itinerary_compiler (barrier: 3 inputs)
+    # Layer 4 + safety → itinerary_compiler (barrier: 3 inputs)
     graph.add_edge("budget_planner", "itinerary_compiler")
     graph.add_edge("reviews", "itinerary_compiler")
-    graph.add_edge("scam_safety", "itinerary_compiler")
+    graph.add_edge("safety", "itinerary_compiler")
 
     graph.add_edge("itinerary_compiler", END)
 

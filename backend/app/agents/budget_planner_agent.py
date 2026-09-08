@@ -60,7 +60,6 @@ class BudgetPlannerAgent:
 
         transport_rec = s.transport_recommendation
         stays_pick = s.stays_pick
-        destination_ctx = s.destination_context_report
         visa_report = s.visa_report
         self_drive_report = s.self_drive_report
 
@@ -69,7 +68,11 @@ class BudgetPlannerAgent:
 
         trip_days = dates.trip_days if dates else 3
         preferred_currency = (user_profile and user_profile.preferred_currency) or "INR"
-        dest_currency = (destination_ctx and destination_ctx.currency_code) or "INR"
+        dest_currency = (
+            (transport_rec and transport_rec.currency_code)
+            or (stays_pick and stays_pick.currency_code)
+            or "INR"
+        )
 
         # ── Cost components ───────────────────────────────────────────────
         transport_cost = transport_rec.total_cost if transport_rec else 0.0
@@ -79,13 +82,11 @@ class BudgetPlannerAgent:
         stay_currency = stays_pick.currency_code if stays_pick else dest_currency
         stay_total = stay_cost_per_night * trip_days * travelers
 
-        # Food: ~35% of real_daily_cost estimate
-        daily_cost = (destination_ctx and destination_ctx.real_daily_cost) or 0.0
-        food_total = daily_cost * 0.35 * trip_days * travelers
-
         # Activities: rough estimate — ₹500–2000/person/day depending on budget tier
         tier = budget.tier if budget else "mid"
         activity_daily = {"budget": 500.0, "mid": 1500.0, "luxury": 4000.0}.get(tier, 1500.0)
+        # Food estimate stays in budget planning, not destination safety analysis.
+        food_total = activity_daily * 0.35 * trip_days * travelers
         activities_total = activity_daily * trip_days * travelers
 
         visa_cost = 0.0
