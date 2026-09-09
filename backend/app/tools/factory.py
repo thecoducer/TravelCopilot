@@ -32,6 +32,8 @@ _REGISTRY: dict[str, _ToolEntry] = {
     "search_flights": _ToolEntry("serpapi_tools", "FlightSearchTool"),
     "search_hotels": _ToolEntry("serpapi_tools", "HotelSearchTool"),
     "search_transit": _ToolEntry("transit_tools", "TransitSearchTool"),
+    "search_road_routes": _ToolEntry("road_route_tools", "RoadRouteTool"),
+    "search_taxi_info": _ToolEntry("taxi_tools", "TaxiInfoTool"),
     "search_places": _ToolEntry("places_tools", "PlaceSearchTool"),
     "place_details": _ToolEntry("places_tools", "PlaceDetailsTool"),
     "tavily_search": _ToolEntry("tavily_tools", "TavilySearchTool"),

@@ -1,4 +1,4 @@
-"""TransportSearchAgent — Layer 2: hub identification + flight/transit search.
+"""TransportSearchAgent — Layer 2: hub identification + multimodal search.
 
 Pure tool-call agent (no LLM synthesis) — one cheap LLM call for hub
 identification (Step A), then parallel tool calls for each route leg (Step B).
@@ -9,7 +9,8 @@ Step A — Hub identification:
 
 Step B — Parallel supply search:
     - SerpAPI google_flights for each flight leg
-    - Google Routes API transit for train/bus legs
+    - Google Routes API transit for train/bus/ferry legs
+    - Google Routes API driving routes plus taxi-operator discovery for cab legs
     Result written to ``state["transport_legs_raw"]`` keyed by "ORIG→DEST".
 """
 
@@ -66,7 +67,18 @@ class TransportSearchAgent:
         self._hub_tool = factory.get("identify_hubs")
         self._flight_tool = factory.get("search_flights")
         self._transit_tool = factory.get("search_transit")
+        self._road_route_tool = factory.get("search_road_routes")
+        self._taxi_info_tool = factory.get("search_taxi_info")
         self._llm = llm or get_llm("transport_search")
+
+        self._mode_handlers = {
+            "flight": self._fetch_flight,
+            "train": self._fetch_transit,
+            "bus": self._fetch_transit,
+            "ferry": self._fetch_transit,
+            "cab": self._fetch_taxi,
+            "taxi": self._fetch_taxi,
+        }
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         source: str = state.get("source", "")
@@ -114,26 +126,13 @@ class TransportSearchAgent:
             leg_key = f"{orig}→{dest}"
 
             try:
-                if mode == "flight":
-                    result = await self._flight_tool.run(
-                        origin=orig,
-                        destination=dest,
-                        departure_date=dep_date,
-                    )
-                    all_flights = result.get("best_flights", []) + result.get("other_flights", [])
-                    if all_flights:
-                        legs_raw[leg_key] = all_flights
-                else:  # train | bus | cab | taxi | ferry | other
-                    result = await self._transit_tool.run(
-                        origin=orig,
-                        destination=dest,
-                        mode=mode,
-                        departure_date=dep_date,
-                    )
-                    options = result.get("options", [])
-                    if options:
-                        existing = legs_raw.get(leg_key, [])
-                        legs_raw[leg_key] = existing + options
+                handler = self._mode_handlers.get(mode)
+                if handler is None:
+                    log.warning("unsupported_transport_mode", leg=leg_key, mode=mode)
+                    return
+                options = await handler(orig, dest, mode, dep_date)
+                if options:
+                    legs_raw.setdefault(leg_key, []).extend(options)
             except Exception as exc:
                 log.warning("leg_fetch_failed", leg=leg_key, mode=mode, error=str(exc))
 
@@ -144,3 +143,37 @@ class TransportSearchAgent:
             "transport_hubs": transport_hubs,
             "transport_legs_raw": legs_raw,
         }
+
+    async def _fetch_flight(
+        self, origin: str, destination: str, mode: str, departure_date: str
+    ) -> list[Any]:
+        result = await self._flight_tool.run(
+            origin=origin,
+            destination=destination,
+            departure_date=departure_date,
+        )
+        return result.get("best_flights", []) + result.get("other_flights", [])
+
+    async def _fetch_transit(
+        self, origin: str, destination: str, mode: str, departure_date: str
+    ) -> list[Any]:
+        result = await self._transit_tool.run(
+            origin=origin,
+            destination=destination,
+            mode=mode,
+            departure_date=departure_date,
+        )
+        return result.get("options", [])
+
+    async def _fetch_taxi(
+        self, origin: str, destination: str, mode: str, departure_date: str
+    ) -> list[Any]:
+        route_result, info_result = await asyncio.gather(
+            self._road_route_tool.run(
+                origin=origin,
+                destination=destination,
+                departure_date=departure_date,
+            ),
+            self._taxi_info_tool.run(location=destination, destination=destination),
+        )
+        return route_result.get("options", []) + info_result.get("options", [])

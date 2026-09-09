@@ -8,8 +8,11 @@ from app.tools.factory import ToolFactory
 from app.tools.mock.fx_tools import MockCurrencyConvertTool
 from app.tools.mock.geo_tools import MockClusterByProximityTool
 from app.tools.mock.hub_tools import MockIdentifyHubsTool
+from app.tools.mock.road_route_tools import MockRoadRouteTool
 from app.tools.mock.serpapi_tools import MockFlightSearchTool, MockHotelSearchTool
 from app.tools.mock.tavily_tools import MockTavilySearchTool
+from app.tools.mock.taxi_tools import MockTaxiInfoTool
+from app.tools.mock.transit_tools import MockTransitSearchTool
 from app.tools.mock.visa_tools import MockVisaCentreSearchTool
 from app.tools.real.geo_tools import ClusterByProximityTool
 
@@ -140,6 +143,24 @@ class TestMockTavilySearch:
         result = await tool.run(query="random query about destination", destination="Paris")
         assert "results" in result
         assert "answer" in result
+
+
+class TestMockTransportSearch:
+    @pytest.mark.asyncio
+    async def test_transit_normalizes_routes_to_options(self):
+        result = await MockTransitSearchTool().run(origin="Kolkata", destination="Delhi")
+        assert len(result["options"]) >= 1
+        assert result["source"] == "mock_google_routes"
+
+    @pytest.mark.asyncio
+    async def test_road_route_returns_option(self):
+        result = await MockRoadRouteTool().run(origin="Kolkata", destination="Delhi")
+        assert result["options"][0]["mode"] == "taxi"
+
+    @pytest.mark.asyncio
+    async def test_taxi_info_returns_operator(self):
+        result = await MockTaxiInfoTool().run(location="Leh")
+        assert result["options"][0]["name"]
 
 
 class TestMockVisaCentreTool:

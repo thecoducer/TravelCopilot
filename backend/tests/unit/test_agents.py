@@ -439,6 +439,24 @@ class TestTransportSearchAgent:
         result = await agent({**base_state, "source": "", "destination": ""})
         assert "transport_legs_raw" in result
 
+    @pytest.mark.asyncio
+    async def test_dispatches_taxi_and_transit_modes(self, mock_tool_factory: ToolFactory) -> None:
+        from app.agents.transport_search_agent import _HubResult, _RouteCombo
+
+        mock_hubs = _HubResult(
+            route_combinations=[
+                _RouteCombo(origin="KOL", destination="DEL", mode="train"),
+                _RouteCombo(origin="DEL", destination="LEH", mode="taxi"),
+                {"origin": "KOL", "destination": "LEH", "mode": "other"},
+            ]
+        )
+        agent = TransportSearchAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_hubs))
+        result = await agent({**base_state, "source": "KOL", "destination": "LEH"})
+
+        assert "KOL→DEL" in result["transport_legs_raw"]
+        assert "DEL→LEH" in result["transport_legs_raw"]
+        assert "KOL→LEH" not in result["transport_legs_raw"]
+
 
 # ── StaySearchAgent ───────────────────────────────────────────────────────────
 

@@ -1,7 +1,8 @@
-"""Google Routes API public-transit adapter."""
+"""Google Routes API road-routing adapter."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -9,17 +10,12 @@ import httpx
 from app.config import settings
 
 
-class TransitSearchTool:
-    name = "search_transit"
-    description = "Google Routes API routes for train, bus, and ferry legs."
+class RoadRouteTool:
+    name = "search_road_routes"
+    description = "Google Routes API driving routes for taxi and cab legs."
 
     async def run(
-        self,
-        origin: str = "",
-        destination: str = "",
-        mode: str = "transit",
-        departure_date: str = "",
-        **kwargs: object,
+        self, origin: str = "", destination: str = "", **kwargs: object
     ) -> dict[str, Any]:
         if not origin or not destination:
             return {"options": [], "source": "google_routes"}
@@ -27,13 +23,13 @@ class TransitSearchTool:
         payload: dict[str, Any] = {
             "origin": {"address": origin},
             "destination": {"address": destination},
-            "travelMode": "TRANSIT",
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_AWARE",
             "computeAlternativeRoutes": True,
         }
+        departure_date = kwargs.get("departure_date")
         if departure_date:
             payload["departureTime"] = f"{departure_date}T09:00:00Z"
-        if mode in {"train", "bus"}:
-            payload["transitPreferences"] = {"allowedTravelModes": [mode.upper()]}
 
         headers = {
             "Content-Type": "application/json",
@@ -51,14 +47,16 @@ class TransitSearchTool:
             response.raise_for_status()
             data = response.json()
 
-        options = [
-            {
-                **route,
-                "mode": mode,
-                "origin": origin,
-                "destination": destination,
-                "source": "google_routes",
-            }
-            for route in data.get("routes", [])
-        ]
+        options = []
+        for route in data.get("routes", []):
+            options.append(
+                {
+                    **route,
+                    "mode": "taxi",
+                    "origin": origin,
+                    "destination": destination,
+                    "source": "google_routes",
+                    "fetched_at": datetime.now().astimezone().isoformat(),
+                }
+            )
         return {"options": options, "source": "google_routes"}

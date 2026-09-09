@@ -1,7 +1,4 @@
-"""Mock transit search tool.
-
-Returns data in Google Routes API format: {routes: [...]}
-"""
+"""Mock public-transit search tool."""
 
 from __future__ import annotations
 
@@ -18,6 +15,5 @@ class MockTransitSearchTool:
         self, origin: str = "", destination: str = "", **kwargs: object
     ) -> dict[str, Any]:
         data = find_fixture("transit", origin, destination)
-        if data is None:
-            return {"routes": []}
-        return data
+        routes = data.get("routes", []) if data else []
+        return {"options": routes, "source": "mock_google_routes"}
