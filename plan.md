@@ -1,25 +1,10 @@
-## Current Ownership Override — 2026-09-09
-
-This section supersedes older architecture descriptions below. `DestinationContextAgent` is removed. `SafetyAgent` owns crowd, altitude/acclimatization, seasonal weather, seasonal-risk, scam, and venue-safety analysis only. It must not estimate `real_daily_cost`, select `currency_code`, or produce budget warnings.
-
-`BudgetPlannerAgent` owns all cost concerns: destination-currency selection using ISO 4217, daily food/activity estimates, FX normalization, budget comparison, and savings tips. It must not depend on safety-report cost fields. `safety_report` is the sole runtime report for non-budget destination context consumed by existing itinerary/API code.
-
-## Responsibility Clarification — 2026-09-09
-
-`SafetyAgent` does not estimate daily cost or choose currency. `BudgetPlannerAgent` owns cost estimation, food-budget allocation, and ISO 4217 currency selection. SafetyAgent owns crowd, altitude, seasonal, and scam/safety analysis only.
-
-## Architecture Update — 2026-09-09
-
-`DestinationContextAgent` has been removed. `SafetyAgent` now owns crowd information, altitude and acclimatization risks, seasonal weather and risks, plus venue-aware scam and safety analysis. BudgetPlannerAgent owns practical daily-cost context.
-
-The graph no longer registers or schedules a `destination_context` node. `SafetyAgent` runs after `FoodDiscoveryAgent`, using `experiences_raw` and `food_recommendations` alongside its Tavily searches. `SafetyReport` carries the merged safety and destination-context fields and is exposed as `safety_report`.
-
-Layer 1 now contains only `VisaAgent` for international trips. Destination context and safety are part of the Layer 4 SafetyAgent enrichment step. The file `backend/app/agents/destination_context_agent.py` is no longer part of the project.
 # Multi-Agent AI Trip Planner — Full System Design Plan
 
-> Version 7 — Updated 2026-07-02
-> Status: Approved, ready for implementation · Clarification gate redesigned around LangGraph `interrupt()` / `Command(resume=...)` native pause-resume
+> Version 8 — Updated 2026-09-09
+> Status: Approved, ready for implementation · Clarification gate built on LangGraph `interrupt()` / `Command(resume=...)` native pause-resume
 > Dev Roadmap: See `dev-roadmap.md`
+>
+> **v8 change**: `DestinationContextAgent` is removed. `SafetyAgent` (Layer 4, runs after `FoodDiscoveryAgent`) now owns crowd, altitude/acclimatization, seasonal weather/risk, and scam/venue-safety analysis — it does not estimate cost or currency. `BudgetPlannerAgent` owns all cost concerns (ISO 4217 currency selection, food/activity estimates, FX normalization, budget verdict, savings tips) and does not depend on `safety_report`. Layer 1 now contains only `VisaAgent` for international trips.
 
 ---
 
@@ -75,11 +60,8 @@ graph TD
 
     ready_to_plan["LAYER 0 · Control\n✅ ready_to_plan\n─────────────────\npass-through fan-out\nLayer 1 + 2 fire in parallel"]:::control
 
-    %% ── Layer 1: Destination Intelligence (parallel) ─────────────
-    ready_to_plan --> destination_context
+    %% ── Layer 1: Destination Intelligence ─────────────────────────
     ready_to_plan --> visa
-
-    destination_context["LAYER 1 · Destination Intelligence\n🌍 DestinationContextAgent\n─────────────────\nLLM · Tavily search\nseasonality · crowds\ncosts · weather · risks"]:::layer1
 
     visa["LAYER 1 · Destination Intelligence\n🛂 VisaAgent\n─────────────────\nLLM · Tavily + Places\nintl trips only\nvisa type · process · fees"]:::layer1
 
@@ -105,8 +87,8 @@ graph TD
 
     self_drive_search["LAYER 3 · Analysis\n🚗 SelfDriveSearchAgent\n─────────────────\nconditional · LLM\nrentals · fuel estimate\nonly if self_drive_intent"]:::layer3
 
-    %% ── Layer 3 → BudgetPlanner (barrier join: 3 direct inputs; reads L1 state)
-    %% safety_report and visa_report are already written to TripState
+    %% ── Layer 3 → BudgetPlanner (barrier join: 3 direct inputs; reads visa_report)
+    %% visa_report is already written to TripState by Layer 1 (if international);
     %% by super-step 3, so no direct edge is needed — and adding one would cause
     %% BudgetPlannerAgent to fire twice (once after L1 and again after L3).
     transport_optimizer --> budget_planner
@@ -121,20 +103,20 @@ graph TD
     local_experiences --> food_discovery
 
     %% ── Layer 4: Enrichment ──────────────────────────────────────
-    budget_planner["LAYER 4 · Enrichment\n💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join (3 direct)\nreads L1 reports from state\naggregate all costs · FX\nbudget verdict + tips"]:::layer4
+    budget_planner["LAYER 4 · Enrichment\n💰 BudgetPlannerAgent\n─────────────────\nLLM · barrier join (3 direct)\nreads visa_report from state\naggregate all costs · FX\nbudget verdict + tips"]:::layer4
 
     reviews["LAYER 4 · Enrichment\n⭐ ReviewsAgent\n─────────────────\nLLM · Places API\nreviews + photos\nfor stays + experiences"]:::layer4
 
     food_discovery["LAYER 4 · Enrichment\n🍜 FoodDiscoveryAgent\n─────────────────\ntools only · no LLM\nrestaurants · cafes\nstreet food per day"]:::layer4
 
-    food_discovery --> scam_safety
+    food_discovery --> safety
 
     safety["LAYER 4 · Enrichment\n🛡️ SafetyAgent\n─────────────────\nLLM · Tavily search\nvenue-aware · scam warnings\nexperiences · food · area risks"]:::layer4
 
     %% ── Layer 5: Synthesis ───────────────────────────────────────
     budget_planner --> itinerary_compiler
     reviews --> itinerary_compiler
-    scam_safety --> itinerary_compiler
+    safety --> itinerary_compiler
 
     itinerary_compiler["LAYER 5 · Synthesis\n📋 ItineraryCompilerAgent\n─────────────────\nLLM · geo-cluster\ncompile · self-critique\ndeterministic gate · finalise"]:::layer5
 
@@ -156,9 +138,8 @@ LAYER 0 — ROUTING & ORCHESTRATION
         the graph pauses and resumes at this same node; there is no
         separate terminal clarification node or conditional_edge.
 
-LAYER 1 — DESTINATION INTELLIGENCE  (all parallel, no supply data needed)
-  ├── DestinationContextAgent  seasonality · crowd · practical costs · local constraints
-  └── VisaAgent                international trips only
+LAYER 1 — DESTINATION INTELLIGENCE  (international trips only)
+  └── VisaAgent                visa requirements, process, fees
 
 LAYER 2 — SUPPLY SEARCH  (all parallel, pure tool calls — no LLM)
   ├── TransportSearchAgent     flights + trains + buses (SerpAPI + Google Routes API)
@@ -206,7 +187,6 @@ class TripState(dict):  # subclasses dict for LangGraph compatibility
     parse_confidence:     dict[str, float]        # per-field confidence (0–1) from the parse
 
     # ── Layer 1: Destination Intelligence ─────────────────────────
-    safety_report: SafetyReport | None
     visa_report:        VisaReport | None
 
     # ── Layer 2: Supply Search ─────────────────────────────────────
@@ -224,6 +204,7 @@ class TripState(dict):  # subclasses dict for LangGraph compatibility
     self_drive_report: SelfDriveReport | None
 
     # ── Layer 4: Enrichment ────────────────────────────────────────
+    safety_report:        SafetyReport | None    # written by SafetyAgent, after FoodDiscoveryAgent
     reviews_summary:      Annotated[dict[str, ReviewSummary], operator.or_]  # merged
     food_recommendations: Annotated[dict[str, list], operator.or_]           # merged
     budget_report:        BudgetReport | None
@@ -233,7 +214,6 @@ class TripState(dict):  # subclasses dict for LangGraph compatibility
     token_usage: Annotated[dict[str, AgentTokenUsage], operator.or_]  # merged
     messages:    Annotated[list[BaseMessage], add_messages]            # appended
     error:       str | None
-    error:        str | None
 ```
 
 ---
@@ -430,22 +410,7 @@ All 14 agent nodes wired with direct and parallel edges per layer. There are no 
 
 ### LAYER 1 — Destination Intelligence
 
-**DestinationContextAgent** (`agents/destination_context_agent.py`)
-- Tavily searches: crowds `"{destination} crowded {month} {year}"`, peak season `"is {destination} peak season {month}"`, festivals `"{destination} events {dates}"`, costs `"average daily cost {destination} 2026"`, hidden fees `"tourist tax hidden fees {destination}"`
-- SafetyAgent synthesizes `SafetyReport`:
-  - `is_peak_season`: bool
-  - `season_label`: e.g. "Peak season", "Shoulder season", "Off season"
-  - `season_reason`: e.g. "Cherry blossom season — expect 2–3h queues at major attractions"
-  - `crowd_level`: Low / Moderate / High / Extreme
-  - `crowd_notes`: specific crowd hotspots and busy times of day
-  - `real_daily_cost`: estimated per-person per-day spend in destination currency
-  - `currency_code`: ISO 4217 currency of the destination country (e.g. `"JPY"`, `"INR"`, `"BDT"`, `"EUR"`)
-  - `cost_warnings[]`: e.g. "Venice day-tripper tax €5/person", "Hotel tax not included in listed prices"
-  - `seasonal_weather_summary`: brief seasonal expectation for the travel window
-  - `seasonal_risks[]`: e.g. "Typhoon season may affect ferries", "Mountain roads can close after early snowfall"
-- No score, no verdict, no recommendation — the decision to travel is entirely the user’s
-
-**VisaAgent** (`agents/visa_agent.py`) ← *international trips only*
+**VisaAgent** (`agents/visa_agent.py`) ← *international trips only, the sole Layer 1 agent*
 - Tools:
   1. `tavily_search("visa requirements {passport_country} nationals {destination_country} 2026")` — official requirements, eligibility, type (tourist / e-visa / on arrival / visa-free)
   2. `tavily_search("how to apply {destination_country} visa from {passport_country} step by step")` — application procedure
@@ -553,8 +518,10 @@ LLM enumerates plausible route combinations using geographic knowledge:
 
 **SafetyAgent** (`agents/safety_agent.py`) ← *venue-aware, runs after FoodDiscovery*
 - Waits for: `food_recommendations` (FoodDiscovery) + `experiences_raw` (already in state from LocalExperiences)
-- Tavily: `"tourist scams {destination}"`, `"safety tips {destination}"`
-- Builds a venue list from `experiences_raw` names and `food_recommendations` names and passes it as extra context to the LLM, enabling venue-specific scam warnings
+- Tavily: `"tourist scams {destination} 2026 how to avoid"`, `"safety tips {destination} travel advisory"`, `"{destination} crowded {month} {year} tourist season"`, `"{destination} altitude elevation risks acclimatization"`, `"{destination} seasonal risks weather {month} travel advisory"`
+- Builds a venue list from `experiences_raw` and `food_recommendations` names and passes it as extra context to the LLM, enabling venue-specific scam warnings
+- LLM synthesizes `SafetyReport`: `advisory_level` (official-style guidance level), `is_peak_season`/`season_label`/`season_reason`, `crowd_level`/`crowd_notes`, `altitude_meters`/`acclimatization_advice` (set only above 1500m), `seasonal_weather_summary`/`seasonal_risks[]`, `top_scams[]` (2–5 entries with how-to-avoid), `safe_areas[]`, `emergency_contacts`, `women_safety_notes`, `medical_facilities`, `insurance_recommendation`
+- **Owns no cost data**: does not estimate `real_daily_cost`, select a currency, or produce budget warnings — that is `BudgetPlannerAgent`'s job
 - Writes `state["safety_report"]`; feeds directly into `ItineraryCompilerAgent`
 
 **BudgetPlannerAgent** (`agents/budget_planner_agent.py`) ← *new*
@@ -794,10 +761,7 @@ When the planning stream emits a `needs_clarification` event (a critical field �
 SSE timeline with per-agent icons grouped by layer:
 ```
 Layer 0: 🗺️ Orchestrator         ✅ Mumbai → Tokyo, 5 days, Oct 13–17
-Layer 1: 📊 Trip Conditions        ✅ Peak season · High crowds · Mostly sunny
-         🌤️ Weather               ✅ 18–24°C, no weather warnings
-         ⚠️ Safety Check          ✅ 3 scams flagged
-         📋 Visa Check            ✅ Tourist visa required, 5–15 days
+Layer 1: � Visa Check            ✅ Tourist visa required, 5–15 days
 Layer 2: ✈️🚂 Transport Search   ✅ 6 route options found
          🏨 Stay Search           ✅ 18 hotels found
          🎯 Experiences Search    ✅ 34 activities found
@@ -805,18 +769,20 @@ Layer 3: ✈️ Transport Optimizer   ✅ Direct ANA NH830 recommended
          🏨 Stay Analyst          ✅ Park Hyatt Tokyo selected
 Layer 4: ⭐ Reviews               ✅ Reviews for 15 places
          🍽️ Restaurants           ✅ 3 restaurants per day
+         ⚠️ Safety Check          ✅ Peak season · High crowds · 3 scams flagged
          💰 Budget                ✅ 1,85,000 INR total — within budget
 Layer 5: 📅 Building itinerary    ✅ 5-day plan ready
          🔢 5,842 tokens · ~$0.05 ▾ Breakdown
 ```
 
-### TripConditionsPanel (`components/TripConditionsPanel.tsx`)
-Replaces the old scored banner. Shows factual, neutral travel conditions for the user’s dates:
-- **Season badge**: “Peak season” / “Shoulder season” / “Off season” (no colour-coded verdict)
-- **Crowd level**: Low / Moderate / High / Extreme with a plain label and specific notes (e.g. “Expect 2–3h queues at Senso-ji”)
-- **Weather summary**: condition overview for travel dates, plus any active weather warnings
-- **Hidden fees**: itemised list of any taxes, surcharges, or tourist levies
-- No gauge, no score, no Go/Caution/Reconsider — purely informational
+### SafetyPanel (`components/SafetyPanel.tsx`)
+Renders `safety_report` (from `SafetyAgent`, Layer 4) — factual, neutral travel conditions plus safety advisories:
+- **Season badge**: "Peak season" / "Shoulder season" / "Off season" (no colour-coded verdict)
+- **Crowd level**: Low / Moderate / High / Extreme with a plain label and specific notes (e.g. "Expect 2–3h queues at Senso-ji")
+- **Altitude & acclimatization**: shown only for destinations above 1500m
+- **Seasonal weather summary + risks**: brief expectation for the travel window
+- **Advisory level + top scams**: amber/red accent per scam entry, each with how-to-avoid advice, plus safe areas and emergency contacts
+- No gauge, no score, no Go/Caution/Reconsider — purely informational; cost-related warnings live in `BudgetBreakdownPanel`, not here
 
 ### RouteMap (`components/RouteMap.tsx`)
 Google Maps JS API showing full journey:
@@ -889,8 +855,6 @@ Each morning/afternoon/evening slot in `DayCard` shows a **primary `PlaceCard`**
 - **Sources & freshness (G)**: a "Sources" list links each grounding URL (official government / embassy / centre pages) with its date; a "Checked on {last_verified_at}" stamp is always shown; a fixed disclaimer reads *"Visa rules change frequently — always confirm with the official consulate before booking."* When `confidence="low"` (no official source found), a prominent amber warning replaces the green confidence state and tells the user to verify directly.
 
 ### SelfDrivePanel — rental options, fuel calculator widget, road tips
-
-### ScamSafetyPanel — amber/red accent, advisory badge, scam list, emergency contacts
 
 ### PlanningCostBadge — total tokens + USD, expandable per-agent breakdown table
 
@@ -1005,8 +969,6 @@ sequenceDiagram
     OA->>L2: fire all Layer 2 agents
     Note over L1,L2: Layers 1 & 2 run fully in parallel
 
-    L1-->>FE: SSE: DestinationContext done (Peak season · High crowds · 18-24°C)
-    L1-->>FE: SSE: ScamSafety done (3 scams flagged)
     L1-->>FE: SSE: Visa done (tourist visa required)
     L2-->>FE: SSE: TransportSearch done
     L2-->>FE: SSE: StaySearch done
@@ -1027,6 +989,8 @@ sequenceDiagram
 
     L4-->>FE: SSE: Reviews done
     L4-->>FE: SSE: FoodDiscovery done
+    L4->>L4: FoodDiscovery → SafetyAgent
+    L4-->>FE: SSE: Safety done (3 scams flagged)
     L4-->>FE: SSE: Budget done (within budget, amounts in destination currency)
 
     L4->>L5: all results → ItineraryCompiler
@@ -1042,9 +1006,7 @@ sequenceDiagram
 Step 1:  OrchestratorAgent               (sequential — parse + detect + interrupt() clarification)
 
 Step 2:  ┌─── Layer 1 + Layer 2 — fully parallel ──────────────────────────────┐
-         │  Layer 1:  DestinationContextAgent                                   │
-         │            SafetyAgent                                           │
-         │            VisaAgent           (is_international only)               │
+         │  Layer 1:  VisaAgent           (is_international only)               │
          │  Layer 2:  TransportSearchAgent                                      │
          │            StaySearchAgent                                           │
          │            LocalExperiencesAgent                                     │
@@ -1057,12 +1019,10 @@ Step 3:  TransportOptimizerAgent         (after TransportSearch)
 
 Step 4:  ReviewsAgent                    (after StayAnalyst + LocalExperiences)
          FoodDiscoveryAgent              (after LocalExperiences; needs day-cluster context)
+         SafetyAgent                     (after FoodDiscovery — venue-aware crowd/altitude/seasonal/scam report)
          BudgetPlannerAgent              (after TransportOptimizer + StayAnalyst + SelfDriveSearch;
-                                          reads DestinationContext + Visa reports from state —
-                                          no direct graph edge from L1 to avoid duplicate firing)
-         — all three parallel with each other
-         SafetyAgent                 (after FoodDiscovery — venue-aware scam report)
-         — sequential after FoodDiscovery, feeds directly into ItineraryCompiler
+                                          reads visa_report from state for visa fees —
+                                          no direct graph edge from Layer 1 to avoid duplicate firing)
          Note: ReviewsAgent, BudgetPlannerAgent, and SafetyAgent all reach
          depth-5 in the same super-step, so ItineraryCompilerAgent fires exactly once.
 
@@ -1093,8 +1053,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/models/reports.py` | `SafetyReport`, `VisaReport` (+ `sources[]`, `last_verified_at`, `confidence`, `disclaimer`), `SelfDriveReport`, `BudgetReport` (+ FX fields) |
 | `backend/app/config.py` | `Settings` (pydantic-settings) + LiteLLM factory + `UsageLogger` |
 | `backend/app/agents/orchestrator.py` | Router + orchestrator — parse + parse_confidence + `interrupt()` clarification gate + detect intent + direct-edge routing |
-| `backend/app/agents/destination_context_agent.py` | Layer 1: seasonality · crowd level · hidden fees · seasonal conditions |
-| `backend/app/agents/safety_agent.py` | Layer 4: venue-aware scam warnings (after FoodDiscovery) — Tavily + experiences + food outlets |
+| `backend/app/agents/safety_agent.py` | Layer 4: crowd/altitude/seasonal risk + venue-aware scam warnings (after FoodDiscovery) — Tavily + experiences + food outlets |
 | `backend/app/agents/visa_agent.py` | Layer 1: visa requirements + embassy + application centre discovery (international only) |
 | `backend/app/agents/transport_search_agent.py` | Layer 2: hub ID + SerpAPI flights + Google Routes API transit |
 | `backend/app/agents/stay_search_agent.py` | Layer 2: SerpAPI Google Hotels |
@@ -1165,7 +1124,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `frontend/src/components/PreferenceSetup.tsx` | 5-question onboarding overlay |
 | `frontend/src/components/AgentProgressFeed.tsx` | SSE timeline feed grouped by layer |
 | `frontend/src/components/ClarificationPrompt.tsx` | (F) Renders `needs_clarification` prompts (input_type-aware); collects answers; `POST`s to `/api/trip/{session_id}/clarify` to resume the paused graph |
-| `frontend/src/components/TripConditionsPanel.tsx` | Season badge · crowd level · weather · hidden fees (no score) |
+| `frontend/src/components/SafetyPanel.tsx` | Season badge · crowd level · altitude · seasonal risk · scams · emergency contacts (no score) |
 | `frontend/src/components/RouteMap.tsx` | Google Maps JS route visualisation |
 | `frontend/src/components/ItineraryView.tsx` | Day tabs + drag-drop |
 | `frontend/src/components/DayCard.tsx` | Date + weather + mini-map + time slots |
@@ -1179,7 +1138,6 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `frontend/src/components/PackingPanel.tsx` | Weather-based packing checklist |
 | `frontend/src/components/VisaPanel.tsx` | Visa + embassy + application centre panel (company name is dynamic) + sources, "Checked on {date}", and confirm-with-consulate disclaimer |
 | `frontend/src/components/SelfDrivePanel.tsx` | Rentals + fuel calculator |
-| `frontend/src/components/ScamSafetyPanel.tsx` | Safety briefing |
 | `frontend/src/components/PlanningCostBadge.tsx` | Token + cost summary |
 | `frontend/src/lib/sse.ts` | `useAgentStream` SSE hook |
 | `frontend/src/lib/api.ts` | Typed API client |
@@ -1248,7 +1206,7 @@ GCP_REGION=asia-south1
 6c. **Clarification gate (F)**: "plan a trip to Tokyo" (no dates, no travellers) → stream emits `needs_clarification` with prompts for dates + travellers (graph *paused* via `interrupt()`, checkpointed — not aborted) and produces **no** itinerary; `POST /api/trip/{session_id}/clarify` with the answers resumes the same run via `Command(resume=...)` and a full itinerary is returned without re-parsing already-confirmed fields. A complete query never triggers the gate. Answering only some fields triggers another `needs_clarification` round (up to `max_clarification_rounds`), after which best-effort defaults are applied.
 3. **International**: "5 days Tokyo from Mumbai" → VisaPanel: Japan tourist visa, docs checklist, nearest Japanese embassy Mumbai, nearest application centre (e.g. VFS Global for Japan in India), ~5 business days processing; centre name is dynamically discovered, not hardcoded
 3b. **Visa sources & disclaimer (G)**: the VisaPanel shows a non-empty `sources[]` (at least one official-domain URL), a "Checked on {date}" stamp, and the confirm-with-consulate disclaimer; a corridor with no official source resolves to `confidence="low"` with a prominent verify-directly warning
-4. TripConditionsPanel shows season badge (e.g. “Peak season”), crowd level, weather summary, hidden fees — no score or verdict displayed
+4. SafetyPanel shows season badge (e.g. "Peak season"), crowd level, altitude/acclimatization notes where applicable, and scam/safety warnings — no score or verdict displayed; any cost-related caveats appear only in BudgetBreakdownPanel
 4. **Route optimization**: "Kolkata to Leh" → TransportInsightCallout shows direct vs via-Delhi cost+time; RouteMap shows polyline with ① KOL ② LEH (or via hub)
 5. **Self-drive**: "rent a scooter in Goa" → SelfDrivePanel with Goa scooter rentals, fuel estimate, road tips
 6. Day 1 card: ISO date shown, mini-map with pins, photo carousels, geotag chips, Google/YouTube links
@@ -1282,7 +1240,7 @@ GCP_REGION=asia-south1
 - **Deterministic final gate (I)**: The LLM self-critique handles only soft qualities (gaps, pace, rain). The hard constraints — opening hours (A) and per-day duration (B) — are enforced by re-running the pure-Python tools on the *final* compiled itinerary and looping on the **tools' output, not the LLM's opinion**. An LLM revision can never reintroduce a closed-venue or overpacked-day violation.
 - **Golden-set accuracy evals (J)**: Mock evals (regression-gated every PR) verify structure and logic; a small, human-verified `evals/golden/*` set run against **real APIs** (`run_evals.py --mode golden`, pre-release) verifies the *factual correctness* of what the user relies on — visa rules, transit-route existence, opening hours, and FX rates. This is the gate that protects real-world reliability, not just internal consistency.
 - **6-layer agent architecture**: Layers make dependencies explicit, parallelism maximal, and testing per-layer clean. Layer 1 + Layer 2 always run in parallel. Each subsequent layer waits only for its direct dependencies.
-- **DestinationContextAgent dedicated**: seasonality, crowd pressure, practical costs, and local constraints are planning context, not raw supply search. Keeping them together produces a clear destination brief without pretending a near-term forecast is reliable months in advance.
+- **Safety and cost are owned by different agents**: `SafetyAgent` (Layer 4, after `FoodDiscoveryAgent`) owns crowd pressure, altitude/acclimatization, seasonal risk, and venue-aware scam/safety warnings — planning context, not a cost estimate. `BudgetPlannerAgent` owns every cost concern (currency selection, FX normalisation, per-category and per-day estimates, budget verdict) and never reads `safety_report` for pricing. Keeping the two apart means a safety read can never silently double as a financial one.
 - **LocalExperiencesAgent as a first-class agent**: Extracting activity search from the compiler into its own Layer 2 agent means the compiler has structured experience data to geo-cluster, ReviewsAgent has specific targets to enrich, and FoodDiscoveryAgent knows which neighbourhoods each day covers.
 - **FoodDiscoveryAgent dedicated**: food planning is not limited to formal restaurants. Per-neighbourhood, per-meal-type, dietary-restriction-aware discovery across restaurants, cafes, takeaways, and street-food spots produces meaningfully better output than a generic LLM suggestion.
 - **BudgetPlannerAgent dedicated**: Real users have budgets. Aggregating costs from 4+ agents into a single verdict with day-by-day breakdown requires its own agent — the compiler shouldn't be doing financial aggregation.
