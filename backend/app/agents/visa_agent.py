@@ -4,16 +4,12 @@ Only activates for international trips (``state["is_international"] == True``).
 
 Grounding rules (G):
   - ``sources[]`` is populated from Tavily result URLs.
-  - Grounding URLs are classified: official if domain ends with ``.gov``,
-    ``.gov.in``, ``.mfa.*``, ``.embassy.*``, ``.vfsglobal.com``, etc.
-  - ``confidence`` = "high" if ≥1 official-domain source; "medium" if ≥1
-    non-official source; "low" if no sources at all.
+    - The LLM evaluates source provenance and sets ``confidence`` accordingly.
   - ``visa_required`` is never asserted without at least one source.
 """
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,42 +22,6 @@ from app.tools.factory import ToolFactory
 
 logger = structlog.get_logger(__name__)
 
-# ── Official-domain classifier ────────────────────────────────────────────────
-_OFFICIAL_DOMAIN_PATTERNS = re.compile(
-    r"(\.gov(\.[a-z]{2})?$|\.mfa\.[a-z]+$|embassy\.|consulate\.|"
-    r"vfsglobal\.com|blsinternational\.com|tlscontact\.com|"
-    r"idata\.com\.tr|mofa\.|moi\.|immigration\.)",
-    re.IGNORECASE,
-)
-
-
-def _classify_sources(urls: list[dict[str, Any]]) -> tuple[list[VisaSource], str]:
-    """Return (sources_list, confidence_level) based on domain classification."""
-    sources: list[VisaSource] = []
-    has_official = False
-
-    for item in urls:
-        url = item.get("url", "")
-        title = item.get("title", "")
-        pub_date = item.get("published_date")
-        sources.append(VisaSource(title=title, url=url, published_or_fetched_date=pub_date))
-        # Extract domain from URL
-        domain_match = re.search(r"https?://([^/]+)", url)
-        if domain_match:
-            domain = domain_match.group(1)
-            if _OFFICIAL_DOMAIN_PATTERNS.search(domain):
-                has_official = True
-
-    if not sources:
-        confidence = "low"
-    elif has_official:
-        confidence = "high"
-    else:
-        confidence = "medium"
-
-    return sources, confidence
-
-
 _SYSTEM_PROMPT = """\
 You are an expert visa and immigration adviser. Based on the search results below,
 produce a complete visa report.
@@ -71,6 +31,10 @@ Critical rules:
 - Include ``disclaimer`` reminding travellers to verify with the official consulate.
 - If search results are insufficient, lean conservative: flag uncertainty in
   ``validity_notes``.
+- Decide which cited sources are official based on their content and provenance,
+    not a fixed domain allowlist. Set ``confidence`` to "high" only when at least
+    one source is official, "medium" when sources exist but none are official,
+    and "low" when no reliable source supports the report.
 """
 
 
@@ -131,7 +95,15 @@ class VisaAgent:
         if not isinstance(tavily_result, Exception):
             raw_results = tavily_result.get("results", [])
 
-        sources, confidence = _classify_sources(raw_results)
+        sources: list[VisaSource] = [
+            VisaSource(
+                title=item.get("title", ""),
+                url=item.get("url", ""),
+                published_or_fetched_date=item.get("published_date"),
+            )
+            for item in raw_results
+            if item.get("url")
+        ]
 
         # Fixture / tool sources (visa_centre tool returns its own sources)
         if not isinstance(centre_result, Exception):
@@ -144,12 +116,6 @@ class VisaAgent:
                             published_or_fetched_date=centre_result.get("last_verified_at"),
                         )
                     )
-                    # Visa centre tool sources are official
-                    confidence = max(
-                        confidence,
-                        "medium",
-                        key=lambda c: {"low": 0, "medium": 1, "high": 2}[c],
-                    )
 
         # Build LLM context
         snippets: list[str] = []
@@ -157,7 +123,10 @@ class VisaAgent:
             if tavily_result.get("answer"):
                 snippets.append(f"Summary: {tavily_result['answer']}")
             for item in raw_results[:5]:
-                snippets.append(f"• {item.get('title', '')}: {item.get('content', '')[:400]}")
+                snippets.append(
+                    f"• {item.get('title', '')} ({item.get('url', '')}): "
+                    f"{item.get('content', '')[:400]}"
+                )
         if not isinstance(centre_result, Exception) and centre_result.get("application_centre"):
             c = centre_result["application_centre"]
             snippets.append(
@@ -205,7 +174,6 @@ class VisaAgent:
             report = report.model_copy(
                 update={
                     "sources": sources,
-                    "confidence": confidence,
                     "last_verified_at": datetime.now(tz=UTC),
                     "passport_country": passport_country,
                     "destination_country": destination_country,
