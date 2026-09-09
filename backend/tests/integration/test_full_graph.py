@@ -34,8 +34,8 @@ from app.models.itinerary import (
 )
 from app.models.reports import (
     BudgetReport,
-    ScamEntry,
     SafetyReport,
+    ScamEntry,
     SelfDriveReport,
     VisaReport,
 )

@@ -38,7 +38,7 @@ async def render_pdf(itinerary_data: dict[str, Any] | str) -> bytes:
 def _render_html(data: dict[str, Any]) -> str:
     """Render the Jinja2 HTML template with itinerary data."""
     try:
-        from jinja2 import Environment, FileSystemLoader, select_autoescape  # type: ignore[import]
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
 
         env = Environment(
             loader=FileSystemLoader(str(_TEMPLATE_DIR)),
@@ -56,9 +56,9 @@ def _render_html(data: dict[str, Any]) -> str:
 def _html_to_pdf(html: str) -> bytes:
     """Convert HTML to PDF bytes using WeasyPrint."""
     try:
-        from weasyprint import HTML  # type: ignore[import]
+        from weasyprint import HTML
 
-        return HTML(string=html).write_pdf()
+        return bytes(HTML(string=html).write_pdf())
     except ImportError:
         logger.warning(
             "weasyprint_not_installed",

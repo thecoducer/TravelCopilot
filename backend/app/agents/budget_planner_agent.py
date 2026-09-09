@@ -43,7 +43,7 @@ class BudgetPlannerAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._fx_tool = factory.get("currency_convert")
@@ -160,7 +160,7 @@ class BudgetPlannerAgent:
                 class _Tips(BaseModel_):
                     tips: list[str]
 
-                chain = self._llm.with_structured_output(_Tips)  # type: ignore[union-attr]
+                chain = self._llm.with_structured_output(_Tips)
                 tips_result: _Tips = chain.invoke(
                     [
                         SystemMessage_(content="You are a budget travel advisor."),

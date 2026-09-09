@@ -78,13 +78,15 @@ class EnforceOpeningHoursTool:
             slot = exp.get("assigned_slot", "morning")
             oh = exp.get("opening_hours")
             if not _is_open_at(oh, slot):
+                opening_hours = oh if isinstance(oh, dict) else {}
                 conflicts.append(
                     {
                         "name": exp.get("name", "Unknown"),
                         "assigned_slot": slot,
                         "reason": (
                             f"Closed during {slot} "
-                            f"(opens {oh.get('open', '?')} closes {oh.get('close', '?')})"
+                            f"(opens {opening_hours.get('open', '?')} "
+                            f"closes {opening_hours.get('close', '?')})"
                         ),
                     }
                 )

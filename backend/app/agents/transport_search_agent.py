@@ -61,7 +61,7 @@ class TransportSearchAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._hub_tool = factory.get("identify_hubs")
@@ -95,13 +95,10 @@ class TransportSearchAgent:
         log.info("agent_start")
 
         # ── Step A: Hub identification ───────────────────────────────────────
-        hub_result = await self._hub_tool.run(origin=source, destination=destination)
-        raw_combos: list[dict[str, Any]] = hub_result.get("route_combinations", [])
-
-        # If the mock tool returned a limited set, augment with LLM if needed
+        raw_combos: list[dict[str, Any]] = []
         if not raw_combos:
             try:
-                chain = self._llm.with_structured_output(_HubResult)  # type: ignore[union-attr]
+                chain = self._llm.with_structured_output(_HubResult)
                 llm_hubs: _HubResult = chain.invoke(
                     [
                         SystemMessage(content=_HUB_SYSTEM_PROMPT),
@@ -111,7 +108,11 @@ class TransportSearchAgent:
                 raw_combos = [c.model_dump() for c in llm_hubs.route_combinations]
             except Exception as exc:
                 log.warning("hub_llm_failed", error=str(exc))
-                raw_combos = [{"origin": source, "destination": destination, "mode": "flight"}]
+        if not raw_combos:
+            hub_result = await self._hub_tool.run(origin=source, destination=destination)
+            raw_combos = hub_result.get("route_combinations", [])
+        if not raw_combos:
+            raw_combos = [{"origin": source, "destination": destination, "mode": "flight"}]
 
         transport_hubs = list({c.get("via_hub") for c in raw_combos if c.get("via_hub")})
 
@@ -152,7 +153,7 @@ class TransportSearchAgent:
             destination=destination,
             departure_date=departure_date,
         )
-        return result.get("best_flights", []) + result.get("other_flights", [])
+        return list(result.get("best_flights", [])) + list(result.get("other_flights", []))
 
     async def _fetch_transit(
         self, origin: str, destination: str, mode: str, departure_date: str
@@ -163,7 +164,7 @@ class TransportSearchAgent:
             mode=mode,
             departure_date=departure_date,
         )
-        return result.get("options", [])
+        return list(result.get("options", []))
 
     async def _fetch_taxi(
         self, origin: str, destination: str, mode: str, departure_date: str
@@ -176,4 +177,4 @@ class TransportSearchAgent:
             ),
             self._taxi_info_tool.run(location=destination, destination=destination),
         )
-        return route_result.get("options", []) + info_result.get("options", [])
+        return list(route_result.get("options", [])) + list(info_result.get("options", []))

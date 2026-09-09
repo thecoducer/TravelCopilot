@@ -44,8 +44,8 @@ async def _ready_to_plan_node(state: dict[str, Any]) -> dict[str, Any]:
 
 def build_graph(
     tool_factory: ToolFactory | None = None,
-    llm: object | None = None,
-    checkpointer: object | None = None,
+    llm: Any | None = None,
+    checkpointer: Any | None = None,
 ) -> Any:
     """Construct and compile the full planning graph.
 
@@ -72,7 +72,7 @@ def build_graph(
     budget_planner = BudgetPlannerAgent(tool_factory=factory, llm=llm)
     itinerary_compiler = ItineraryCompilerAgent(tool_factory=factory, llm=llm)
 
-    graph = StateGraph(TripState)
+    graph: Any = StateGraph(TripState)
 
     # Control nodes
     graph.add_node("orchestrator", orchestrator)

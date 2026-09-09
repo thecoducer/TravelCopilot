@@ -371,7 +371,7 @@ def _apply_defaults(parsed: _ParsedQuery) -> None:
 
 
 class OrchestratorAgent:
-    def __init__(self, llm: object | None = None) -> None:
+    def __init__(self, llm: Any | None = None) -> None:
         self._llm = llm or get_llm("orchestrator")
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -419,7 +419,7 @@ class OrchestratorAgent:
             # ── LLM parse (only on first pass or after query change) ─────────
             if parsed is None:
                 today = date.today().isoformat()
-                chain = self._llm.with_structured_output(_ParsedQuery)  # type: ignore[union-attr]
+                chain = self._llm.with_structured_output(_ParsedQuery)
                 try:
                     parsed = chain.invoke(
                         [

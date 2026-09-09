@@ -30,8 +30,8 @@ from app.agents.visa_agent import VisaAgent
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.reports import (
-    ScamEntry,
     SafetyReport,
+    ScamEntry,
     VisaReport,
 )
 from app.models.transport import StayOption
@@ -440,7 +440,9 @@ class TestTransportSearchAgent:
         assert "transport_legs_raw" in result
 
     @pytest.mark.asyncio
-    async def test_dispatches_taxi_and_transit_modes(self, mock_tool_factory: ToolFactory) -> None:
+    async def test_dispatches_taxi_and_transit_modes(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
         from app.agents.transport_search_agent import _HubResult, _RouteCombo
 
         mock_hubs = _HubResult(

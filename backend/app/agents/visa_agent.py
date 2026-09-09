@@ -44,7 +44,7 @@ class VisaAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._tavily = factory.get("tavily_search")
@@ -59,8 +59,8 @@ class VisaAgent:
         destination: str = state.get("destination", "")
         session_id: str = state.get("session_id", "")
         user_profile = state.get("user_profile")
-        passport_country = user_profile and user_profile.passport_country
-        home_city = user_profile and user_profile.home_city
+        passport_country = (user_profile.passport_country if user_profile else None) or "Unknown"
+        home_city = (user_profile.home_city if user_profile else None) or "Unknown"
         destination_country = destination
 
         log = logger.bind(agent="visa", destination=destination, session_id=session_id)
@@ -86,13 +86,16 @@ class VisaAgent:
             home_city=home_city,
         )
 
+        tavily_result: dict[str, Any] | BaseException
+        centre_result: dict[str, Any] | BaseException
+        embassy_result: dict[str, Any] | BaseException
         tavily_result, centre_result, embassy_result = await asyncio.gather(
             tavily_task, centre_task, embassy_task, return_exceptions=True
         )
 
         # ── Grounding (G) ────────────────────────────────────────────────
         raw_results: list[dict[str, Any]] = []
-        if not isinstance(tavily_result, Exception):
+        if not isinstance(tavily_result, BaseException):
             raw_results = tavily_result.get("results", [])
 
         sources: list[VisaSource] = [
@@ -106,7 +109,7 @@ class VisaAgent:
         ]
 
         # Fixture / tool sources (visa_centre tool returns its own sources)
-        if not isinstance(centre_result, Exception):
+        if not isinstance(centre_result, BaseException):
             for src in centre_result.get("sources", []):
                 if isinstance(src, dict) and src.get("url"):
                     sources.append(
@@ -119,7 +122,7 @@ class VisaAgent:
 
         # Build LLM context
         snippets: list[str] = []
-        if not isinstance(tavily_result, Exception):
+        if not isinstance(tavily_result, BaseException):
             if tavily_result.get("answer"):
                 snippets.append(f"Summary: {tavily_result['answer']}")
             for item in raw_results[:5]:
@@ -127,13 +130,13 @@ class VisaAgent:
                     f"• {item.get('title', '')} ({item.get('url', '')}): "
                     f"{item.get('content', '')[:400]}"
                 )
-        if not isinstance(centre_result, Exception) and centre_result.get("application_centre"):
+        if not isinstance(centre_result, BaseException) and centre_result.get("application_centre"):
             c = centre_result["application_centre"]
             snippets.append(
                 f"Application centre: {c.get('name', '')} — {c.get('address', '')} "
                 f"| Booking: {c.get('booking_url', 'N/A')}"
             )
-        if not isinstance(embassy_result, Exception) and embassy_result.get("embassy"):
+        if not isinstance(embassy_result, BaseException) and embassy_result.get("embassy"):
             e = embassy_result["embassy"]
             snippets.append(
                 f"Embassy: {e.get('name', '')} — {e.get('address', '')}"
@@ -157,7 +160,7 @@ class VisaAgent:
                 )
             }
 
-        chain = self._llm.with_structured_output(VisaReport)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(VisaReport)
         try:
             report: VisaReport = chain.invoke(
                 [

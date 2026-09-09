@@ -1,4 +1,5 @@
-.PHONY: dev test lint evals evals-golden migrate build help
+.PHONY: dev dev-down dev-logs test lint lint-fix format format-check check-deps \
+	package docker-build build verify evals evals-golden migrate help
 
 BACKEND_DIR := backend
 COMPOSE := docker compose
@@ -30,6 +31,9 @@ lint: ## Run ruff linter + mypy type checker
 lint-fix: ## Auto-fix ruff lint issues where possible
 	cd $(BACKEND_DIR) && uv run ruff check --fix app/ tests/
 
+check-deps: ## Verify lockfile and sync all backend dependencies
+	cd $(BACKEND_DIR) && uv lock --check && uv sync --locked --all-groups
+
 migrate: ## Run database migrations against local postgres
 	docker compose exec -T postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/001_initial.sql
 
@@ -39,5 +43,19 @@ evals: ## Run Langfuse evals (requires LANGFUSE_* env vars)
 evals-golden: ## Run golden-set evals
 	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m golden
 
-build: ## Build backend Docker image
+package: ## Build backend Python wheel and source distribution
+	cd $(BACKEND_DIR) && uv build --clear
+
+docker-build: ## Build backend Docker image
 	docker build -t travelcopilot-backend $(BACKEND_DIR)/
+
+build: package docker-build ## Build backend Python package and Docker image
+
+verify: ## Auto-fix, validate, test, and build backend artifacts
+	$(MAKE) check-deps
+	$(MAKE) format
+	$(MAKE) lint-fix
+	$(MAKE) format-check
+	$(MAKE) lint
+	$(MAKE) test
+	$(MAKE) build

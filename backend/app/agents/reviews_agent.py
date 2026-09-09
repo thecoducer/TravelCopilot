@@ -46,7 +46,7 @@ class ReviewsAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._place_details = factory.get("place_details")
@@ -96,7 +96,7 @@ class ReviewsAgent:
                     sentiment="positive",
                 )
 
-            chain = self._llm.with_structured_output(_PlaceSummary)  # type: ignore[union-attr]
+            chain = self._llm.with_structured_output(_PlaceSummary)
             try:
                 summary: _PlaceSummary = await asyncio.wait_for(
                     chain.ainvoke(
@@ -142,7 +142,7 @@ class ReviewsAgent:
 
         reviews_summary: dict[str, ReviewSummary] = {}
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 log.warning("review_fetch_failed", error=str(r))
                 continue
             name, summary = r

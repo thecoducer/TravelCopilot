@@ -97,7 +97,7 @@ def configure_logging() -> None:
     try:
         import litellm as _litellm
 
-        _litellm.set_verbose = False  # stops internal print() debug output
+        _litellm.set_verbose = False  # type: ignore[attr-defined]  # stops internal print() debug output
     except Exception:
         pass
 
@@ -208,7 +208,7 @@ def create_app() -> FastAPI:
     @app.get("/metrics", tags=["ops"], include_in_schema=False)
     async def metrics() -> Response:
         try:
-            from prometheus_client import (  # type: ignore[import]
+            from prometheus_client import (
                 CONTENT_TYPE_LATEST,
                 generate_latest,
             )

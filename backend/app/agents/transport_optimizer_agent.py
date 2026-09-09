@@ -66,7 +66,7 @@ class TransportOptimizerAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         self._llm = llm or get_llm("transport_optimizer")
 
@@ -110,7 +110,7 @@ class TransportOptimizerAgent:
 
         legs_summary = {k: [_trim_leg(leg) for leg in v[:4]] for k, v in filtered_legs.items()}
 
-        chain = self._llm.with_structured_output(_OptimiserOutput)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(_OptimiserOutput)
         try:
             output: _OptimiserOutput = chain.invoke(
                 [

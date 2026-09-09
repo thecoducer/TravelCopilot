@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 
+import pytest
 import structlog
 
 from app.config import settings
@@ -32,19 +34,19 @@ def test_clarification_fields_parsed() -> None:
     assert "travelers" in fields
 
 
-def test_structlog_json_output(capsys: object) -> None:
+def test_structlog_json_output(caplog: pytest.LogCaptureFixture) -> None:
     """Verify structlog emits valid JSON."""
+    caplog.set_level(logging.INFO)
     log = structlog.get_logger("test")
     log.info("smoke_test", trace_id="t1", session_id="s1", agent_name="orchestrator")
-    captured = capsys.readouterr()  # type: ignore[attr-defined]
-    line = captured.out.strip().splitlines()[-1]
-    parsed = json.loads(line)
+    parsed = json.loads(caplog.records[-1].getMessage())
     assert parsed["event"] == "smoke_test"
     assert parsed["trace_id"] == "t1"
 
 
-def test_structlog_includes_callsite_and_traceback(capsys: object) -> None:
+def test_structlog_includes_callsite_and_traceback(caplog: pytest.LogCaptureFixture) -> None:
     """Verify logs include file/line metadata and the traceback."""
+    caplog.set_level(logging.INFO)
     log = structlog.get_logger("test")
 
     try:
@@ -52,9 +54,7 @@ def test_structlog_includes_callsite_and_traceback(capsys: object) -> None:
     except ValueError:
         log.exception("exception_test", session_id="s2")
 
-    captured = capsys.readouterr()  # type: ignore[attr-defined]
-    line = captured.out.strip().splitlines()[-1]
-    parsed = json.loads(line)
+    parsed = json.loads(caplog.records[-1].getMessage())
     assert parsed["event"] == "exception_test"
     assert parsed["session_id"] == "s2"
     assert "filename" in parsed

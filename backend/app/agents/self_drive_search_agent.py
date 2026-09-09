@@ -6,8 +6,8 @@ Returns ``self_drive_report=None`` immediately for trips without self-drive.
 
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 from typing import Any
 
 import structlog
@@ -39,7 +39,7 @@ class SelfDriveSearchAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._rental_tool = factory.get("rental_search")
@@ -60,6 +60,8 @@ class SelfDriveSearchAgent:
 
         trip_days = dates.trip_days if dates else 3
 
+        rentals_result: dict[str, Any] | BaseException
+        fuel_result: dict[str, Any] | BaseException
         rentals_result, fuel_result = await asyncio.gather(
             self._rental_tool.run(destination=destination),
             self._fuel_tool.run(destination=destination),
@@ -67,18 +69,18 @@ class SelfDriveSearchAgent:
         )
 
         rentals: list[dict[str, Any]] = []
-        if not isinstance(rentals_result, Exception):
+        if not isinstance(rentals_result, BaseException):
             rentals = rentals_result.get("rentals", [])
 
         fuel_price = 104.0  # INR/L fallback
-        if not isinstance(fuel_result, Exception):
+        if not isinstance(fuel_result, BaseException):
             fuel_price = float(fuel_result.get("price_per_litre", 104.0))
 
         # Rough distance estimate: 80 km/day in a hilly destination
         estimated_km_per_day = 80.0
         total_km = estimated_km_per_day * trip_days
 
-        chain = self._llm.with_structured_output(SelfDriveReport)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(SelfDriveReport)
         try:
             report: SelfDriveReport = chain.invoke(
                 [

@@ -118,7 +118,7 @@ def _maybe_compress_messages(
 
     global _HEADROOM_IMPORT_FAILED
     try:
-        from headroom import compress  # type: ignore[import]
+        from headroom import compress
     except Exception as exc:
         if not _HEADROOM_IMPORT_FAILED:
             logger.warning("headroom_unavailable", error=str(exc))
@@ -190,7 +190,7 @@ def try_enable_litellm_langfuse_callbacks() -> bool:
         return False
 
     try:
-        import langfuse  # type: ignore[import]
+        import langfuse
         import litellm
 
         # LiteLLM integration expects langfuse.version.__version__.
@@ -222,7 +222,7 @@ def try_enable_litellm_langfuse_callbacks() -> bool:
 try:
     import litellm
 
-    class UsageLogger(litellm.CustomLogger):  # type: ignore[misc]
+    class UsageLogger(litellm.CustomLogger):  # type: ignore[name-defined, misc]
         """Write per-agent token counts to Redis after every LiteLLM call."""
 
         def log_success_event(
@@ -447,7 +447,7 @@ try:
             ai_msg = AIMessage(content=content)
             return ChatResult(generations=[ChatGeneration(message=ai_msg)])
 
-        def with_structured_output(  # type: ignore[override]
+        def with_structured_output(
             self,
             schema: Any,
             *,

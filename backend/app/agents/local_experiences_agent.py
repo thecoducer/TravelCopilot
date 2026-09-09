@@ -127,15 +127,18 @@ class LocalExperiencesAgent:
             query=f"top attractions {destination}",
             included_types=included_types,
         )
-        tavily_query = (
-            f"hidden gems things to do in {destination} locals recommend"
-            + (f" between {departure_str} and {return_date_str}" if departure_str and return_date_str else f" in {destination}")
+        tavily_query = f"hidden gems things to do in {destination} locals recommend" + (
+            f" between {departure_str} and {return_date_str}"
+            if departure_str and return_date_str
+            else f" in {destination}"
         )
         tavily_task = self._tavily_tool.run(
             query=tavily_query,
             destination=destination,
         )
 
+        places_result: dict[str, Any] | BaseException
+        tavily_result: dict[str, Any] | BaseException
         places_result, tavily_result = await asyncio.gather(
             places_task, tavily_task, return_exceptions=True
         )
@@ -145,7 +148,7 @@ class LocalExperiencesAgent:
         confirmed_names: set[str] = set()
 
         # Parse Google Places results — trusted source, no grounding needed
-        if not isinstance(places_result, Exception):
+        if not isinstance(places_result, BaseException):
             for item in places_result.get("places", []):
                 exp = _parse_experience(item, "google_places")
                 if exp and exp.lat != 0.0:
@@ -154,7 +157,7 @@ class LocalExperiencesAgent:
 
         # Parse Tavily results with grounding check (D)
         # Every Tavily-sourced experience must be verified in Google Places
-        if not isinstance(tavily_result, Exception):
+        if not isinstance(tavily_result, BaseException):
             tavily_names = [
                 item.get("title", "").split("—")[0].strip()
                 for item in tavily_result.get("results", [])
@@ -174,7 +177,7 @@ class LocalExperiencesAgent:
                 verify_results = await asyncio.gather(*verify_tasks, return_exceptions=True)
 
                 for name, verify_result in zip(tavily_names, verify_results, strict=False):
-                    if isinstance(verify_result, Exception):
+                    if isinstance(verify_result, BaseException):
                         continue  # drop on error
                     places = verify_result.get("places", [])
                     if not places:

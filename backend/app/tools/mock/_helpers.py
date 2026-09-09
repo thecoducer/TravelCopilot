@@ -25,7 +25,7 @@ def load_fixture(filename: str) -> dict[str, Any]:
     return data
 
 
-def find_fixture(prefix: str, *keys: str) -> dict[str, Any] | None:
+def find_fixture(prefix: str, *keys: str, fallback: bool = True) -> dict[str, Any] | None:
     """Try to find a fixture by matching {prefix}_{key1}_{key2}.json.
     Falls back to any file matching {prefix}_*.json.
     Returns None if no file exists at all.
@@ -36,10 +36,13 @@ def find_fixture(prefix: str, *keys: str) -> dict[str, Any] | None:
         result: dict[str, Any] = json.loads(exact.read_text(encoding="utf-8"))
         return result
 
+    if not fallback:
+        return None
+
     # Fallback: first available file with the given prefix
     candidates = sorted(_FIXTURES_DIR.glob(f"{prefix}_*.json"))
     if candidates:
-        fallback: dict[str, Any] = json.loads(candidates[0].read_text(encoding="utf-8"))
-        return fallback
+        fallback_data: dict[str, Any] = json.loads(candidates[0].read_text(encoding="utf-8"))
+        return fallback_data
 
     return None

@@ -160,13 +160,13 @@ class FoodDiscoveryAgent:
         # Places results take priority; Tavily supplements with lower-confidence entries
         venue_pool: dict[str, FoodVenue] = {}
         for r in area_results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 continue
             for v in r:
                 if v.name not in venue_pool:
                     venue_pool[v.name] = v
         for r in tavily_results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 continue
             for v in r:
                 if v.name not in venue_pool:

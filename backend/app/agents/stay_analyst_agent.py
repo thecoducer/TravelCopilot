@@ -69,7 +69,7 @@ def _budget_filter(stays: list[StayOption], budget_tier: str) -> list[StayOption
 class StayAnalystAgent:
     """Layer 3 — Budget-filtered hotel ranking with shortlist + personalization."""
 
-    def __init__(self, llm: object | None = None) -> None:
+    def __init__(self, llm: Any | None = None) -> None:
         self._llm = llm or get_llm("stay_analyst")
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -112,7 +112,7 @@ class StayAnalystAgent:
             for i, s in enumerate(candidates)
         ]
 
-        chain = self._llm.with_structured_output(_RankingOutput)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(_RankingOutput)
         try:
             ranking: _RankingOutput = chain.invoke(
                 [

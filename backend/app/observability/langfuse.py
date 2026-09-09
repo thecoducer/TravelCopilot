@@ -10,6 +10,8 @@ Usage:
 
 from __future__ import annotations
 
+from typing import cast
+
 import structlog
 
 from app.config import settings
@@ -28,7 +30,7 @@ def get_langfuse_handler(session_id: str = "") -> object | None:
         return None
 
     try:
-        from langfuse.callback import CallbackHandler  # type: ignore[import]
+        from langfuse.callback import CallbackHandler
 
         handler = CallbackHandler(
             public_key=settings.langfuse_public_key,
@@ -36,7 +38,7 @@ def get_langfuse_handler(session_id: str = "") -> object | None:
             host=settings.langfuse_host,
             session_id=session_id,
         )
-        return handler
+        return cast(object, handler)
     except ImportError:
         logger.warning("langfuse_import_failed", hint="pip install langfuse")
         return None
@@ -55,19 +57,21 @@ async def score_trip(
     if not settings.langfuse_public_key:
         return
     try:
-        from langfuse import Langfuse  # type: ignore[import]
+        from langfuse import Langfuse
 
         lf = Langfuse(
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
             host=settings.langfuse_host,
         )
-        lf.score(
-            name="user_feedback",
-            value=float(rating),
-            trace_id=trip_id,
-            comment=comment or None,
-        )
+        score = getattr(lf, "score", None)
+        if callable(score):
+            score(
+                name="user_feedback",
+                value=float(rating),
+                trace_id=trip_id,
+                comment=comment or None,
+            )
         logger.info("langfuse_score_posted", trip_id=trip_id, rating=rating)
     except Exception as exc:
         logger.warning("langfuse_score_failed", error=str(exc))

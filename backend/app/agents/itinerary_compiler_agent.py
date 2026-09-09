@@ -84,7 +84,7 @@ class ItineraryCompilerAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._cluster_tool = factory.get("cluster_by_proximity")
@@ -200,7 +200,7 @@ class ItineraryCompilerAgent:
             user_profile=user_profile,
         )
 
-        chain = self._llm.with_structured_output(Itinerary)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(Itinerary)
         try:
             itinerary: Itinerary = chain.invoke(
                 [SystemMessage(content=_COMPILE_PROMPT), HumanMessage(content=context)]
@@ -211,7 +211,7 @@ class ItineraryCompilerAgent:
 
         # ── Step 4: Self-critique (soft qualities only) ───────────────────────
         try:
-            crit_chain = self._llm.with_structured_output(_CritiqueSuggestions)  # type: ignore[union-attr]
+            crit_chain = self._llm.with_structured_output(_CritiqueSuggestions)
             critique: _CritiqueSuggestions = crit_chain.invoke(
                 [
                     SystemMessage(content=_CRITIQUE_PROMPT),

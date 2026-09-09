@@ -32,7 +32,7 @@ class MockHotelSearchTool:
     description = "Mock hotel search — SerpAPI google_hotels format, no network calls."
 
     async def run(self, location: str = "", **kwargs: object) -> dict[str, Any]:
-        data = find_fixture("hotels", location)
+        data = find_fixture("hotels", location, fallback=False)
         if data is None:
             return {"properties": []}
         return data

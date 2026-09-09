@@ -55,10 +55,10 @@ from app.models.reports import (
     ReviewSummary as ReviewSummary,
 )
 from app.models.reports import (
-    ScamEntry as ScamEntry,
+    SafetyReport as SafetyReport,
 )
 from app.models.reports import (
-    SafetyReport as SafetyReport,
+    ScamEntry as ScamEntry,
 )
 from app.models.reports import (
     SelfDriveReport as SelfDriveReport,

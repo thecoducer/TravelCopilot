@@ -12,7 +12,7 @@ LangGraph merges rather than overwrites them.
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -32,7 +32,7 @@ from app.models.transport import StayOption, TransportRecommendation
 from app.models.user_profile import BudgetPreference, TripDates, UserProfile
 
 
-class TripState(dict):  # type: ignore[type-arg]
+class TripState(TypedDict, total=False):
     """Full planning state shared across all agent nodes.
 
     Subclasses dict for LangGraph compatibility while keeping type hints.
@@ -45,7 +45,7 @@ class TripState(dict):  # type: ignore[type-arg]
     source: str
     destination: str
     dates: TripDates | None
-    budget: dict[str, str | float | None]
+    budget: dict[str, str | float | None] | BudgetPreference
     travelers: int
     user_profile: UserProfile | None
     is_international: bool  # set by OrchestratorAgent
@@ -105,7 +105,7 @@ class TripStateModel(BaseModel):
     destination: str = ""
     dates: TripDates | None = None
     budget: dict[str, str | float | None] | BudgetPreference = Field(
-        default_factory=lambda: {"tier": "mid", "total_budget_inr": None, "per_day_budget_inr": None}
+        default_factory=BudgetPreference
     )
     travelers: int = 1
     user_profile: UserProfile | None = None
@@ -142,7 +142,7 @@ class TripStateModel(BaseModel):
     error: str | None = None
 
     @classmethod
-    def from_state(cls, state: dict[str, Any]) -> "TripStateModel":
+    def from_state(cls, state: dict[str, Any]) -> TripStateModel:
         return cls.model_validate(state)
 
 

@@ -54,7 +54,7 @@ class SafetyAgent:
     def __init__(
         self,
         tool_factory: ToolFactory | None = None,
-        llm: object | None = None,
+        llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
         self._tavily = factory.get("tavily_search")
@@ -86,7 +86,7 @@ class SafetyAgent:
 
         snippets: list[str] = []
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 log.warning("tavily_error", error=str(r))
                 continue
             if r.get("answer"):
@@ -117,7 +117,7 @@ class SafetyAgent:
             if food_names:
                 venue_section += "Food outlets: " + ", ".join(food_names[:20]) + "\n"
 
-        chain = self._llm.with_structured_output(SafetyReport)  # type: ignore[union-attr]
+        chain = self._llm.with_structured_output(SafetyReport)
         try:
             report: SafetyReport = chain.invoke(
                 [
