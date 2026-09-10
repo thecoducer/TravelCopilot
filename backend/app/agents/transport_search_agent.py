@@ -99,13 +99,13 @@ class TransportSearchAgent:
         if not raw_combos:
             try:
                 chain = self._llm.with_structured_output(_HubResult)
-                llm_hubs: _HubResult = chain.invoke(
+                hubs: _HubResult = await chain.ainvoke(
                     [
                         SystemMessage(content=_HUB_SYSTEM_PROMPT),
                         HumanMessage(content=f"Source: {source}\nDestination: {destination}"),
                     ]
                 )
-                raw_combos = [c.model_dump() for c in llm_hubs.route_combinations]
+                raw_combos = [c.model_dump() for c in hubs.route_combinations]
             except Exception as exc:
                 log.warning("hub_llm_failed", error=str(exc))
         if not raw_combos:

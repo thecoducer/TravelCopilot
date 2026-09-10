@@ -138,16 +138,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("checkpointer_init_failed", error=str(exc))
 
-    # Register LiteLLM Langfuse callbacks only if integration is compatible.
+    # Initialize provider credentials and LiteLLM callbacks.
     try:
-        from app.llm import try_enable_litellm_langfuse_callbacks
+        from app.llm import init_llm
 
-        if try_enable_litellm_langfuse_callbacks():
-            logger.info("litellm_langfuse_registered")
-        else:
-            logger.warning("litellm_langfuse_disabled")
+        init_llm()
     except Exception as exc:
-        logger.warning("litellm_langfuse_failed", error=str(exc))
+        logger.warning("litellm_init_failed", error=str(exc))
 
     yield
 

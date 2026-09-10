@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, date
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -267,7 +267,7 @@ def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMo
                 response = schema.model_construct()
             except Exception:
                 response = MagicMock()
-        chain.invoke = MagicMock(return_value=response)
+        chain.ainvoke = AsyncMock(return_value=response)
         return chain
 
     mock_llm = MagicMock()
@@ -433,9 +433,9 @@ class TestFullGraph:
         def _with_structured_output(schema: Any) -> MagicMock:
             chain = MagicMock()
             if schema is _ParsedQuery:
-                chain.invoke = MagicMock(return_value=vague_response)
+                chain.ainvoke = AsyncMock(return_value=vague_response)
             else:
-                chain.invoke = MagicMock(return_value=MagicMock())
+                chain.ainvoke = AsyncMock(return_value=MagicMock())
             return chain
 
         mock_llm = MagicMock()

@@ -27,9 +27,12 @@ def record_token_usage(
             "completion_tokens": meta.get("output_tokens", 0),
             "total_tokens": meta.get("total_tokens", 0),
         }
+    response_metadata = getattr(response, "response_metadata", {}) or {}
+    latency_ms = response_metadata.get("latency_ms", 0.0)
     return {
         agent_name: AgentTokenUsage(
             agent_name=agent_name,
+            latency_ms=float(latency_ms or 0.0),
             **usage,
         )
     }

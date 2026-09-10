@@ -202,7 +202,7 @@ class ItineraryCompilerAgent:
 
         chain = self._llm.with_structured_output(Itinerary)
         try:
-            itinerary: Itinerary = chain.invoke(
+            itinerary: Itinerary = await chain.ainvoke(
                 [SystemMessage(content=_COMPILE_PROMPT), HumanMessage(content=context)]
             )
         except Exception as exc:
@@ -212,7 +212,7 @@ class ItineraryCompilerAgent:
         # ── Step 4: Self-critique (soft qualities only) ───────────────────────
         try:
             crit_chain = self._llm.with_structured_output(_CritiqueSuggestions)
-            critique: _CritiqueSuggestions = crit_chain.invoke(
+            critique: _CritiqueSuggestions = await crit_chain.ainvoke(
                 [
                     SystemMessage(content=_CRITIQUE_PROMPT),
                     HumanMessage(content=itinerary.model_dump_json(indent=2)[:3000]),

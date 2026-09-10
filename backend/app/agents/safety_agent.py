@@ -119,7 +119,7 @@ class SafetyAgent:
 
         chain = self._llm.with_structured_output(SafetyReport)
         try:
-            report: SafetyReport = chain.invoke(
+            report: SafetyReport = await chain.ainvoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -61,9 +61,9 @@ def base_state() -> dict[str, Any]:
 
 
 def _make_llm(return_value: Any) -> MagicMock:
-    """Build a mock LLM whose .with_structured_output().invoke() returns return_value."""
+    """Build a mock LLM whose structured chain returns return_value asynchronously."""
     mock_chain = MagicMock()
-    mock_chain.invoke = MagicMock(return_value=return_value)
+    mock_chain.ainvoke = AsyncMock(return_value=return_value)
     mock_llm = MagicMock()
     mock_llm.with_structured_output = MagicMock(return_value=mock_chain)
     return mock_llm
@@ -635,10 +635,12 @@ class TestFoodDiscoveryAgent:
 class TestGetLLM:
     def test_returns_litellm_chat_model(self) -> None:
         """get_llm returns a model with the correct metadata (P2-2)."""
-        from app.llm import LiteLLMChatModel, get_llm
+        from langchain_litellm import ChatLiteLLM
+
+        from app.llm import get_llm
 
         llm = get_llm("test_agent", "sess_123")
-        assert isinstance(llm, LiteLLMChatModel)
+        assert isinstance(llm, ChatLiteLLM)
         assert llm.metadata["agent_name"] == "test_agent"
         assert llm.metadata["session_id"] == "sess_123"
 
@@ -824,7 +826,7 @@ class TestReviewsAgent:
             from app.agents.reviews_agent import _PlaceSummary
 
             chain = MagicMock()
-            chain.invoke = MagicMock(
+            chain.ainvoke = AsyncMock(
                 return_value=_PlaceSummary(
                     pros=["Good location", "Clean rooms"],
                     cons=["Noisy street"],

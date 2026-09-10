@@ -82,7 +82,7 @@ class SelfDriveSearchAgent:
 
         chain = self._llm.with_structured_output(SelfDriveReport)
         try:
-            report: SelfDriveReport = chain.invoke(
+            report: SelfDriveReport = await chain.ainvoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(

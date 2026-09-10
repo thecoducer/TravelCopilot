@@ -161,7 +161,7 @@ class BudgetPlannerAgent:
                     tips: list[str]
 
                 chain = self._llm.with_structured_output(_Tips)
-                tips_result: _Tips = chain.invoke(
+                tips_result: _Tips = await chain.ainvoke(
                     [
                         SystemMessage_(content="You are a budget travel advisor."),
                         HumanMessage_(

@@ -421,7 +421,7 @@ class OrchestratorAgent:
                 today = date.today().isoformat()
                 chain = self._llm.with_structured_output(_ParsedQuery)
                 try:
-                    parsed = chain.invoke(
+                    parsed = await chain.ainvoke(
                         [
                             SystemMessage(content=_SYSTEM_PROMPT.format(today=today)),
                             HumanMessage(content=f"User query: {query}"),

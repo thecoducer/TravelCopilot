@@ -114,7 +114,7 @@ class StayAnalystAgent:
 
         chain = self._llm.with_structured_output(_RankingOutput)
         try:
-            ranking: _RankingOutput = chain.invoke(
+            ranking: _RankingOutput = await chain.ainvoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(

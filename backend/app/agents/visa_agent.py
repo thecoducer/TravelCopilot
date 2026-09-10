@@ -162,7 +162,7 @@ class VisaAgent:
 
         chain = self._llm.with_structured_output(VisaReport)
         try:
-            report: VisaReport = chain.invoke(
+            report: VisaReport = await chain.ainvoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(

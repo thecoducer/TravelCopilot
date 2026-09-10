@@ -112,7 +112,7 @@ class TransportOptimizerAgent:
 
         chain = self._llm.with_structured_output(_OptimiserOutput)
         try:
-            output: _OptimiserOutput = chain.invoke(
+            output: _OptimiserOutput = await chain.ainvoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(

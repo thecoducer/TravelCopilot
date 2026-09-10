@@ -299,10 +299,7 @@ async def _emit_completion_events(
             "session_id": session_id,
             "total_tokens": usage_summary["total_tokens"],
             "total_cost_usd": usage_summary["total_cost_usd"],
-            "headroom": {
-                "total_tokens_saved": usage_summary["headroom_tokens_saved"],
-                "avg_compression_ratio": usage_summary["headroom_avg_compression_ratio"],
-            },
+            "total_latency_ms": usage_summary["total_latency_ms"],
             "per_agent": usage_summary["per_agent"],
         },
     )
@@ -313,9 +310,7 @@ async def _build_usage_summary(final_state: dict[str, Any], session_id: str) -> 
     per_agent: dict[str, dict[str, Any]] = {}
     total_tokens = 0
     total_cost_usd = 0.0
-    headroom_tokens_saved = 0
-    headroom_ratio_sum = 0.0
-    headroom_ratio_count = 0
+    total_latency_ms = 0.0
 
     # Preferred source: live per-agent cache written by UsageLogger callbacks.
     try:
@@ -326,9 +321,7 @@ async def _build_usage_summary(final_state: dict[str, Any], session_id: str) -> 
             per_agent = {}
             total_tokens = 0
             total_cost_usd = 0.0
-            headroom_tokens_saved = 0
-            headroom_ratio_sum = 0.0
-            headroom_ratio_count = 0
+            total_latency_ms = 0.0
 
             for agent in _AGENT_LAYERS:
                 row = await cache.get(CacheService.usage_key(session_id, agent))
@@ -339,30 +332,18 @@ async def _build_usage_summary(final_state: dict[str, Any], session_id: str) -> 
                 completion_tokens = int(row.get("completion_tokens", 0) or 0)
                 agent_total = int(row.get("total_tokens", prompt_tokens + completion_tokens) or 0)
                 cost_usd = float(row.get("cost_usd", 0.0) or 0.0)
-                hr_saved = int(row.get("headroom_tokens_saved", 0) or 0)
-                hr_applied = int(row.get("headroom_applied_calls", 0) or 0)
-                hr_calls = int(row.get("headroom_calls", 0) or 0)
-                hr_ratio_sum = float(row.get("headroom_ratio_sum", 0.0) or 0.0)
-                hr_ratio_count = int(row.get("headroom_ratio_count", 0) or 0)
-                hr_avg = (hr_ratio_sum / hr_ratio_count) if hr_ratio_count > 0 else None
+                latency_ms = float(row.get("latency_ms", 0.0) or 0.0)
 
                 per_agent[agent] = {
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": agent_total,
                     "cost_usd": cost_usd,
-                    "headroom": {
-                        "calls": hr_calls,
-                        "applied_calls": hr_applied,
-                        "tokens_saved": hr_saved,
-                        "avg_compression_ratio": hr_avg,
-                    },
+                    "latency_ms": latency_ms,
                 }
                 total_tokens += agent_total
                 total_cost_usd += cost_usd
-                headroom_tokens_saved += hr_saved
-                headroom_ratio_sum += hr_ratio_sum
-                headroom_ratio_count += hr_ratio_count
+                total_latency_ms += latency_ms
 
             if per_agent or attempt == 3:
                 break
@@ -385,23 +366,16 @@ async def _build_usage_summary(final_state: dict[str, Any], session_id: str) -> 
                 "completion_tokens": completion_tokens,
                 "total_tokens": agent_total,
                 "cost_usd": cost_usd,
-                "headroom": {
-                    "calls": 0,
-                    "applied_calls": 0,
-                    "tokens_saved": 0,
-                    "avg_compression_ratio": None,
-                },
+                "latency_ms": float(getattr(usage, "latency_ms", 0.0) or 0.0),
             }
             total_tokens += agent_total
             total_cost_usd += cost_usd
+            total_latency_ms += float(getattr(usage, "latency_ms", 0.0) or 0.0)
 
     return {
         "total_tokens": total_tokens,
         "total_cost_usd": total_cost_usd,
-        "headroom_tokens_saved": headroom_tokens_saved,
-        "headroom_avg_compression_ratio": (
-            headroom_ratio_sum / headroom_ratio_count if headroom_ratio_count > 0 else None
-        ),
+        "total_latency_ms": total_latency_ms,
         "per_agent": per_agent,
     }
 
@@ -430,7 +404,7 @@ async def _persist_trip(
                 ctx.crowd_level, 50
             )
 
-        # Serialise per-agent token/headroom usage so GET /{id}/usage can read it back
+        # Serialise per-agent usage so GET /{id}/usage can read it back
         if usage_summary and usage_summary.get("per_agent"):
             token_usage_json = json.dumps(usage_summary, default=str)
         else:
