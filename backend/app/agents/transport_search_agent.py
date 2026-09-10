@@ -64,21 +64,11 @@ class TransportSearchAgent:
         llm: Any | None = None,
     ) -> None:
         factory = tool_factory or ToolFactory()
-        self._hub_tool = factory.get("identify_hubs")
         self._flight_tool = factory.get("search_flights")
         self._transit_tool = factory.get("search_transit")
         self._road_route_tool = factory.get("search_road_routes")
         self._taxi_info_tool = factory.get("search_taxi_info")
         self._llm = llm or get_llm("transport_search")
-
-        self._mode_handlers = {
-            "flight": self._fetch_flight,
-            "train": self._fetch_transit,
-            "bus": self._fetch_transit,
-            "ferry": self._fetch_transit,
-            "cab": self._fetch_taxi,
-            "taxi": self._fetch_taxi,
-        }
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         source: str = state.get("source", "")
@@ -94,29 +84,12 @@ class TransportSearchAgent:
         )
         log.info("agent_start")
 
-        # ── Step A: Hub identification ───────────────────────────────────────
-        raw_combos: list[dict[str, Any]] = []
-        if not raw_combos:
-            try:
-                chain = self._llm.with_structured_output(_HubResult)
-                hubs: _HubResult = await chain.ainvoke(
-                    [
-                        SystemMessage(content=_HUB_SYSTEM_PROMPT),
-                        HumanMessage(content=f"Source: {source}\nDestination: {destination}"),
-                    ]
-                )
-                raw_combos = [c.model_dump() for c in hubs.route_combinations]
-            except Exception as exc:
-                log.warning("hub_llm_failed", error=str(exc))
-        if not raw_combos:
-            hub_result = await self._hub_tool.run(origin=source, destination=destination)
-            raw_combos = hub_result.get("route_combinations", [])
-        if not raw_combos:
-            raw_combos = [{"origin": source, "destination": destination, "mode": "flight"}]
+        # Step A: ask LLM for plausible route combinations.
+        raw_combos = await self._get_route_combinations(source, destination, log)
 
         transport_hubs = list({c.get("via_hub") for c in raw_combos if c.get("via_hub")})
 
-        # ── Step B: Parallel supply search ───────────────────────────────────
+        # Step B: search every route in parallel.
         dep_date = dates.departure.isoformat() if dates else ""
         legs_raw: dict[str, list[Any]] = {}
 
@@ -127,13 +100,11 @@ class TransportSearchAgent:
             leg_key = f"{orig}→{dest}"
 
             try:
-                handler = self._mode_handlers.get(mode)
-                if handler is None:
-                    log.warning("unsupported_transport_mode", leg=leg_key, mode=mode)
-                    return
-                options = await handler(orig, dest, mode, dep_date)
+                options = await self._fetch_route(combo, dep_date)
                 if options:
                     legs_raw.setdefault(leg_key, []).extend(options)
+            except ValueError:
+                log.warning("unsupported_transport_mode", leg=leg_key, mode=mode)
             except Exception as exc:
                 log.warning("leg_fetch_failed", leg=leg_key, mode=mode, error=str(exc))
 
@@ -145,8 +116,40 @@ class TransportSearchAgent:
             "transport_legs_raw": legs_raw,
         }
 
+    async def _get_route_combinations(
+        self, source: str, destination: str, log: Any
+    ) -> list[dict[str, Any]]:
+        try:
+            chain = self._llm.with_structured_output(_HubResult)
+            hubs: _HubResult = await chain.ainvoke(
+                [
+                    SystemMessage(content=_HUB_SYSTEM_PROMPT),
+                    HumanMessage(content=f"Source: {source}\nDestination: {destination}"),
+                ]
+            )
+            combinations = [combo.model_dump() for combo in hubs.route_combinations]
+            if combinations:
+                return combinations
+        except Exception as exc:
+            log.warning("hub_llm_failed", error=str(exc))
+
+        return [{"origin": source, "destination": destination, "mode": "flight"}]
+
+    async def _fetch_route(self, combo: dict[str, Any], departure_date: str) -> list[Any]:
+        origin = combo["origin"]
+        destination = combo["destination"]
+        mode = combo["mode"]
+
+        if mode == "flight":
+            return await self._fetch_flight(origin, destination, departure_date)
+        if mode in {"train", "bus", "ferry"}:
+            return await self._fetch_transit(origin, destination, mode, departure_date)
+        if mode in {"cab", "taxi"}:
+            return await self._fetch_taxi(origin, destination, departure_date)
+        raise ValueError(f"Unsupported transport mode: {mode}")
+
     async def _fetch_flight(
-        self, origin: str, destination: str, mode: str, departure_date: str
+        self, origin: str, destination: str, departure_date: str
     ) -> list[Any]:
         result = await self._flight_tool.run(
             origin=origin,
@@ -167,7 +170,7 @@ class TransportSearchAgent:
         return list(result.get("options", []))
 
     async def _fetch_taxi(
-        self, origin: str, destination: str, mode: str, departure_date: str
+        self, origin: str, destination: str, departure_date: str
     ) -> list[Any]:
         route_result, info_result = await asyncio.gather(
             self._road_route_tool.run(

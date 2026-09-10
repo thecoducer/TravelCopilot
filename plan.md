@@ -239,7 +239,6 @@ trip-planner/
 │   │   │   │   ├── rental_tools.py
 │   │   │   │   ├── geo_tools.py
 │   │   │   │   ├── fx_tools.py
-│   │   │   │   └── hub_tools.py
 │   │   │   └── real/        # real API implementations (stubs → filled in Phase 5)
 │   │   │       ├── serpapi_tools.py
 │   │   │       ├── transit_tools.py
@@ -249,7 +248,6 @@ trip-planner/
 │   │   │       ├── rental_tools.py
 │   │   │       ├── geo_tools.py   # ClusterByProximityTool implemented fully (pure math)
 │   │   │       ├── fx_tools.py    # CurrencyConvertTool — live FX rates, cached
-│   │   │       └── hub_tools.py
 │   │   ├── graph/           # state.py, graph.py — direct edges only, no separate router.py
 │   │   ├── models/          # Pydantic models only — zero business logic (incl. clarification.py)
 │   │   ├── routers/         # FastAPI route handlers only
@@ -1075,7 +1073,6 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/tools/mock/rental_tools.py` | Mock: `MockRentalSearchTool`, `MockFuelPriceTool` |
 | `backend/app/tools/mock/geo_tools.py` | Mock: `MockClusterByProximityTool`, `MockDistanceMatrixTool` |
 | `backend/app/tools/mock/fx_tools.py` | Mock: `MockCurrencyConvertTool` (reads `fx_rates.json` fixture) |
-| `backend/app/tools/mock/hub_tools.py` | Mock: `MockIdentifyHubsTool` |
 | `backend/app/tools/real/serpapi_tools.py` | Real: `FlightSearchTool`, `HotelSearchTool` (SerpAPI) |
 | `backend/app/tools/real/transit_tools.py` | Real: `TransitSearchTool` (Google Routes API — transit mode) |
 | `backend/app/tools/real/places_tools.py` | Real: `PlaceSearchTool`, `PlaceDetailsTool` (Google Places API) |
@@ -1084,7 +1081,6 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/tools/real/rental_tools.py` | Real: `RentalSearchTool`, `FuelPriceTool` |
 | `backend/app/tools/real/geo_tools.py` | Real: `ClusterByProximityTool` (pure math — fully implemented), `DistanceMatrixTool`, `ValidateDayDurationTool` (B), `EnforceOpeningHoursTool` (A) — (A)+(B) are the deterministic final gate (I) |
 | `backend/app/tools/real/fx_tools.py` | Real: `CurrencyConvertTool` (H) — live FX rates, cached 12h, returns `rate` + `fetched_at` |
-| `backend/app/tools/real/hub_tools.py` | Real: `IdentifyHubsTool` (LLM geographic reasoning) |
 | `backend/app/routers/trip.py` | All trip endpoints + SSE `StreamingResponse` |
 | `backend/app/routers/user.py` | Profile endpoints |
 | `backend/app/services/pdf_service.py` | WeasyPrint + Jinja2 HTML template |

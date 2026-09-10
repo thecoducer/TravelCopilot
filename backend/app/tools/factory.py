@@ -44,7 +44,6 @@ _REGISTRY: dict[str, _ToolEntry] = {
     "cluster_by_proximity": _ToolEntry("geo_tools", "ClusterByProximityTool"),
     "distance_matrix": _ToolEntry("geo_tools", "DistanceMatrixTool"),
     "currency_convert": _ToolEntry("fx_tools", "CurrencyConvertTool"),
-    "identify_hubs": _ToolEntry("hub_tools", "IdentifyHubsTool"),
     "enforce_opening_hours": _ToolEntry("opening_hours_tools", "EnforceOpeningHoursTool"),
     "validate_day_duration": _ToolEntry("opening_hours_tools", "ValidateDayDurationTool"),
 }

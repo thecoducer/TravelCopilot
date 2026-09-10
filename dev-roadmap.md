@@ -119,7 +119,6 @@
 - [x] `backend/app/tools/mock/rental_tools.py` — `MockRentalSearchTool`, `MockFuelPriceTool`
 - [x] `backend/app/tools/mock/geo_tools.py` — `MockClusterByProximityTool`, `MockDistanceMatrixTool`
 - [x] `backend/app/tools/mock/fx_tools.py` — `MockCurrencyConvertTool` (reads `fx_rates.json`; returns converted amount + `rate` + `fetched_at`) **(H)**
-- [x] `backend/app/tools/mock/hub_tools.py` — `MockIdentifyHubsTool` (returns hardcoded plausible hubs for common routes)
 
 ### P1-5 · Real Tool Stubs (raise NotImplementedError)
 - [x] `backend/app/tools/real/serpapi_tools.py` — stubs for `FlightSearchTool`, `HotelSearchTool`
@@ -130,7 +129,6 @@
 - [x] `backend/app/tools/real/rental_tools.py` — stubs for `RentalSearchTool`, `FuelPriceTool`
 - [x] `backend/app/tools/real/geo_tools.py` — `ClusterByProximityTool` (pure math, no external API — implement fully now), `DistanceMatrixTool` stub
 - [x] `backend/app/tools/real/fx_tools.py` — stub for `CurrencyConvertTool` (raise `NotImplementedError`) **(H)**
-- [x] `backend/app/tools/real/hub_tools.py` — stub for `IdentifyHubsTool`
 
 ### P1-6 · Cache Service
 - [x] Implement `backend/app/services/cache_service.py` — Redis wrapper with `get(key)`, `set(key, value, ttl)`, `delete(key)`
@@ -421,11 +419,7 @@
 - [ ] `backend/app/tools/real/geo_tools.py` — `DistanceMatrixTool.run()`: Google Distance Matrix API for total trip distance
 - [ ] Test: `RentalSearchTool.run(destination="Goa")` → returns real rental shops
 
-### P5-8 · Implement Real Hub Tool
-- [ ] `backend/app/tools/real/hub_tools.py` — `IdentifyHubsTool.run()`: LLM call with geographic knowledge prompt → returns list of route combos
-- [ ] Test: `IdentifyHubsTool.run(origin="Kolkata", dest="Leh")` → includes "via Delhi"
-
-### P5-9 · Implement Real FX Tool **(H)**
+### P5-8 · Implement Real FX Tool **(H)**
 - [ ] `backend/app/tools/real/fx_tools.py` — `CurrencyConvertTool.run()`: call the FX provider, return `{ amount_converted, rate, fetched_at }`
 - [ ] Wrap with cache (12h TTL keyed by `{base}:{quote}`)
 - [ ] Test: `CurrencyConvertTool.run(amount=10000, base="JPY", quote="INR")` → returns a plausible INR amount with a `rate` and `fetched_at`

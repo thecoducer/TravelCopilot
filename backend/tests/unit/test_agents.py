@@ -426,10 +426,10 @@ class TestTransportSearchAgent:
         assert isinstance(result["transport_legs_raw"], dict)
 
     @pytest.mark.asyncio
-    async def test_handles_empty_hub_tool_result(
+    async def test_falls_back_to_direct_flight_when_llm_returns_no_routes(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        """Should not crash if hub tool returns no routes."""
+        """Should use a direct flight when the LLM returns no routes."""
         from app.agents.transport_search_agent import _HubResult
 
         agent = TransportSearchAgent(
@@ -438,6 +438,7 @@ class TestTransportSearchAgent:
         )
         result = await agent({**base_state, "source": "", "destination": ""})
         assert "transport_legs_raw" in result
+        assert result["transport_hubs"] == []
 
     @pytest.mark.asyncio
     async def test_dispatches_taxi_and_transit_modes(

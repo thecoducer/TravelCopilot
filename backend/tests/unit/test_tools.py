@@ -7,7 +7,6 @@ import pytest
 from app.tools.factory import ToolFactory
 from app.tools.mock.fx_tools import MockCurrencyConvertTool
 from app.tools.mock.geo_tools import MockClusterByProximityTool
-from app.tools.mock.hub_tools import MockIdentifyHubsTool
 from app.tools.mock.road_route_tools import MockRoadRouteTool
 from app.tools.mock.serpapi_tools import MockFlightSearchTool, MockHotelSearchTool
 from app.tools.mock.tavily_tools import MockTavilySearchTool
@@ -208,22 +207,6 @@ class TestMockFxTool:
         # INR→JPY should work even if only JPY→INR is in fixture
         result = await tool.run(amount=1000, base="INR", quote="JPY")
         assert result["amount_converted"] > 0
-
-
-class TestMockHubTool:
-    @pytest.mark.asyncio
-    async def test_kol_leh_returns_combinations(self):
-        tool = MockIdentifyHubsTool()
-        result = await tool.run(origin="KOL", destination="LEH")
-        assert "route_combinations" in result
-        combos = result["route_combinations"]
-        assert len(combos) >= 2  # at least direct + via hub
-
-    @pytest.mark.asyncio
-    async def test_unknown_route_fallback(self):
-        tool = MockIdentifyHubsTool()
-        result = await tool.run(origin="ABC", destination="XYZ")
-        assert len(result["route_combinations"]) >= 1
 
 
 class TestMockClusterTool:
