@@ -84,31 +84,21 @@ class TransportSearchAgent:
         )
         log.info("agent_start")
 
-        # Step A: ask LLM for plausible route combinations.
+        # Example: Kolkata -> Leh may produce KOL->IXL via DEL.
         raw_combos = await self._get_route_combinations(source, destination, log)
 
         transport_hubs = list({c.get("via_hub") for c in raw_combos if c.get("via_hub")})
 
-        # Step B: search every route in parallel.
+        # Each route is independent, so flight, train, and taxi searches can overlap.
         dep_date = dates.departure.isoformat() if dates else ""
         legs_raw: dict[str, list[Any]] = {}
 
-        async def _fetch_leg(combo: dict[str, Any]) -> None:
-            orig = combo["origin"]
-            dest = combo["destination"]
-            mode = combo["mode"]
-            leg_key = f"{orig}→{dest}"
-
-            try:
-                options = await self._fetch_route(combo, dep_date)
-                if options:
-                    legs_raw.setdefault(leg_key, []).extend(options)
-            except ValueError:
-                log.warning("unsupported_transport_mode", leg=leg_key, mode=mode)
-            except Exception as exc:
-                log.warning("leg_fetch_failed", leg=leg_key, mode=mode, error=str(exc))
-
-        await asyncio.gather(*[_fetch_leg(c) for c in raw_combos])
+        await asyncio.gather(
+            *[
+                self._fetch_leg(combo, dep_date, legs_raw, log)
+                for combo in raw_combos
+            ]
+        )
 
         log.info("agent_done", hubs=transport_hubs, legs=list(legs_raw.keys()))
         return {
@@ -119,6 +109,7 @@ class TransportSearchAgent:
     async def _get_route_combinations(
         self, source: str, destination: str, log: Any
     ) -> list[dict[str, Any]]:
+        """Ask the LLM for routes, then use a direct flight as a safe fallback."""
         try:
             chain = self._llm.with_structured_output(_HubResult)
             hubs: _HubResult = await chain.ainvoke(
@@ -135,7 +126,34 @@ class TransportSearchAgent:
 
         return [{"origin": source, "destination": destination, "mode": "flight"}]
 
+    async def _fetch_leg(
+        self,
+        combo: dict[str, Any],
+        departure_date: str,
+        legs_raw: dict[str, list[Any]],
+        log: Any,
+    ) -> None:
+        """Fetch one route and add its options without blocking other routes.
+
+        Example: a ``taxi`` combo fetches road and operator data; a failed
+        ``flight`` combo is logged while other combinations continue.
+        """
+        origin = combo["origin"]
+        destination = combo["destination"]
+        mode = combo["mode"]
+        leg_key = f"{origin}→{destination}"
+
+        try:
+            options = await self._fetch_route(combo, departure_date)
+            if options:
+                legs_raw.setdefault(leg_key, []).extend(options)
+        except ValueError:
+            log.warning("unsupported_transport_mode", leg=leg_key, mode=mode)
+        except Exception as exc:
+            log.warning("leg_fetch_failed", leg=leg_key, mode=mode, error=str(exc))
+
     async def _fetch_route(self, combo: dict[str, Any], departure_date: str) -> list[Any]:
+        """Map each route mode to its supply search tool."""
         origin = combo["origin"]
         destination = combo["destination"]
         mode = combo["mode"]
