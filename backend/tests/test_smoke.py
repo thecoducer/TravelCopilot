@@ -60,4 +60,7 @@ def test_structlog_includes_callsite_and_traceback(caplog: pytest.LogCaptureFixt
     assert "filename" in parsed
     assert "lineno" in parsed
     assert "exception" in parsed
-    assert "ValueError: boom" in parsed["exception"]
+    # Structured (dict_tracebacks-style) exception, not a flat string — aggregator-friendly.
+    assert parsed["exception"][0]["exc_type"] == "ValueError"
+    assert parsed["exception"][0]["exc_value"] == "boom"
+    assert "locals" not in parsed["exception"][0]["frames"][0]

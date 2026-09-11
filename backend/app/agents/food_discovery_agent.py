@@ -10,12 +10,9 @@ import asyncio
 from datetime import date, timedelta
 from typing import Any
 
-import structlog
-
+from app.logging import get_agent_logger
 from app.models.itinerary import FoodOptions, FoodVenue
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _FOOD_TYPES = ["restaurant", "cafe", "meal_takeaway", "bakery"]
 
@@ -88,7 +85,7 @@ class FoodDiscoveryAgent:
         user_profile = state.get("user_profile")
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="food_discovery", destination=destination, session_id=session_id)
+        log = get_agent_logger("food_discovery", session_id, destination=destination)
         log.info("agent_start")
 
         dietary = user_profile.dietary_restrictions if user_profile else []

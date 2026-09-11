@@ -10,14 +10,12 @@ import asyncio
 import json
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.reports import SelfDriveReport
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a self-drive trip planning expert. Based on the rental options and trip details,
@@ -55,7 +53,7 @@ class SelfDriveSearchAgent:
         dates = state.get("dates")
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="self_drive_search", destination=destination, session_id=session_id)
+        log = get_agent_logger("self_drive_search", session_id, destination=destination)
         log.info("agent_start")
 
         trip_days = dates.trip_days if dates else 3

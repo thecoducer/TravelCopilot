@@ -10,12 +10,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import structlog
-
+from app.logging import get_agent_logger
 from app.models.itinerary import Experience, OpeningHours
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 # Google Places types that represent experiences (not food/services)
 _EXPERIENCE_TYPES = [
@@ -110,7 +107,7 @@ class LocalExperiencesAgent:
         session_id: str = state.get("session_id", "")
 
         interests = user_profile.interests if user_profile else []
-        log = logger.bind(agent="local_experiences", destination=destination, session_id=session_id)
+        log = get_agent_logger("local_experiences", session_id, destination=destination)
         log.info("agent_start", interests=interests)
 
         included_types = _build_types(interests)

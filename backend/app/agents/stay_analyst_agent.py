@@ -11,15 +11,13 @@ import json
 from statistics import mean
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.transport import StayOption
 from app.models.user_profile import BudgetTier, budget_from_state
-
-logger = structlog.get_logger(__name__)
 
 # Multiplier thresholds relative to the average price
 _BUDGET_MAX_MULTIPLIER = 0.85  # budget: at most 85% of average price
@@ -78,7 +76,7 @@ class StayAnalystAgent:
         budget = budget_from_state(state.get("budget"))
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="stay_analyst", session_id=session_id)
+        log = get_agent_logger("stay_analyst", session_id)
         log.info("agent_start", candidates=len(stays_raw))
 
         if not stays_raw:

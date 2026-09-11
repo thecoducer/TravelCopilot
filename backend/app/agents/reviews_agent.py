@@ -9,15 +9,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.reports import ReviewSummary
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 # Keep review synthesis bounded so one slow provider call cannot stall the full graph.
 _REVIEW_SUMMARY_TIMEOUT_SECONDS = 60
@@ -57,7 +55,7 @@ class ReviewsAgent:
         experiences_raw = state.get("experiences_raw", [])
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="reviews", session_id=session_id)
+        log = get_agent_logger("reviews", session_id)
         log.info(
             "agent_start",
             hotels=len(stays_shortlist),

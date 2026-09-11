@@ -56,6 +56,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/travelcopilot
       REDIS_URL: redis://redis:6379/0
       LANGFUSE_HOST: http://langfuse:3000
+      PYTHONUNBUFFERED: "1"
+      FORCE_COLOR: "1"
+    tty: true
     depends_on:
       postgres:
         condition: service_healthy

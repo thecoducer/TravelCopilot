@@ -19,14 +19,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _HUB_SYSTEM_PROMPT = """\
 You are a transport routing expert. Given a source and destination, identify all
@@ -76,11 +74,8 @@ class TransportSearchAgent:
         dates = state.get("dates")
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(
-            agent="transport_search",
-            source=source,
-            destination=destination,
-            session_id=session_id,
+        log = get_agent_logger(
+            "transport_search", session_id, source=source, destination=destination
         )
         log.info("agent_start")
 
@@ -94,10 +89,7 @@ class TransportSearchAgent:
         legs_raw: dict[str, list[Any]] = {}
 
         await asyncio.gather(
-            *[
-                self._fetch_leg(combo, dep_date, legs_raw, log)
-                for combo in raw_combos
-            ]
+            *[self._fetch_leg(combo, dep_date, legs_raw, log) for combo in raw_combos]
         )
 
         log.info("agent_done", hubs=transport_hubs, legs=list(legs_raw.keys()))
@@ -166,9 +158,7 @@ class TransportSearchAgent:
             return await self._fetch_taxi(origin, destination, departure_date)
         raise ValueError(f"Unsupported transport mode: {mode}")
 
-    async def _fetch_flight(
-        self, origin: str, destination: str, departure_date: str
-    ) -> list[Any]:
+    async def _fetch_flight(self, origin: str, destination: str, departure_date: str) -> list[Any]:
         result = await self._flight_tool.run(
             origin=origin,
             destination=destination,
@@ -187,9 +177,7 @@ class TransportSearchAgent:
         )
         return list(result.get("options", []))
 
-    async def _fetch_taxi(
-        self, origin: str, destination: str, departure_date: str
-    ) -> list[Any]:
+    async def _fetch_taxi(self, origin: str, destination: str, departure_date: str) -> list[Any]:
         route_result, info_result = await asyncio.gather(
             self._road_route_tool.run(
                 origin=origin,

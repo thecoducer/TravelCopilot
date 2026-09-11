@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
 import redis.asyncio as aioredis
+import structlog
 
 from app.config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ── TTL constants (seconds) — match plan's Redis Cache TTLs ────────────────
 TTL_FLIGHTS = 4 * 3600  # 4 hours
@@ -51,7 +51,7 @@ class CacheService:
             result: dict[str, Any] = json.loads(raw)
             return result
         except Exception:
-            logger.exception("cache_get_error", extra={"key": key})
+            logger.exception("cache_get_error", key=key)
             return None
 
     async def set(self, key: str, value: dict[str, Any], ttl: int) -> None:
@@ -60,7 +60,7 @@ class CacheService:
             client = await self._get_client()
             await client.setex(key, ttl, json.dumps(value))
         except Exception:
-            logger.exception("cache_set_error", extra={"key": key})
+            logger.exception("cache_set_error", key=key)
 
     async def delete(self, key: str) -> None:
         """Remove a key from the cache."""
@@ -68,7 +68,7 @@ class CacheService:
             client = await self._get_client()
             await client.delete(key)
         except Exception:
-            logger.exception("cache_delete_error", extra={"key": key})
+            logger.exception("cache_delete_error", key=key)
 
     async def close(self) -> None:
         """Close the Redis connection pool gracefully."""

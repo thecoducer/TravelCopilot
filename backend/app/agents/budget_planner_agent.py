@@ -13,15 +13,12 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
-
 from app.graph.state import TripStateModel
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.reports import BudgetReport, FxRateEntry
 from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a travel budget analyst. Given the cost breakdown below, produce a complete
@@ -63,7 +60,7 @@ class BudgetPlannerAgent:
         visa_report = s.visa_report
         self_drive_report = s.self_drive_report
 
-        log = logger.bind(agent="budget_planner", destination=destination, session_id=session_id)
+        log = get_agent_logger("budget_planner", session_id, destination=destination)
         log.info("agent_start")
 
         trip_days = dates.trip_days if dates else 3

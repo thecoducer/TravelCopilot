@@ -14,14 +14,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.reports import SafetyReport
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a travel safety analyst. Based on the search results and venue list below, produce a
@@ -67,7 +65,7 @@ class SafetyAgent:
         month = dates.departure.strftime("%B") if dates else "June"
         year = dates.departure.year if dates else 2026
 
-        log = logger.bind(agent="safety", destination=destination, session_id=session_id)
+        log = get_agent_logger("safety", session_id, destination=destination)
         log.info("agent_start")
 
         import asyncio

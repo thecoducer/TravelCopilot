@@ -23,13 +23,13 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
 from app.models.user_profile import (
     BudgetPreference,
@@ -38,8 +38,6 @@ from app.models.user_profile import (
     UserProfile,
     budget_to_state,
 )
-
-logger = structlog.get_logger(__name__)
 
 # ── Security: prompt injection patterns ──────────────────────────────────────
 _INJECTION_PATTERNS = re.compile(
@@ -381,7 +379,7 @@ class OrchestratorAgent:
         user_profile: UserProfile | None = state.get("user_profile")
 
         query = html.unescape(raw_query).strip()[:500]
-        log = logger.bind(agent="orchestrator", session_id=session_id)
+        log = get_agent_logger("orchestrator", session_id)
         log.info("agent_start", query=query[:80])
 
         # Fast-path keyword check (re-evaluated if query changes via interrupt answer)

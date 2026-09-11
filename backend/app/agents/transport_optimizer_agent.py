@@ -11,16 +11,14 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 # Seat classes considered "premium" — excluded for budget tier
 _PREMIUM_CLASSES = frozenset(["business", "first", "premium economy", "premium"])
@@ -79,11 +77,8 @@ class TransportOptimizerAgent:
         travelers: int = state.get("travelers", 1)
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(
-            agent="transport_optimizer",
-            source=source,
-            destination=destination,
-            session_id=session_id,
+        log = get_agent_logger(
+            "transport_optimizer", session_id, source=source, destination=destination
         )
         log.info("agent_start", route_options=list(legs_raw.keys()))
 

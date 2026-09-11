@@ -18,11 +18,11 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.itinerary import (
     Day,
     Itinerary,
@@ -33,8 +33,6 @@ from app.models.itinerary import (
 )
 from app.models.transport import StayOption
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _COMPILE_PROMPT = """\
 You are an expert itinerary planner. Compile a complete itinerary from the data below.
@@ -111,9 +109,7 @@ class ItineraryCompilerAgent:
         restaurant_recs = state.get("food_recommendations", {})
         user_profile = state.get("user_profile")
 
-        log = logger.bind(
-            agent="itinerary_compiler", destination=destination, session_id=session_id
-        )
+        log = get_agent_logger("itinerary_compiler", session_id, destination=destination)
         log.info("agent_start", experiences=len(experiences_raw), stays=len(stays_shortlist))
 
         trip_days = dates.trip_days if dates else 3

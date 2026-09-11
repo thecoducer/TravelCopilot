@@ -13,14 +13,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm import get_llm
+from app.logging import get_agent_logger
 from app.models.reports import VisaReport, VisaSource
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are an expert visa and immigration adviser. Based on the search results below,
@@ -63,7 +61,7 @@ class VisaAgent:
         home_city = (user_profile.home_city if user_profile else None) or "Unknown"
         destination_country = destination
 
-        log = logger.bind(agent="visa", destination=destination, session_id=session_id)
+        log = get_agent_logger("visa", session_id, destination=destination)
         log.info("agent_start", passport=passport_country)
 
         import asyncio

@@ -9,14 +9,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-import structlog
-
+from app.logging import get_agent_logger
 from app.models.transport import StayOption
 from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
-
-logger = structlog.get_logger(__name__)
-
 
 _CURRENCY_SYMBOL_TO_CODE = {
     "$": "USD",
@@ -138,7 +134,7 @@ class StaySearchAgent:
         budget = budget_from_state(state.get("budget"))
         session_id: str = state.get("session_id", "")
 
-        log = logger.bind(agent="stay_search", destination=destination, session_id=session_id)
+        log = get_agent_logger("stay_search", session_id, destination=destination)
         log.info("agent_start")
 
         checkin = dates.departure.isoformat() if dates else ""
