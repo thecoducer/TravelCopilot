@@ -11,21 +11,25 @@ the simplest valid instance of each agent's output model.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
 from app.agents.stay_analyst_agent import _RankingOutput
-from app.agents.transport_optimizer_agent import _OptimiserOutput
+from app.agents.stops_discovery_agent import _GatewayOption, _Route, _Stop
+from app.agents.transport_optimizer_agent import _MultiLegOptimiserOutput, _OptimiserOutput
 from app.agents.transport_search_agent import _HubResult, _RouteCombo
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.itinerary import (
     ActivityOption,
     Day,
+    Experience,
+    ExperiencesOutput,
     Itinerary,
     Place,
     TimeSlotOptions,
@@ -171,7 +175,9 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
 # ── Per-schema dispatch table ─────────────────────────────────────────────────
 
 
-def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMock:
+def _make_fake_llm(
+    destination: str = "Osaka", is_intl: bool = False, route: _Route | None = None
+) -> MagicMock:
     """Return a MagicMock LLM that dispatches by schema type."""
     _responses: dict[type, Any] = {
         _ParsedQuery: _ParsedQuery(
@@ -217,6 +223,34 @@ def _make_fake_llm(destination: str = "Osaka", is_intl: bool = False) -> MagicMo
                 _RouteCombo(origin="KOL", destination="OSA", mode="flight"),
             ]
         ),
+        _Route: route or _Route(route_discovery_status="single_destination"),
+        ExperiencesOutput: ExperiencesOutput(
+            experiences=[
+                Experience(
+                    name=f"Top Attraction in {destination}",
+                    type="historical_landmark",
+                    description=f"A must-visit landmark in {destination}.",
+                    duration_hours=2.0,
+                    price_range="Free",
+                    lat=34.69,
+                    lng=135.50,
+                    rating=4.8,
+                    review_count=2000,
+                ),
+                Experience(
+                    name=f"Scenic Park in {destination}",
+                    type="park",
+                    description=f"Beautiful park with greenery in {destination}.",
+                    duration_hours=1.5,
+                    price_range="Free",
+                    lat=34.70,
+                    lng=135.51,
+                    rating=4.5,
+                    review_count=1500,
+                ),
+            ]
+        ),
+        _MultiLegOptimiserOutput: _MultiLegOptimiserOutput(aggregate=_stub_transport_rec()),
         _RankingOutput: _RankingOutput(
             ranked_indices=[0, 1, 2],
             personalization_reasons=[
@@ -289,11 +323,12 @@ def _run_graph_with_fake_llm(
     destination: str = "Osaka",
     is_intl: bool = False,
     extra_state: dict[str, Any] | None = None,
+    route: _Route | None = None,
 ) -> dict[str, Any]:
     """Run the graph with a fake LLM injected directly into all agents."""
     import asyncio
 
-    fake_llm = _make_fake_llm(destination=destination, is_intl=is_intl)
+    fake_llm = _make_fake_llm(destination=destination, is_intl=is_intl, route=route)
 
     async def _run() -> dict[str, Any]:
         factory = ToolFactory(mock=True)
@@ -301,12 +336,63 @@ def _run_graph_with_fake_llm(
         state = initial_state(query=query, session_id=session_id)
         if extra_state:
             state.update(extra_state)
+        profile = state.get("user_profile")
+        if profile is None:
+            state["user_profile"] = UserProfile(
+                user_id=session_id,
+                food_preferences_configured=True,
+            )
+        else:
+            state["user_profile"] = profile.model_copy(update={"food_preferences_configured": True})
         return await compiled.ainvoke(state)
 
     return asyncio.run(_run())
 
 
 class TestFullGraph:
+    def test_food_preferences_interrupt_and_resume(self) -> None:
+        """An incomplete profile must supply food preferences before food search runs."""
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.types import Command
+
+        async def _run() -> tuple[dict[str, Any], Any]:
+            session_id = "food-preferences-test"
+            compiled = build_graph(
+                tool_factory=ToolFactory(mock=True),
+                llm=_make_fake_llm(),
+                checkpointer=MemorySaver(),
+            )
+            config = {"configurable": {"thread_id": session_id}}
+            state = initial_state(query="3 days in Osaka from Kolkata", session_id=session_id)
+            state["user_profile"] = UserProfile(user_id="u1")
+
+            await compiled.ainvoke(state, config=config)
+            snapshot = await compiled.aget_state(config)
+            interrupts = snapshot.tasks[0].interrupts
+            payload = interrupts[0].value
+            fields = [prompt["field"] for prompt in payload["prompts"]]
+            assert fields == ["preferred_cuisines", "dietary_restrictions"]
+
+            with patch("app.graph.graph.upsert_user_profile", new=AsyncMock()):
+                result = await compiled.ainvoke(
+                    Command(
+                        resume={
+                            "preferred_cuisines": "Japanese, Korean",
+                            "dietary_restrictions": "No dietary restrictions",
+                        }
+                    ),
+                    config=config,
+                )
+            return result, snapshot
+
+        result, snapshot = asyncio.run(_run())
+        assert "food_clarification" in snapshot.next
+        profile = result["user_profile"]
+        assert profile.preferred_cuisines == ["Japanese", "Korean"]
+        assert profile.dietary_restrictions == []
+        assert profile.food_preferences_configured is True
+        assert result.get("itinerary") is not None
+
     # Case 1: domestic trip
     def test_domestic_trip_osaka_returns_itinerary(self, mock_factory: ToolFactory) -> None:
         result = _run_graph_with_fake_llm(
@@ -492,6 +578,114 @@ class TestFullGraph:
         # last_verified_at is set by the agent when it receives at least one source
         # In mock mode with no official source fixture, confidence may be "low"
         assert visa.confidence is not None
+
+
+# ── Multi-stop route (StopsDiscoveryAgent) integration ─────────────────────────
+
+
+def _repeated_stop_route() -> _Route:
+    """A route that revisits one place — Dirang -> Tawang -> Dirang.
+
+    Kept to 3 overnight stops because the fake orchestrator response used by
+    ``_make_fake_llm`` always resolves to a fixed 3-day trip.
+    """
+    return _Route(
+        route_discovery_status="multi_stop_provisional",
+        overnight_stops=[
+            _Stop(name="Dirang", nights_hint=1),
+            _Stop(name="Tawang", nights_hint=1),
+            _Stop(name="Dirang", nights_hint=1),
+        ],
+        gateway_options=[
+            _GatewayOption(
+                option_id="gw_guwahati",
+                gateway_name="Via Guwahati",
+                gateway_stop=_Stop(name="Guwahati", stop_kind="gateway_transit"),
+                is_recommended=True,
+            )
+        ],
+    )
+
+
+class TestMultiStopRoute:
+    def test_stops_discovery_runs_before_layer_2_and_keys_results_by_stop(self) -> None:
+        result = _run_graph_with_fake_llm(
+            query="5 days Arunachal Pradesh from Kolkata",
+            destination="Arunachal Pradesh",
+            is_intl=False,
+            route=_repeated_stop_route(),
+        )
+
+        assert result.get("route_discovery_status") == "multi_stop_provisional"
+        stops = result.get("stops", {})
+        dirang_ids = [sid for sid, s in stops.items() if s.name == "Dirang"]
+        assert len(dirang_ids) == 2, "Repeated stop must get two distinct stop_ids"
+
+        stays_raw_by_stop = result.get("stays_raw_by_stop", {})
+        experiences_raw_by_stop = result.get("experiences_raw_by_stop", {})
+        overnight_ids = [sid for sid, s in stops.items() if s.stop_kind == "overnight"]
+        assert set(stays_raw_by_stop.keys()) <= set(overnight_ids)
+        assert set(experiences_raw_by_stop.keys()) <= set(overnight_ids)
+
+        transport_legs_raw_by_leg = result.get("transport_legs_raw_by_leg", {})
+        assert set(transport_legs_raw_by_leg.keys()) == set(result.get("route_legs", {}))
+
+        itinerary = result.get("itinerary")
+        assert itinerary is not None
+        # One segment per overnight stop occurrence — two Dirang segments, never merged.
+        assert len(itinerary.segments) == len(overnight_ids)
+        segment_stop_ids = [seg.stop_id for seg in itinerary.segments]
+        assert len(segment_stop_ids) == len(set(segment_stop_ids)), (
+            "Each segment must carry a distinct stop_id"
+        )
+        dirang_segments = [seg for seg in itinerary.segments if seg.location == "Dirang"]
+        assert len(dirang_segments) == 2
+
+    def test_discovery_failed_pauses_for_clarification(self) -> None:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        def _with_structured_output(schema: Any) -> MagicMock:
+            chain = MagicMock()
+            if schema is _ParsedQuery:
+                chain.ainvoke = AsyncMock(
+                    return_value=_ParsedQuery(
+                        source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
+                        destination=_FieldConfidence(value="Nowhereland", confidence=0.95),
+                        departure_date="2026-10-14",
+                        return_date="2026-10-17",
+                        trip_days=3,
+                        travelers=_FieldConfidence(value="2", confidence=1.0),
+                        dates_confidence=0.9,
+                    )
+                )
+            elif schema is _Route:
+                chain.ainvoke = AsyncMock(side_effect=RuntimeError("route discovery boom"))
+            else:
+                chain.ainvoke = AsyncMock(return_value=MagicMock())
+            return chain
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output = MagicMock(side_effect=_with_structured_output)
+
+        import asyncio
+
+        async def _run() -> tuple[dict[str, Any], Any]:
+            factory = ToolFactory(mock=True)
+            checkpointer = MemorySaver()
+            compiled = build_graph(tool_factory=factory, llm=mock_llm, checkpointer=checkpointer)
+            state = initial_state(query="plan a trip to Nowhereland", session_id="failed-route")
+            config = {"configurable": {"thread_id": "failed-route"}}
+            result = await compiled.ainvoke(state, config=config)
+            snapshot = compiled.get_state(config)
+            return result, snapshot
+
+        result, snapshot = asyncio.run(_run())
+
+        assert result.get("route_discovery_status") == "discovery_failed"
+        assert result.get("itinerary") is None, (
+            "discovery_failed must never silently produce an itinerary"
+        )
+        assert "route_clarification" in snapshot.next
 
 
 # ── Tool-level integration (real opening hours + duration tools) ──────────────

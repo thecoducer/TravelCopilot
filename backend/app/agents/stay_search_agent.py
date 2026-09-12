@@ -6,10 +6,12 @@ writing results to state.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
 from app.logging import get_agent_logger
+from app.models.stops import TripStop
 from app.models.transport import StayOption
 from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
@@ -137,6 +139,13 @@ class StaySearchAgent:
         log = get_agent_logger("stay_search", session_id, destination=destination)
         log.info("agent_start")
 
+        stops: dict[str, TripStop] = state.get("stops", {})
+        overnight_stops = [s for s in stops.values() if s.stop_kind == "overnight"]
+        if state.get("route_discovery_status") == "multi_stop_provisional" and overnight_stops:
+            return await self._search_stops(
+                overnight_stops, travelers, user_profile, budget, state.get("route_version", 0), log
+            )
+
         checkin = dates.departure.isoformat() if dates else ""
         checkout = dates.return_date.isoformat() if dates and dates.return_date else ""
 
@@ -151,7 +160,66 @@ class StaySearchAgent:
 
         raw_properties: list[dict[str, Any]] = result.get("properties", [])
 
-        # Map SerpAPI property dicts to StayOption models — best-effort, skip invalid
+        stays = self._parse_stays(raw_properties, destination, user_profile, budget, log)
+
+        log.info("agent_done", stays_found=len(stays))
+        return {"stays_raw": stays}
+
+    async def _search_stops(
+        self,
+        overnight_stops: list[TripStop],
+        travelers: int,
+        user_profile: Any,
+        budget: Any,
+        route_version: int,
+        log: Any,
+    ) -> dict[str, Any]:
+        """Search accommodation for every overnight stop occurrence in parallel.
+
+        Gateway pass-through stops never reach here (filtered by the caller),
+        and results are keyed by ``stop_id`` so repeated place names (e.g. two
+        Dirang occurrences) never collide.
+        """
+
+        async def _search_one(stop: TripStop) -> list[StayOption]:
+            checkin = stop.arrival_date.isoformat() if stop.arrival_date else ""
+            checkout = stop.departure_date.isoformat() if stop.departure_date else ""
+            result = await self._hotel_tool.run(
+                location=stop.name,
+                check_in=checkin,
+                check_out=checkout,
+                adults=travelers,
+                hotel_style=user_profile.hotel_style if user_profile else None,
+                budget_tier=budget.tier if budget else "mid",
+            )
+            stays = self._parse_stays(
+                result.get("properties", []), stop.name, user_profile, budget, log
+            )
+            return [
+                s.model_copy(update={"stop_id": stop.stop_id, "route_version": route_version})
+                for s in stays
+            ]
+
+        results = await asyncio.gather(*[_search_one(stop) for stop in overnight_stops])
+        stays_raw_by_stop = {
+            stop.stop_id: stays for stop, stays in zip(overnight_stops, results, strict=True)
+        }
+        log.info(
+            "agent_done",
+            mode="multi_stop_provisional",
+            stops=list(stays_raw_by_stop.keys()),
+        )
+        return {"stays_raw_by_stop": stays_raw_by_stop}
+
+    def _parse_stays(
+        self,
+        raw_properties: list[dict[str, Any]],
+        location: str,
+        user_profile: Any,
+        budget: Any,
+        log: Any,
+    ) -> list[StayOption]:
+        """Map SerpAPI property dicts to StayOption models — best-effort, skip invalid."""
         stays: list[StayOption] = []
         budget_tier_str = budget.tier if budget else "mid"
 
@@ -168,8 +236,8 @@ class StaySearchAgent:
                 stays.append(
                     StayOption(
                         name=str(prop.get("name", "Unknown Hotel") or "Unknown Hotel"),
-                        address=str(prop.get("address", destination) or destination),
-                        city=destination,
+                        address=str(prop.get("address", location) or location),
+                        city=location,
                         price_per_night=price,
                         currency_code=currency_code,
                         rating=rating,
@@ -197,5 +265,4 @@ class StaySearchAgent:
             except Exception as exc:
                 log.warning("stay_parse_failed", prop_name=prop.get("name"), error=str(exc))
 
-        log.info("agent_done", stays_found=len(stays))
-        return {"stays_raw": stays}
+        return stays

@@ -144,9 +144,9 @@
 
 ### P2-1 · TripState + Graph Skeleton
 - [x] Implement `backend/app/graph/state.py` — full `TripState` TypedDict with all fields from plan (incl. `needs_clarification`, `clarification_prompts`, `parse_confidence`, `stays_shortlist`, `transport_alternatives`)
-- [x] Implement `backend/app/graph/graph.py` — `StateGraph` with all 14 nodes + `ready_to_plan` fan-out node
+- [x] Implement `backend/app/graph/graph.py` — `StateGraph` with all 14 agent nodes and direct Layer 1/2 fan-out after route discovery
 - [x] `interrupt()`-based clarification gate inside `OrchestratorAgent` (no separate terminal node or conditional edge); graph pauses in-place, resumes via `Command(resume=answers)` **(F)**
-- [x] Direct edge `orchestrator → ready_to_plan` → fan-out to all L1+L2 in parallel
+- [x] Direct edge `orchestrator → stops_discovery` → conditional direct fan-out to all L1+L2 nodes in parallel
 - [x] Add `run_graph(query, session_id)` entrypoint function
 - [x] Verify graph compiles: `graph.compile()` raises no errors
 

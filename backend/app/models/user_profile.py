@@ -49,6 +49,9 @@ class UserProfile(BaseModel):
     passport_country: str | None = None
     preferred_currency: str = "INR"
     dietary_restrictions: list[str] = Field(default_factory=list)
+    preferred_cuisines: list[str] = Field(default_factory=list)
+    # Distinguishes an explicit "no dietary restrictions" answer from unset preferences.
+    food_preferences_configured: bool = False
     accessibility_needs: list[str] = Field(default_factory=list)
     interests: list[str] = Field(default_factory=list)
     preferred_airlines: list[str] = Field(default_factory=list)

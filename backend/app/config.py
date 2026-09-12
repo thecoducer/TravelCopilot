@@ -85,8 +85,30 @@ class Settings(BaseSettings):
     # Maximum clarification rounds before proceeding with best-effort defaults
     max_clarification_rounds: int = 3
 
+    # StopsDiscoveryAgent — max candidate access-gateway options to surface per route
+    max_gateway_options: int = 2
+
     # Budget guard
     max_llm_spend_usd_per_trip: float = 1.00
+
+    # Budget Planner defaults & fallback cost estimates
+    default_currency: str = "INR"
+    default_budget_tier: str = "mid"
+    default_trip_days: int = 3
+    budget_over_threshold_multiplier: float = 1.1
+    budget_under_threshold_multiplier: float = 0.9
+    fallback_daily_activity_cost_budget: float = 500.0
+    fallback_daily_activity_cost_mid: float = 1500.0
+    fallback_daily_activity_cost_luxury: float = 4000.0
+    fallback_daily_food_ratio: float = 0.35
+
+    @property
+    def fallback_daily_activity_costs(self) -> dict[str, float]:
+        return {
+            "budget": self.fallback_daily_activity_cost_budget,
+            "mid": self.fallback_daily_activity_cost_mid,
+            "luxury": self.fallback_daily_activity_cost_luxury,
+        }
 
     @property
     def clarification_fields(self) -> list[str]:

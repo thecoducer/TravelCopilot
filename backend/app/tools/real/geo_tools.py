@@ -111,3 +111,13 @@ class DistanceMatrixTool:
         raise NotImplementedError(
             "DistanceMatrixTool requires GOOGLE_MAPS_API_KEY — implement in Phase 5."
         )
+
+
+class GeocodeTool:
+    name = "geocode"
+    description = "Real Geocoding via Google Maps Geocoding API — address/place to lat/lng."
+
+    async def run(self, location: str = "", **kwargs: object) -> dict[str, Any]:
+        raise NotImplementedError(
+            "GeocodeTool requires GOOGLE_MAPS_API_KEY — implement in Phase 5."
+        )

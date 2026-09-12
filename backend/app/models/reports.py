@@ -129,6 +129,11 @@ class BudgetReport(BaseModel):
     cost_saving_tips: list[str] = Field(default_factory=list)
     per_person_cost: float | None = None  # total_estimated_cost / number of travelers
     permit_costs: float | None = None  # ILP, PAP, park fees etc. broken out separately
+    # Accommodation cost per stop_id (nights × stop's chosen stay × travelers) for
+    # multi-stop routes; unset for single_destination trips. See
+    # specs/stops-discovery-agent-spec.md — budget aggregation must never multiply
+    # one stay's price by the whole trip's day count.
+    per_stop_accommodation_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class ReviewSummary(BaseModel):
@@ -140,6 +145,14 @@ class ReviewSummary(BaseModel):
     sentiment: str | None = None  # "positive" | "mixed" | "negative"
     photos: list[str] = Field(default_factory=list)
     google_maps_url: str | None = None
+    # Multi-stop identity — unset for single_destination trips. ``review_key`` is
+    # the dict key used in ``reviews_summary`` for multi-stop routes, formatted
+    # ``{route_version}:{stop_id}:{place_id_or_fallback}`` so identical venue
+    # names at different stop occurrences never overwrite one another.
+    stop_id: str | None = None
+    place_id: str | None = None
+    review_key: str | None = None
+    route_version: int | None = None
 
 
 # ── Observability ────────────────────────────────────────────────────────────

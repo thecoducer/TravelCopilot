@@ -12,6 +12,7 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException
 
 from app.models.user_profile import UserProfile
+from app.services.user_profile_service import upsert_user_profile
 
 logger = structlog.get_logger(__name__)
 
@@ -25,22 +26,7 @@ async def upsert_profile(
 ) -> dict[str, Any]:
     """Create or update the user profile for a session."""
     try:
-        from sqlalchemy import text
-
-        from app.db import AsyncSessionLocal
-
-        async with AsyncSessionLocal() as db:
-            await db.execute(
-                text("""
-                    INSERT INTO user_profiles (session_id, profile_json)
-                    VALUES (:session_id, CAST(:profile AS jsonb))
-                    ON CONFLICT (session_id) DO UPDATE
-                    SET profile_json = CAST(EXCLUDED.profile_json AS jsonb),
-                        updated_at   = NOW()
-                """),
-                {"session_id": x_session_id, "profile": profile.model_dump_json()},
-            )
-            await db.commit()
+        await upsert_user_profile(x_session_id, profile)
         logger.info("upsert_profile_ok", session_id=x_session_id, user_id=profile.user_id)
         return {"status": "ok", "session_id": x_session_id}
     except Exception as exc:

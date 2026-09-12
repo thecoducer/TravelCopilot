@@ -102,6 +102,8 @@ class TestUserProfile:
         up = UserProfile(user_id="u1")
         assert up.preferred_currency == "INR"
         assert up.budget_tier == BudgetTier.mid
+        assert up.preferred_cuisines == []
+        assert up.food_preferences_configured is False
         assert up.interests == []
         assert up.fitness_level is None
         assert up.travel_style is None
@@ -120,6 +122,16 @@ class TestUserProfile:
         assert up.hotel_style == HotelStyle.boutique
         assert up.travel_style == "cultural"
         assert up.fitness_level == "moderate"
+
+    def test_food_preferences(self):
+        up = UserProfile(
+            user_id="u2",
+            preferred_cuisines=["Japanese", "Korean"],
+            dietary_restrictions=[],
+            food_preferences_configured=True,
+        )
+        assert up.preferred_cuisines == ["Japanese", "Korean"]
+        assert up.food_preferences_configured is True
 
     def test_altitude_experience(self):
         up = UserProfile(user_id="u3", altitude_experience=True)

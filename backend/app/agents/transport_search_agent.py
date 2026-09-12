@@ -24,7 +24,12 @@ from pydantic import BaseModel, Field
 
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.stops import RouteLegPlan, stop_display_name
 from app.tools.factory import ToolFactory
+
+# Generic TransportSearchPolicy.allowed_modes value -> which fetch helper handles it.
+_TRANSIT_MODES = frozenset({"train", "bus", "intercity_bus", "ferry"})
+_ROAD_MODES = frozenset({"road", "taxi", "rental", "local_transit", "private_car"})
 
 _HUB_SYSTEM_PROMPT = """\
 You are a transport routing expert. Given a source and destination, identify all
@@ -78,6 +83,10 @@ class TransportSearchAgent:
             "transport_search", session_id, source=source, destination=destination
         )
         log.info("agent_start")
+
+        route_legs: dict[str, RouteLegPlan] = state.get("route_legs", {})
+        if state.get("route_discovery_status") == "multi_stop_provisional" and route_legs:
+            return await self._search_route_legs(route_legs, state.get("stops", {}), source, log)
 
         # Example: Kolkata -> Leh may produce KOL->IXL via DEL.
         raw_combos = await self._get_route_combinations(source, destination, log)
@@ -187,3 +196,80 @@ class TransportSearchAgent:
             self._taxi_info_tool.run(location=destination, destination=destination),
         )
         return list(route_result.get("options", [])) + list(info_result.get("options", []))
+
+    # ── Route-aware (multi-stop) search ──────────────────────────────────────
+
+    async def _search_route_legs(
+        self,
+        route_legs: dict[str, RouteLegPlan],
+        stops: dict[str, Any],
+        source: str,
+        log: Any,
+    ) -> dict[str, Any]:
+        """Search every ``route_legs`` entry in parallel, keyed by ``leg_id``.
+
+        Never falls back to a name-keyed dict — repeated stop occurrences (and
+        the source/gateway sentinel endpoints) each resolve to their own leg.
+        """
+        results = await asyncio.gather(
+            *[self._search_leg(leg, stops, source, log) for leg in route_legs.values()]
+        )
+        legs_raw_by_leg: dict[str, list[Any]] = {}
+        updated_route_legs: dict[str, RouteLegPlan] = {}
+        for leg_id, (options, updated_leg) in zip(route_legs.keys(), results, strict=True):
+            legs_raw_by_leg[leg_id] = options
+            updated_route_legs[leg_id] = updated_leg
+
+        log.info("agent_done", legs=list(legs_raw_by_leg.keys()), mode="multi_stop_provisional")
+        return {
+            "transport_legs_raw_by_leg": legs_raw_by_leg,
+            "route_legs": updated_route_legs,
+        }
+
+    async def _search_leg(
+        self,
+        leg: RouteLegPlan,
+        stops: dict[str, Any],
+        source: str,
+        log: Any,
+    ) -> tuple[list[Any], RouteLegPlan]:
+        """Search one leg, trying its allowed modes in precedence order.
+
+        Falls back to the next allowed mode when the preferred one returns no
+        results, recording ``mode_downgraded`` rather than failing silently
+        (Core concepts: transport search policy precedence, tier 5).
+        """
+        origin_name = stop_display_name(leg.origin_stop_id, stops, source)
+        destination_name = stop_display_name(leg.destination_stop_id, stops, source)
+        departure_date = leg.planned_departure_date.isoformat()
+
+        options: list[Any] = []
+        downgraded = False
+        for i, mode in enumerate(leg.policy.allowed_modes or ["road"]):
+            try:
+                options = await self._fetch_by_generic_mode(
+                    mode, origin_name, destination_name, departure_date
+                )
+            except Exception as exc:
+                log.warning("leg_mode_failed", leg_id=leg.leg_id, mode=mode, error=str(exc))
+                options = []
+            if options:
+                downgraded = i > 0
+                break
+
+        if not downgraded:
+            return options, leg
+        return options, leg.model_copy(
+            update={"policy": leg.policy.model_copy(update={"mode_downgraded": True})}
+        )
+
+    async def _fetch_by_generic_mode(
+        self, mode: str, origin: str, destination: str, departure_date: str
+    ) -> list[Any]:
+        """Map a generic ``TransportSearchPolicy`` mode to a concrete supply search."""
+        if mode == "flight":
+            return await self._fetch_flight(origin, destination, departure_date)
+        if mode in _TRANSIT_MODES:
+            transit_mode = mode if mode in {"train", "bus", "ferry"} else "bus"
+            return await self._fetch_transit(origin, destination, transit_mode, departure_date)
+        return await self._fetch_taxi(origin, destination, departure_date)

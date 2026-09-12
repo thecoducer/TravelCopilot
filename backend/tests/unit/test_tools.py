@@ -228,6 +228,28 @@ class TestMockClusterTool:
         assert result["clusters"] == []
 
 
+class TestMockGeocodeTool:
+    @pytest.mark.asyncio
+    async def test_known_destination_returns_coords(self):
+        from app.tools.mock.geo_tools import MockGeocodeTool
+
+        tool = MockGeocodeTool()
+        result = await tool.run(location="Leh")
+        assert result["status"] == "OK"
+        assert result["lat"] != 0.0
+        assert result["lng"] != 0.0
+
+    @pytest.mark.asyncio
+    async def test_unknown_destination_returns_deterministic_coords(self):
+        from app.tools.mock.geo_tools import MockGeocodeTool
+
+        tool = MockGeocodeTool()
+        result = await tool.run(location="Unknown Place 123")
+        assert result["status"] == "OK"
+        assert result["lat"] != 0.0
+        assert result["lng"] != 0.0
+
+
 # ── Real tool stubs ────────────────────────────────────────────────────────-
 
 
@@ -266,6 +288,13 @@ class TestRealToolStubs:
 
         with pytest.raises(NotImplementedError):
             await DistanceMatrixTool().run()
+
+    @pytest.mark.asyncio
+    async def test_real_geocode_raises(self):
+        from app.tools.real.geo_tools import GeocodeTool
+
+        with pytest.raises(NotImplementedError):
+            await GeocodeTool().run()
 
 
 # ── Real ClusterByProximityTool (pure math — fully implemented) ─────────────

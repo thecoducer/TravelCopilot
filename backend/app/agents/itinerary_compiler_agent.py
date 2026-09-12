@@ -15,6 +15,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -24,13 +25,19 @@ from pydantic import BaseModel, Field
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.itinerary import (
+    ActivityOption,
     Day,
+    Experience,
+    FoodOptions,
+    FoodVenue,
     Itinerary,
+    Place,
     StayOptions,
     TimeSlotOptions,
     TransportSection,
     TripSegment,
 )
+from app.models.stops import TripStop
 from app.models.transport import StayOption
 from app.tools.factory import ToolFactory
 
@@ -76,6 +83,42 @@ class _CritiqueSuggestions(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
 
 
+# ── Per-stop (multi-stop route) compile prompt ────────────────────────────────
+
+_STOP_COMPILE_PROMPT = """\
+You are an expert itinerary planner for ONE stop of a multi-stop trip: a \
+{nights}-night stay at {stop_name}.
+
+Rules:
+- Pick up to 3 ranked activities per day, spread across morning/afternoon/evening.
+- Pick one food venue per meal type (breakfast/lunch/dinner) per day.
+- ``experience_name``/``venue_name`` MUST exactly match a name from the candidate
+  lists below — never invent a new place; entries that don't match are dropped.
+- ``recommendation_reason`` explains why this activity suits the traveller.
+- ``drive_notes``: one short sentence on getting around this stop, if relevant.
+"""
+
+
+class _StopActivityPick(BaseModel):
+    day_offset: int = Field(ge=0)
+    slot: str  # "morning" | "afternoon" | "evening"
+    experience_name: str
+    recommendation_reason: str
+    best_for: list[str] = Field(default_factory=list)
+
+
+class _StopFoodPick(BaseModel):
+    day_offset: int = Field(ge=0)
+    meal_type: str  # "breakfast" | "lunch" | "dinner"
+    venue_name: str
+
+
+class _StopPlan(BaseModel):
+    activities: list[_StopActivityPick] = Field(default_factory=list)
+    food: list[_StopFoodPick] = Field(default_factory=list)
+    drive_notes: str | None = None
+
+
 class ItineraryCompilerAgent:
     """Layer 5 — Full itinerary compilation with deterministic quality gates."""
 
@@ -97,6 +140,11 @@ class ItineraryCompilerAgent:
         travelers: int = state.get("travelers", 1)
         session_id: str = state.get("session_id", "")
 
+        log = get_agent_logger("itinerary_compiler", session_id, destination=destination)
+
+        if state.get("route_discovery_status") == "multi_stop_provisional":
+            return await self._compile_multi_stop(state, log)
+
         experiences_raw = state.get("experiences_raw", [])
         transport_rec = state.get("transport_recommendation")
         transport_alts = state.get("transport_alternatives", [])
@@ -109,7 +157,6 @@ class ItineraryCompilerAgent:
         restaurant_recs = state.get("food_recommendations", {})
         user_profile = state.get("user_profile")
 
-        log = get_agent_logger("itinerary_compiler", session_id, destination=destination)
         log.info("agent_start", experiences=len(experiences_raw), stays=len(stays_shortlist))
 
         trip_days = dates.trip_days if dates else 3
@@ -267,6 +314,286 @@ class ItineraryCompilerAgent:
 
         log.info("agent_done", title=itinerary.title, segments=len(itinerary.segments))
         return {"itinerary": itinerary}
+
+    # ── Multi-stop route compilation ─────────────────────────────────────────
+
+    async def _compile_multi_stop(self, state: dict[str, Any], log: Any) -> dict[str, Any]:
+        """Build one ``TripSegment`` per overnight stop occurrence.
+
+        Unlike the single-destination path, structure (segment order, day
+        count, stop identity) is never left to the LLM — it is read directly
+        from ``StopsDiscoveryAgent``'s route contract. The LLM is only used to
+        rank/select from each stop's own verified experience and food pool.
+        """
+        stops: dict[str, TripStop] = state.get("stops", {})
+        overnight_stops = sorted(
+            (s for s in stops.values() if s.stop_kind == "overnight"), key=lambda s: s.sequence
+        )
+        source: str = state.get("source", "")
+        dates = state.get("dates")
+        travelers: int = state.get("travelers", 1)
+
+        log.info("agent_start", mode="multi_stop_provisional", stops=len(overnight_stops))
+
+        if not overnight_stops:
+            # Route discovery claimed multi-stop but produced no overnight stops —
+            # degrade to a minimal stub rather than crash; StopsDiscoveryAgent's
+            # invariants should make this unreachable in practice.
+            trip_days = dates.trip_days if dates else 3
+            start_date = dates.departure if dates else date.today()
+            itinerary = _build_stub(
+                source, state.get("destination", ""), start_date, trip_days, travelers
+            )
+            return {"itinerary": itinerary}
+
+        stops_by_day: dict[int, Any] = state.get("stops_by_day", {})
+        experiences_by_stop: dict[str, list[Experience]] = state.get("experiences_raw_by_stop", {})
+        stays_shortlist_by_stop: dict[str, list[StayOption]] = state.get(
+            "stays_shortlist_by_stop", {}
+        )
+        food_by_stop: dict[str, dict[str, list[Any]]] = state.get(
+            "food_recommendations_by_stop", {}
+        )
+
+        segments = [
+            await self._compile_stop_segment(
+                stop,
+                stops_by_day,
+                experiences_by_stop.get(stop.stop_id, []),
+                stays_shortlist_by_stop.get(stop.stop_id, []),
+                food_by_stop.get(stop.stop_id, {}),
+                log,
+            )
+            for stop in overnight_stops
+        ]
+
+        trip_days = dates.trip_days if dates else sum(s.nights for s in overnight_stops)
+        destination_names = [s.name for s in overnight_stops]
+        transport_rec = state.get("transport_recommendation")
+
+        itinerary = Itinerary(
+            title=f"{trip_days} Days: {' → '.join(destination_names)}"[:140],
+            source=source,
+            destination=overnight_stops[-1].name,
+            destinations=destination_names,
+            dates=dates,
+            travelers=travelers,
+            segments=segments,
+            transport_section=(
+                TransportSection(
+                    recommended=transport_rec, alternatives=state.get("transport_alternatives", [])
+                )
+                if transport_rec
+                else None
+            ),
+            safety_briefing=(
+                state["safety_report"].advisory_level if state.get("safety_report") else None
+            ),
+            source_query=state.get("query", ""),
+            created_at=datetime.now(tz=UTC),
+            budget_breakdown=state.get("budget_report"),
+            visa_section=state.get("visa_report"),
+            self_drive_section=state.get("self_drive_report"),
+        )
+
+        log.info("agent_done", mode="multi_stop_provisional", segments=len(itinerary.segments))
+        return {"itinerary": itinerary}
+
+    async def _compile_stop_segment(
+        self,
+        stop: TripStop,
+        stops_by_day: dict[int, Any],
+        experiences: list[Experience],
+        stays: list[StayOption],
+        food_by_date: dict[str, list[Any]],
+        log: Any,
+    ) -> TripSegment:
+        day_allocations = [
+            a for _d, a in sorted(stops_by_day.items()) if a.stop_id == stop.stop_id
+        ] or [None]
+        nights = len(day_allocations) or 1
+
+        exp_dicts = [
+            {
+                "name": e.name,
+                "lat": e.lat,
+                "lng": e.lng,
+                "opening_hours": e.opening_hours.model_dump() if e.opening_hours else None,
+            }
+            for e in experiences
+        ]
+        cluster_result = await self._cluster_tool.run(experiences=exp_dicts, num_clusters=nights)
+        clusters: list[dict[str, Any]] = cluster_result.get("clusters", [])
+
+        # Pre-gate: drop experiences that fail the opening-hours check for this stop.
+        slotted_exps = [
+            {**exp, "assigned_slot": _SLOT_NAMES[ei % 3], "day_index": ci}
+            for ci, cluster in enumerate(clusters[:nights])
+            for ei, exp in enumerate(cluster.get("experiences", []))
+        ]
+        hours_pre = await self._opening_hours_tool.run(experiences=slotted_exps, travel_dates=None)
+        closed_names = {c["name"] for c in hours_pre.get("conflicts", [])}
+
+        experience_pool = {e.name: e for e in experiences if e.name not in closed_names}
+        food_pool = _build_food_pool(food_by_date)
+
+        day_candidates = [
+            {
+                "day_offset": ci,
+                "experiences": [
+                    e.get("name")
+                    for e in cluster.get("experiences", [])
+                    if e.get("name") not in closed_names
+                ],
+            }
+            for ci, cluster in enumerate(clusters[:nights])
+        ]
+
+        plan = await self._plan_stop(stop, nights, day_candidates, sorted(food_pool), log)
+        days = _assemble_stop_days(stop, day_allocations, plan, experience_pool, food_pool)
+
+        return TripSegment(
+            location=stop.name,
+            days=days,
+            stay_options=(
+                StayOptions(
+                    location=stop.name,
+                    options=[s.model_dump() for s in stays],
+                    notes=f"{len(stays)} option(s) available for {stop.name}.",
+                )
+                if stays
+                else None
+            ),
+            drive_notes=plan.drive_notes,
+            permits_required=stop.permits_required,
+            altitude_meters=stop.altitude_meters,
+            stop_id=stop.stop_id,
+            arrival_date=stop.arrival_date,
+            departure_date=stop.departure_date,
+        )
+
+    async def _plan_stop(
+        self,
+        stop: TripStop,
+        nights: int,
+        day_candidates: list[dict[str, Any]],
+        food_candidates: list[str],
+        log: Any,
+    ) -> _StopPlan:
+        if not any(c["experiences"] for c in day_candidates) and not food_candidates:
+            return _StopPlan()
+
+        chain = self._llm.with_structured_output(_StopPlan)
+        try:
+            plan: _StopPlan = await chain.ainvoke(
+                [
+                    SystemMessage(
+                        content=_STOP_COMPILE_PROMPT.format(nights=nights, stop_name=stop.name)
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"Candidate experiences by day:\n"
+                            f"{json.dumps(day_candidates, indent=2)}\n\n"
+                            f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
+                        )
+                    ),
+                ]
+            )
+            return plan
+        except Exception as exc:
+            log.warning("stop_compile_llm_failed", stop_id=stop.stop_id, error=str(exc))
+            return _StopPlan()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _build_food_pool(food_by_date: dict[str, list[Any]]) -> dict[str, FoodVenue]:
+    pool: dict[str, FoodVenue] = {}
+    for options in food_by_date.values():
+        for food_opt in options:
+            venues = food_opt.get("options", []) if isinstance(food_opt, dict) else food_opt.options
+            for venue in venues or []:
+                venue_obj = venue if isinstance(venue, FoodVenue) else FoodVenue(**venue)
+                pool.setdefault(venue_obj.name, venue_obj)
+    return pool
+
+
+def _activity_option_from_experience(
+    exp: Experience, rank: int, pick: _StopActivityPick
+) -> ActivityOption:
+    place = Place(
+        name=exp.name,
+        description=exp.description,
+        category=exp.type,
+        duration_minutes=max(0, int(exp.duration_hours * 60)),
+        price_range=exp.price_range,
+        lat=exp.lat,
+        lng=exp.lng,
+        address=exp.address or "",
+        photos=exp.photos,
+        google_maps_url=exp.google_maps_url,
+        opening_hours=exp.opening_hours,
+        rating=exp.rating,
+        review_count=exp.review_count,
+    )
+    return ActivityOption(
+        place=place,
+        rank=rank,
+        recommendation_reason=pick.recommendation_reason,
+        best_for=pick.best_for,
+        estimated_duration_minutes=max(0, int(exp.duration_hours * 60)),
+    )
+
+
+def _assemble_stop_days(
+    stop: TripStop,
+    day_allocations: list[Any],
+    plan: _StopPlan,
+    experience_pool: dict[str, Experience],
+    food_pool: dict[str, FoodVenue],
+) -> list[Day]:
+    days: list[Day] = []
+    for offset, alloc in enumerate(day_allocations):
+        slots: dict[str, list[ActivityOption]] = {"morning": [], "afternoon": [], "evening": []}
+        for pick in plan.activities:
+            if pick.day_offset != offset or pick.slot not in slots:
+                continue
+            exp = experience_pool.get(pick.experience_name)
+            if not exp:
+                continue  # deterministic guard — drop names not in the verified pool
+            slots[pick.slot].append(
+                _activity_option_from_experience(exp, len(slots[pick.slot]) + 1, pick)
+            )
+
+        food_opts: list[FoodOptions] = []
+        for meal_type in ("breakfast", "lunch", "dinner"):
+            venue = next(
+                (
+                    food_pool.get(pick.venue_name)
+                    for pick in plan.food
+                    if pick.day_offset == offset and pick.meal_type == meal_type
+                ),
+                None,
+            )
+            food_opts.append(FoodOptions(meal_type=meal_type, options=[venue] if venue else []))
+
+        days.append(
+            Day(
+                date=alloc.date if alloc else date.today(),
+                day_number=offset + 1,
+                location=stop.name,
+                morning=TimeSlotOptions(slot="morning", options=slots["morning"]),
+                afternoon=TimeSlotOptions(slot="afternoon", options=slots["afternoon"]),
+                evening=TimeSlotOptions(slot="evening", options=slots["evening"]),
+                food=food_opts,
+                stop_id=stop.stop_id,
+                is_travel_day=alloc.is_travel_day if alloc else False,
+                is_checkin_day=alloc.is_checkin_day if alloc else False,
+                is_checkout_day=alloc.is_checkout_day if alloc else False,
+            )
+        )
+    return days
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

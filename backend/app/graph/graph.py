@@ -4,9 +4,8 @@ The OrchestratorAgent uses LangGraph ``interrupt()`` to pause the graph when
 the user query is ambiguous.  The client resumes via
 ``POST /api/trip/{session_id}/clarify`` — no full re-POST is needed.
 
-After the orchestrator finishes (with or without clarification rounds) control
-flows directly to ``ready_to_plan``, which fans out to all Layer 1 + 2 nodes
-in parallel.
+After the orchestrator finishes (with or without clarification rounds), route
+discovery fans out directly to the Layer 1 and Layer 2 entry nodes in parallel.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from app.agents.budget_planner_agent import BudgetPlannerAgent
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
@@ -25,18 +25,132 @@ from app.agents.safety_agent import SafetyAgent
 from app.agents.self_drive_search_agent import SelfDriveSearchAgent
 from app.agents.stay_analyst_agent import StayAnalystAgent
 from app.agents.stay_search_agent import StaySearchAgent
+from app.agents.stops_discovery_agent import StopsDiscoveryAgent
 from app.agents.transport_optimizer_agent import TransportOptimizerAgent
 from app.agents.transport_search_agent import TransportSearchAgent
 from app.agents.visa_agent import VisaAgent
+from app.config import settings
 from app.graph.state import TripState, initial_state
+from app.logging import get_agent_logger
+from app.models.clarification import ClarificationPrompt
+from app.models.user_profile import UserProfile
+from app.services.user_profile_service import upsert_user_profile
 from app.tools.factory import ToolFactory
 
-# ── Pass-through fan-out node ──────────────────────────────────────────────────
+
+async def _route_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Pause the graph when StopsDiscoveryAgent could not shape a usable route.
+
+    Reuses the existing ``interrupt()``/resume mechanism (see OrchestratorAgent)
+    instead of silently falling back to a single-destination itinerary — a
+    ``discovery_failed`` route must never reach Layer 2 supply search.
+    """
+    session_id = state.get("session_id", "")
+    round_ = state.get("clarification_round", 0)
+    log = get_agent_logger("stops_discovery", session_id)
+    log.info("route_clarification_requested", round=round_)
+
+    prompt = ClarificationPrompt(
+        field="destination",
+        question=(
+            "I couldn't work out a clear route for this trip — could you name the"
+            " specific places or region you'd like to visit?"
+        ),
+        reason="Route discovery failed",
+        input_type="text",
+    )
+    answers: dict[str, str] = interrupt({"prompts": [prompt.model_dump()], "round": round_})
+    updates: dict[str, Any] = {"clarification_round": round_ + 1}
+    new_destination = answers.get("destination", "").strip()
+    if new_destination:
+        updates["destination"] = new_destination
+    return updates
 
 
-async def _ready_to_plan_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Pass-through node used as a fan-out source for Layer 1+2 parallelism."""
-    return {}
+def _split_food_preference(value: str) -> list[str]:
+    """Convert a comma-separated clarification answer to normalized values."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+async def _food_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Collect durable cuisine and dietary preferences before food discovery."""
+    session_id = state.get("session_id", "")
+    profile: UserProfile | None = state.get("user_profile")
+    if profile and profile.food_preferences_configured:
+        return {}
+
+    log = get_agent_logger("food_clarification", session_id)
+    prompts = [
+        ClarificationPrompt(
+            field="preferred_cuisines",
+            question="Which cuisines would you most like to eat on this trip?",
+            reason="Personalize restaurant discovery",
+            input_type="text",
+        ),
+        ClarificationPrompt(
+            field="dietary_restrictions",
+            question="Do you have dietary restrictions or requirements?",
+            reason="Avoid unsuitable restaurant recommendations",
+            input_type="text",
+            options=["No dietary restrictions"],
+        ),
+    ]
+    log.info("clarification_required", fields=[prompt.field for prompt in prompts])
+    answers: dict[str, str] = interrupt(
+        {
+            "prompts": [prompt.model_dump() for prompt in prompts],
+            "round": state.get("clarification_round", 0),
+        }
+    )
+
+    dietary_answer = answers.get("dietary_restrictions", "").strip()
+    dietary = (
+        []
+        if dietary_answer.lower() == "no dietary restrictions"
+        else _split_food_preference(dietary_answer)
+    )
+    updated_profile = (profile or UserProfile(user_id=session_id or "anon")).model_copy(
+        update={
+            "preferred_cuisines": _split_food_preference(answers.get("preferred_cuisines", "")),
+            "dietary_restrictions": dietary,
+            "food_preferences_configured": True,
+        }
+    )
+    if session_id:
+        try:
+            await upsert_user_profile(session_id, updated_profile)
+        except Exception as exc:
+            log.warning("profile_persist_failed", error=str(exc))
+
+    return {
+        "user_profile": updated_profile,
+        "clarification_round": state.get("clarification_round", 0) + 1,
+    }
+
+
+async def _discovery_failed_end_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Hard-stop after clarification rounds are exhausted and no route was shaped.
+
+    A ``discovery_failed`` route must never silently degrade into a plausible-
+    looking but wrong single-destination itinerary (see spec's non-negotiable
+    acceptance gates).
+    """
+    log = get_agent_logger("stops_discovery", state.get("session_id", ""))
+    log.error("route_discovery_failed_hard_stop")
+    return {"error": "Could not determine a usable trip route from the query provided."}
+
+
+def _route_after_discovery(state: dict[str, Any]) -> str | list[str]:
+    if state.get("route_discovery_status") != "discovery_failed":
+        return [
+            "visa",
+            "transport_search",
+            "stay_search",
+            "local_experiences",
+        ]
+    if state.get("clarification_round", 0) >= settings.max_clarification_rounds:
+        return "discovery_failed_end"
+    return "route_clarification"
 
 
 # ── Graph builder ──────────────────────────────────────────────────────────────
@@ -59,11 +173,12 @@ def build_graph(
     factory = tool_factory or ToolFactory()
 
     orchestrator = OrchestratorAgent(llm=llm)
+    stops_discovery = StopsDiscoveryAgent(llm=llm)
     safety = SafetyAgent(tool_factory=factory, llm=llm)
     visa = VisaAgent(tool_factory=factory, llm=llm)
     transport_search = TransportSearchAgent(tool_factory=factory, llm=llm)
     stay_search = StaySearchAgent(tool_factory=factory)
-    local_experiences = LocalExperiencesAgent(tool_factory=factory)
+    local_experiences = LocalExperiencesAgent(tool_factory=factory, llm=llm)
     transport_optimizer = TransportOptimizerAgent(tool_factory=factory, llm=llm)
     stay_analyst = StayAnalystAgent(llm=llm)
     self_drive_search = SelfDriveSearchAgent(tool_factory=factory, llm=llm)
@@ -74,12 +189,16 @@ def build_graph(
 
     graph: Any = StateGraph(TripState)
 
-    # Control nodes
+    # Control nodes (orchestration + interrupt-based gates, not a numbered layer)
     graph.add_node("orchestrator", orchestrator)
-    graph.add_node("ready_to_plan", _ready_to_plan_node)
+    graph.add_node("route_clarification", _route_clarification_node)
+    graph.add_node("food_clarification", _food_clarification_node)
+    graph.add_node("discovery_failed_end", _discovery_failed_end_node)
 
-    # Layer 1
-    graph.add_node("safety", safety)
+    # Layer 1 — Route Discovery + Destination Intelligence
+    # (stops_discovery gates every Layer 2 supply-search node; visa runs in
+    # parallel with Layer 2 but never blocks it — see plan.md Layer 1 section)
+    graph.add_node("stops_discovery", stops_discovery)
     graph.add_node("visa", visa)
 
     # Layer 2
@@ -96,6 +215,7 @@ def build_graph(
     graph.add_node("reviews", reviews)
     graph.add_node("food_discovery", food_discovery)
     graph.add_node("budget_planner", budget_planner)
+    graph.add_node("safety", safety)
 
     # Layer 5
     graph.add_node("itinerary_compiler", itinerary_compiler)
@@ -103,18 +223,27 @@ def build_graph(
     # ── Edges ──────────────────────────────────────────────────────────────
     graph.add_edge(START, "orchestrator")
 
-    # Orchestrator → ready_to_plan (interrupt() inside the orchestrator handles
-    # clarification; the graph pauses mid-node and resumes transparently)
-    graph.add_edge("orchestrator", "ready_to_plan")
+    # Orchestrator → stops_discovery (interrupt() inside the orchestrator handles
+    # its own clarification; the graph pauses mid-node and resumes transparently)
+    graph.add_edge("orchestrator", "stops_discovery")
 
-    # Fan-out from ready_to_plan → all Layer 1+2 nodes in parallel
-    for node in [
-        "visa",
-        "transport_search",
-        "stay_search",
-        "local_experiences",
-    ]:
-        graph.add_edge("ready_to_plan", node)
+    # Successful route discovery fans out directly to the Layer 1/2 entry nodes;
+    # a discovery_failed route never reaches supply search with a fabricated
+    # single-destination fallback (see the route spec's acceptance gates).
+    graph.add_conditional_edges(
+        "stops_discovery",
+        _route_after_discovery,
+        {
+            "visa": "visa",
+            "transport_search": "transport_search",
+            "stay_search": "stay_search",
+            "local_experiences": "local_experiences",
+            "route_clarification": "route_clarification",
+            "discovery_failed_end": "discovery_failed_end",
+        },
+    )
+    graph.add_edge("route_clarification", "stops_discovery")
+    graph.add_edge("discovery_failed_end", END)
 
     # Layer 2 → Layer 3
     graph.add_edge("transport_search", "transport_optimizer")
@@ -137,8 +266,9 @@ def build_graph(
     graph.add_edge("stay_analyst", "reviews")
     graph.add_edge("local_experiences", "reviews")
 
-    # Layer 2 → food_discovery
-    graph.add_edge("local_experiences", "food_discovery")
+    # Food preference answers are collected only after activity locations are known.
+    graph.add_edge("local_experiences", "food_clarification")
+    graph.add_edge("food_clarification", "food_discovery")
 
     # food_discovery → safety: agent runs after food outlets + experiences are in state
     graph.add_edge("food_discovery", "safety")

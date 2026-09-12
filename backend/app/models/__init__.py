@@ -16,6 +16,9 @@ from app.models.itinerary import (
     Experience as Experience,
 )
 from app.models.itinerary import (
+    ExperiencesOutput as ExperiencesOutput,
+)
+from app.models.itinerary import (
     FoodOptions as FoodOptions,
 )
 from app.models.itinerary import (

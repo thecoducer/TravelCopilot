@@ -490,15 +490,106 @@ class TestStaySearchAgent:
 
 class TestLocalExperiencesAgent:
     @pytest.mark.asyncio
-    async def test_returns_experiences_raw(
+    async def test_returns_experiences_raw_single_destination(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        agent = LocalExperiencesAgent(tool_factory=mock_tool_factory)
+        from app.models.itinerary import Experience, ExperiencesOutput
+
+        mock_experiences = ExperiencesOutput(
+            experiences=[
+                Experience(
+                    name="Shanti Stupa",
+                    type="historical_landmark",
+                    description="White-domed Buddhist stupa offering panoramic views of Leh.",
+                    duration_hours=2.0,
+                    price_range="Free",
+                    best_time_to_visit="Sunset",
+                    lat=34.1648,
+                    lng=77.5847,
+                    rating=4.7,
+                    review_count=1200,
+                ),
+                Experience(
+                    name="Leh Palace",
+                    type="historical_landmark",
+                    description="Former royal palace overlooking the town of Leh.",
+                    duration_hours=1.5,
+                    price_range="Inexpensive",
+                    best_time_to_visit="Morning",
+                    lat=34.1654,
+                    lng=77.5878,
+                    rating=4.5,
+                    review_count=950,
+                ),
+            ]
+        )
+        mock_llm = _make_llm(mock_experiences)
+        agent = LocalExperiencesAgent(tool_factory=mock_tool_factory, llm=mock_llm)
         result = await agent(base_state)
 
         assert "experiences_raw" in result
-        # Mock places tool returns fixture data — at least some experiences expected
-        assert isinstance(result["experiences_raw"], list)
+        experiences = result["experiences_raw"]
+        assert len(experiences) == 2
+        assert experiences[0].name == "Shanti Stupa"
+        assert experiences[0].lat != 0.0
+        assert experiences[0].lng != 0.0
+        assert experiences[0].source == "llm"
+
+    @pytest.mark.asyncio
+    async def test_multi_stop_returns_experiences_raw_by_stop(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        from app.models.itinerary import Experience, ExperiencesOutput
+        from app.models.stops import TripStop
+
+        mock_experiences = ExperiencesOutput(
+            experiences=[
+                Experience(
+                    name="Local Highlight",
+                    type="tourist_attraction",
+                    description="A scenic local attraction.",
+                    duration_hours=2.0,
+                    price_range="Free",
+                    lat=34.15,
+                    lng=77.57,
+                )
+            ]
+        )
+        mock_llm = _make_llm(mock_experiences)
+        agent = LocalExperiencesAgent(tool_factory=mock_tool_factory, llm=mock_llm)
+
+        state = {
+            **base_state,
+            "route_discovery_status": "multi_stop_provisional",
+            "stops": {
+                "stop_1": TripStop(stop_id="stop_1", name="Leh", stop_kind="overnight", sequence=0),
+                "stop_2": TripStop(stop_id="stop_2", name="Nubra", stop_kind="overnight", sequence=1),
+            },
+            "route_version": 1,
+        }
+        result = await agent(state)
+
+        assert "experiences_raw_by_stop" in result
+        by_stop = result["experiences_raw_by_stop"]
+        assert "stop_1" in by_stop
+        assert "stop_2" in by_stop
+        assert len(by_stop["stop_1"]) >= 1
+        assert by_stop["stop_1"][0].stop_id == "stop_1"
+        assert by_stop["stop_1"][0].route_version == 1
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_llm_returns_empty(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        from app.models.itinerary import ExperiencesOutput
+
+        mock_llm = _make_llm(ExperiencesOutput(experiences=[]))
+        agent = LocalExperiencesAgent(tool_factory=mock_tool_factory, llm=mock_llm)
+        result = await agent(base_state)
+
+        assert "experiences_raw" in result
+        assert len(result["experiences_raw"]) == 1
+        assert "Explore Leh" in result["experiences_raw"][0].name
 
 
 # ── StayAnalystAgent ──────────────────────────────────────────────────────────
@@ -628,6 +719,31 @@ class TestFoodDiscoveryAgent:
         result = await agent({**base_state, "experiences_raw": []})
         # Should still try to find restaurants at the destination
         assert "food_recommendations" in result
+
+    @pytest.mark.asyncio
+    async def test_uses_saved_food_preferences_in_searches(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
+        agent._places_tool.run = AsyncMock(return_value={"places": []})
+        agent._tavily_tool.run = AsyncMock(return_value={"results": []})
+        profile = UserProfile(
+            user_id="u1",
+            preferred_cuisines=["Japanese"],
+            dietary_restrictions=["vegetarian"],
+            budget_tier="luxury",
+            food_preferences_configured=True,
+        )
+
+        await agent({**base_state, "user_profile": profile, "experiences_raw": []})
+
+        places_query = agent._places_tool.run.await_args.kwargs["query"]
+        assert "Japanese" in places_query
+        assert "vegetarian" in places_query
+        assert "luxury" in places_query
+        tavily_queries = [call.kwargs["query"] for call in agent._tavily_tool.run.await_args_list]
+        assert any("Japanese" in query for query in tavily_queries)
+        assert any("vegetarian" in query for query in tavily_queries)
 
 
 # ── get_llm factory ───────────────────────────────────────────────────────────
@@ -1023,3 +1139,39 @@ class TestBudgetPlannerAgent:
         if report.fx_rates_used:
             for key, entry in report.fx_rates_used.items():
                 assert entry.fetched_at is not None, f"fx_rates_used[{key}] missing fetched_at"
+
+    @pytest.mark.asyncio
+    async def test_llm_destination_cost_estimation(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        """Food and activities should be calculated from DestinationCostEstimate."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.agents.budget_planner_agent import BudgetPlannerAgent, DestinationCostEstimate
+
+        cost_estimate = DestinationCostEstimate(
+            daily_food_per_person=2000.0,
+            daily_activity_per_person=1500.0,
+            rationale="Tokyo mid-range dining and attraction pricing.",
+        )
+
+        mock_chain = MagicMock()
+        mock_chain.ainvoke = AsyncMock(return_value=cost_estimate)
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output = MagicMock(return_value=mock_chain)
+
+        agent = BudgetPlannerAgent(tool_factory=mock_tool_factory, llm=mock_llm)
+        result = await agent(
+            {
+                **base_state,
+                "destination": "Tokyo",
+                "travelers": 2,
+            }
+        )
+
+        report = result["budget_report"]
+        assert report is not None
+        # 2000 per person/day * 3 days * 2 travelers = 12000.0
+        assert report.per_category_breakdown["food"] == 12000.0
+        # 1500 per person/day * 3 days * 2 travelers = 9000.0
+        assert report.per_category_breakdown["activities"] == 9000.0

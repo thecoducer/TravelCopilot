@@ -7,6 +7,7 @@ plus a ``stays_pick`` (the top recommended option).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from statistics import mean
 from typing import Any
@@ -72,13 +73,17 @@ class StayAnalystAgent:
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         stays_raw: list[StayOption] = state.get("stays_raw", [])
+        stays_raw_by_stop: dict[str, list[StayOption]] = state.get("stays_raw_by_stop", {})
         user_profile = state.get("user_profile")
         budget = budget_from_state(state.get("budget"))
         session_id: str = state.get("session_id", "")
 
         log = get_agent_logger("stay_analyst", session_id)
-        log.info("agent_start", candidates=len(stays_raw))
 
+        if state.get("route_discovery_status") == "multi_stop_provisional" and stays_raw_by_stop:
+            return await self._rank_by_stop(stays_raw_by_stop, user_profile, budget, log)
+
+        log.info("agent_start", candidates=len(stays_raw))
         if not stays_raw:
             log.warning("no_stays_raw")
             return {
@@ -87,6 +92,66 @@ class StayAnalystAgent:
                 "stays_rationale": "No accommodation options found.",
             }
 
+        shortlist, rationale = await self._rank_candidates(stays_raw, user_profile, budget, log)
+        stays_pick = shortlist[0] if shortlist else None
+        log.info(
+            "agent_done",
+            shortlist=len(shortlist),
+            pick=stays_pick.name if stays_pick else None,
+        )
+        return {
+            "stays_shortlist": shortlist,
+            "stays_pick": stays_pick,
+            "stays_rationale": rationale,
+        }
+
+    async def _rank_by_stop(
+        self,
+        stays_raw_by_stop: dict[str, list[StayOption]],
+        user_profile: Any,
+        budget: Any,
+        log: Any,
+    ) -> dict[str, Any]:
+        """Rank accommodation independently for every overnight ``stop_id``.
+
+        Each result is tagged with its ``stop_id`` so a two-stop trip never
+        multiplies one stop's shortlist across another stop's segment.
+        """
+        log.info("agent_start", mode="multi_stop_provisional", stops=list(stays_raw_by_stop))
+
+        async def _rank_one(
+            stop_id: str, candidates: list[StayOption]
+        ) -> tuple[str, list[StayOption]]:
+            if not candidates:
+                return stop_id, []
+            shortlist, _rationale = await self._rank_candidates(
+                candidates, user_profile, budget, log
+            )
+            return stop_id, [s.model_copy(update={"stop_id": stop_id}) for s in shortlist]
+
+        results = await asyncio.gather(
+            *[_rank_one(stop_id, candidates) for stop_id, candidates in stays_raw_by_stop.items()]
+        )
+        stays_shortlist_by_stop = dict(results)
+        stays_pick_by_stop = {
+            stop_id: shortlist[0]
+            for stop_id, shortlist in stays_shortlist_by_stop.items()
+            if shortlist
+        }
+        log.info("agent_done", mode="multi_stop_provisional", stops=list(stays_shortlist_by_stop))
+        return {
+            "stays_shortlist_by_stop": stays_shortlist_by_stop,
+            "stays_pick_by_stop": stays_pick_by_stop,
+        }
+
+    async def _rank_candidates(
+        self,
+        stays_raw: list[StayOption],
+        user_profile: Any,
+        budget: Any,
+        log: Any,
+    ) -> tuple[list[StayOption], str]:
+        """Budget-filter + LLM-rank one candidate pool. Returns (shortlist, rationale)."""
         budget_tier = str(budget.tier) if budget else "mid"
         hotel_style = user_profile.hotel_style if user_profile else None
         interests = user_profile.interests if user_profile else []
@@ -164,14 +229,4 @@ class StayAnalystAgent:
                 for s in candidates[:3]
             ]
 
-        stays_pick = shortlist[0] if shortlist else None
-        log.info(
-            "agent_done",
-            shortlist=len(shortlist),
-            pick=stays_pick.name if stays_pick else None,
-        )
-        return {
-            "stays_shortlist": shortlist,
-            "stays_pick": stays_pick,
-            "stays_rationale": ranking.rationale,
-        }
+        return shortlist, ranking.rationale

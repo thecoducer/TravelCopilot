@@ -71,23 +71,63 @@ class FoodVenue(BaseModel):
 
 
 class Experience(BaseModel):
-    """Raw experience from Layer 2 — before geo-clustering."""
+    """An attraction, activity, tour, or cultural experience."""
 
-    name: str
-    type: str  # "tourist_attraction" | "museum" | "art_gallery" | "park" | ...
-    description: str
-    duration_hours: float = Field(ge=0)
-    price_range: str
-    lat: float
-    lng: float
+    name: str = Field(description="Name of the attraction, activity, or viewpoint.")
+    type: str = Field(
+        default="tourist_attraction",
+        description="Category type (e.g., historical_landmark, museum, park, viewpoint, temple, art_gallery, outdoor_adventure).",
+    )
+    description: str = Field(
+        description="Engaging 1-2 sentence description explaining why it's worth visiting."
+    )
+    duration_hours: float = Field(
+        default=2.0, ge=0.0, description="Estimated duration in hours."
+    )
+    price_range: str = Field(
+        default="Moderate",
+        description="Price tier: 'Free', 'Inexpensive', 'Moderate', 'Expensive', or fee estimate.",
+    )
+    lat: float = Field(
+        default=0.0,
+        description="Latitude coordinate if known, or 0.0 to be geocoded.",
+    )
+    lng: float = Field(
+        default=0.0,
+        description="Longitude coordinate if known, or 0.0 to be geocoded.",
+    )
     photos: list[str] = Field(default_factory=list)
     google_maps_url: str | None = None
     opening_hours: OpeningHours | None = None
-    best_time_to_visit: str | None = None
-    source: str  # "google_places" | "tavily"
-    rating: float | None = Field(default=None, ge=0, le=5)
-    review_count: int | None = None
-    address: str | None = None  # carried through from Places API for compiler use
+    best_time_to_visit: str | None = Field(
+        default=None,
+        description="Recommended time of day or conditions (e.g., 'Morning', 'Late Afternoon', 'Sunset').",
+    )
+    source: str = Field(
+        default="llm",
+        description="Source of this experience (e.g. 'llm', 'google_places', 'tavily').",
+    )
+    rating: float | None = Field(
+        default=None, ge=0.0, le=5.0, description="Visitor rating out of 5."
+    )
+    review_count: int | None = Field(
+        default=None, ge=0, description="Approximate number of reviews."
+    )
+    address: str | None = Field(
+        default=None, description="Neighbourhood, address, or geographic area."
+    )
+    # Owning stop occurrence for multi-stop routes; unset for single_destination trips.
+    stop_id: str | None = None
+    route_version: int | None = None
+
+
+class ExperiencesOutput(BaseModel):
+    """Structured LLM output container for curated experiences."""
+
+    experiences: list[Experience] = Field(
+        default_factory=list,
+        description="List of 6 to 12 curated experiences and attractions.",
+    )
 
 
 # ── Options containers ────────────────────────────────────────────────────────
@@ -143,6 +183,12 @@ class Day(BaseModel):
     evening: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="evening"))
     food: list[FoodOptions] = Field(default_factory=list)  # one FoodOptions entry per meal type
     altitude_warning: str | None = None  # e.g. "Acclimatization day — avoid strenuous activity"
+    # Route metadata — unset for single_destination trips; populated from stops_by_day
+    # for multi-stop routes (see specs/stops-discovery-agent-spec.md).
+    stop_id: str | None = None
+    is_travel_day: bool = False
+    is_checkin_day: bool = False
+    is_checkout_day: bool = False
 
 
 class TripSegment(BaseModel):
@@ -161,6 +207,14 @@ class TripSegment(BaseModel):
     altitude_meters: int | None = None  # elevation of this location in metres
     # e.g. "No BSNL signal beyond Diskit. Download offline maps."
     connectivity: str | None = None
+    # Route metadata — unset for single_destination trips. One segment per
+    # overnight stop *occurrence*; a revisited place gets two distinct segments.
+    stop_id: str | None = None
+    leg_id: str | None = None  # inbound route leg that reaches this stop, if any
+    arrival_date: date | None = None
+    departure_date: date | None = None
+    check_in: str | None = None
+    check_out: str | None = None
 
 
 # ── AI clarification ──────────────────────────────────────────────────────────
