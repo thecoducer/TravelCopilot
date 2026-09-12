@@ -508,11 +508,16 @@ LLM enumerates plausible route combinations using geographic knowledge:
 - Writes `state["reviews_summary"]`
 
 **FoodDiscoveryAgent** (`agents/food_discovery_agent.py`) ← *new*
-- Waits for: `experiences_raw` (needs neighbourhood context from day clusters, so this is not a raw Layer 2 search)
-- Tools: `google_places_search(location, included_types=["restaurant","cafe","meal_takeaway"], min_rating=4.0)` filtered by `user_profile.dietary_restrictions` and `budget_tier`, Tavily for `"best food in {neighbourhood} {destination} locals recommend"` and `"best street food in {destination} {neighbourhood}"`
-- Finds top food venues per neighbourhood (mapped to each day's activity cluster)
-- Returns: breakfast, lunch, dinner, coffee/snack suggestions per day — each with name, category, cuisine, price range, rating, address, google_maps_url, photos[]
-- Writes `state["food_recommendations"]` keyed by day ISO date
+- Waits for: `route_plan`/`stops_by_day` + `experiences_raw` (do not fall back to the top-level destination for a multi-stop route)
+- Required route-aware contract:
+  - `stops_by_day[day_index]` provides the parent `stop_id`, `is_travel_day`, `is_checkin_day`, `is_checkout_day`, and that day's concrete date.
+  - Food search is scoped to the active overnight stop for that day, not to the destination string alone.
+  - When `route_discovery_status == "multi_stop_provisional"`, every food query is built as `stop.name` / `stop.coordinates` / `stop_id` + that day's assigned date, e.g. `Bhalukpong`, `Dirang`, `Tawang`, or `Leh City` rather than just `"Japan"` or `"Ladakh"`.
+  - The agent returns `food_recommendations_by_stop` keyed by `stop_id` and nested by day date, while preserving the legacy `food_recommendations` fallback only for `single_destination` trips.
+- Tools: `google_places_search(location, included_types=["restaurant","cafe","meal_takeaway"], min_rating=4.0)` filtered by `user_profile.dietary_restrictions` and `budget_tier`, Tavily for `"best food in {stop_name} {day_date} locals recommend"` and `"best street food in {stop_name} near {destination}"`
+- Finds top food venues per stop/day, then rotates meal slots to respect the stop's activity cluster and travel-day flags
+- Returns: breakfast, lunch, dinner, coffee/snack suggestions per active stop/day — each with name, category, cuisine, price range, rating, address, google_maps_url, photos[]
+- Writes `state["food_recommendations_by_stop"]` and, for compatibility, `state["food_recommendations"]` only when the route is a genuine single-destination trip
 
 **SafetyAgent** (`agents/safety_agent.py`) ← *venue-aware, runs after FoodDiscovery*
 - Waits for: `food_recommendations` (FoodDiscovery) + `experiences_raw` (already in state from LocalExperiences)
