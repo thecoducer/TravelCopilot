@@ -15,6 +15,12 @@ _FIXTURES_DIR = (
     / "fixtures"
 )
 
+_REGION_ALIASES: dict[str, str] = {
+    "ladakh": "leh",
+    "portugal": "lisbon",
+    "japan": "tokyo",
+}
+
 
 def load_fixture(filename: str) -> dict[str, Any]:
     """Load a JSON fixture file from tests/fixtures/."""
@@ -30,7 +36,8 @@ def find_fixture(prefix: str, *keys: str, fallback: bool = True) -> dict[str, An
     Falls back to any file matching {prefix}_*.json.
     Returns None if no file exists at all.
     """
-    slug = "_".join(k.lower().replace(" ", "_") for k in keys)
+    normalized_keys = [_REGION_ALIASES.get(k.lower().strip(), k.lower().strip()) for k in keys]
+    slug = "_".join(k.replace(" ", "_") for k in normalized_keys)
     exact = _FIXTURES_DIR / f"{prefix}_{slug}.json"
     if exact.exists():
         result: dict[str, Any] = json.loads(exact.read_text(encoding="utf-8"))

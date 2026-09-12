@@ -249,7 +249,7 @@ class TransportSection(BaseModel):
 class Itinerary(BaseModel):
     id: str | None = None
     title: str
-    source: str
+    source: str = Field(description="Origin or departure city for the trip")
     destination: str  # primary / final destination label
     destinations: list[str] = Field(default_factory=list)  # all stops in visit order
     dates: Any | None = None  # TripDates

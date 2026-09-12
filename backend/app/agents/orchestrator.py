@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -133,10 +133,8 @@ _FIELD_META: dict[str, dict[str, Any]] = {
     "dates": {
         "input_type": "date",
         "options": [],
-        "generic": (
-            "What dates are you planning to travel? (e.g. 'July 15–20' or '5 days in October')"
-        ),
-        "contextual": ("You mentioned '{value}' — what dates specifically? (e.g. 'July 15–20')"),
+        "generic": "What is the start date of your trip?",
+        "contextual": "When would you like to start your trip to '{value}'?",
     },
     "travelers": {
         "input_type": "number",
@@ -153,22 +151,6 @@ _FIELD_META: dict[str, dict[str, Any]] = {
             " If not, please provide your departure city."
         ),
     },
-}
-
-# ── Month name map for date parsing ───────────────────────────────────────────
-_MONTH_MAP: dict[str, int] = {
-    "jan": 1,
-    "feb": 2,
-    "mar": 3,
-    "apr": 4,
-    "may": 5,
-    "jun": 6,
-    "jul": 7,
-    "aug": 8,
-    "sep": 9,
-    "oct": 10,
-    "nov": 11,
-    "dec": 12,
 }
 
 
@@ -293,47 +275,30 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
 
 
 def _parse_date_answer(dates_str: str) -> tuple[str | None, str | None, float]:
-    """Parse a user-provided date string.
+    """Parse a user-provided start date string (HTML date picker YYYY-MM-DD or DD/MM/YYYY).
 
     Returns ``(departure_iso, return_iso_or_None, confidence)``.
     """
-    dates_str = dates_str.strip()
-    year = date.today().year
+    cleaned = dates_str.strip()
+    if not cleaned:
+        return None, None, 0.0
 
-    # ISO format: "2026-07-15"
+    # 1. ISO format: "YYYY-MM-DD" or "YYYY/MM/DD" (native HTML5 date picker output)
     try:
-        dep = date.fromisoformat(dates_str)
+        dep = date.fromisoformat(cleaned.replace("/", "-"))
         return dep.isoformat(), None, 1.0
     except ValueError:
         pass
 
-    # "Month DD-DD" or "Month DD to DD" (e.g. "July 15-20", "July 15 to 20")
-    m = re.match(r"([a-zA-Z]+)\s+(\d{1,2})\s*[-\u2013to]+\s*(\d{1,2})", dates_str, re.IGNORECASE)
-    if m:
-        month_key = m.group(1).lower()[:3]
-        month = _MONTH_MAP.get(month_key)
-        if month:
-            try:
-                dep = date(year, month, int(m.group(2)))
-                ret = date(year, month, int(m.group(3)))
-                return dep.isoformat(), ret.isoformat(), 0.9
-            except ValueError:
-                pass
+    # 2. "DD/MM/YYYY" or "DD-MM-YYYY" format
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            dep = datetime.strptime(cleaned, fmt).date()
+            return dep.isoformat(), None, 1.0
+        except ValueError:
+            pass
 
-    # "Month DD" (e.g. "July 15")
-    m2 = re.match(r"([a-zA-Z]+)\s+(\d{1,2})", dates_str, re.IGNORECASE)
-    if m2:
-        month_key = m2.group(1).lower()[:3]
-        month = _MONTH_MAP.get(month_key)
-        if month:
-            try:
-                dep = date(year, month, int(m2.group(2)))
-                return dep.isoformat(), None, 0.8
-            except ValueError:
-                pass
-
-    # Can't parse precisely — but user gave SOME date info; treat as high enough confidence
-    return None, None, 0.7
+    return None, None, 0.0
 
 
 def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
@@ -362,7 +327,9 @@ def _apply_defaults(parsed: _ParsedQuery) -> None:
     if _is_blank(parsed.destination.value):
         parsed.destination = _FieldConfidence(value="unknown destination", confidence=0.5)
     if not parsed.departure_date:
-        parsed.departure_date = (date.today() + timedelta(days=30)).isoformat()
+        dep = date.today() + timedelta(days=30)
+        parsed.departure_date = dep.isoformat()
+        parsed.return_date = (dep + timedelta(days=max(0, parsed.trip_days - 1))).isoformat()
         parsed.dates_confidence = 0.5
     if _is_blank(parsed.travelers.value) or parsed.travelers.confidence < 0.4:
         parsed.travelers = _FieldConfidence(value="1", confidence=0.8)
@@ -501,17 +468,20 @@ class OrchestratorAgent:
                 ret = (
                     date.fromisoformat(parsed.return_date)
                     if parsed.return_date
-                    else dep + timedelta(days=max(1, parsed.trip_days - 1))
+                    else dep + timedelta(days=max(0, parsed.trip_days - 1))
                 )
                 trip_dates = TripDates(departure=dep, return_date=ret)
             except ValueError:
                 dep = date.today() + timedelta(days=30)
-                trip_dates = TripDates(departure=dep, return_date=dep + timedelta(days=2))
+                trip_dates = TripDates(
+                    departure=dep,
+                    return_date=dep + timedelta(days=max(0, parsed.trip_days - 1)),
+                )
         else:
             dep = date.today() + timedelta(days=30)
             trip_dates = TripDates(
                 departure=dep,
-                return_date=dep + timedelta(days=max(1, parsed.trip_days - 1)),
+                return_date=dep + timedelta(days=max(0, parsed.trip_days - 1)),
             )
 
         tier = (

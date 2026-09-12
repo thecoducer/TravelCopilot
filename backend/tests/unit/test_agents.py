@@ -52,7 +52,7 @@ def base_state() -> dict[str, Any]:
         **initial_state(query="3 days in Leh from Kolkata", session_id="test-session"),
         "source": "Kolkata",
         "destination": "Leh",
-        "dates": TripDates(departure=date(2026, 7, 15), return_date=date(2026, 7, 18)),
+        "dates": TripDates(departure=date(2026, 7, 15), return_date=date(2026, 7, 17)),
         "travelers": 2,
         "budget": BudgetPreference(),
         "is_international": False,
@@ -127,6 +127,9 @@ class TestOrchestratorAgent:
         assert result.get("is_international") is False
         assert result.get("self_drive_intent") is False
         assert result.get("travelers") == 2
+        assert result.get("dates").trip_days == 5
+        assert result.get("dates").departure == date(2026, 7, 15)
+        assert result.get("dates").return_date == date(2026, 7, 19)
         # orchestrator no longer writes needs_clarification on the happy path
         assert "needs_clarification" not in result
 
@@ -290,6 +293,68 @@ class TestOrchestratorAgent:
         result = await agent(state)
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Leh"
+
+    @pytest.mark.asyncio
+    async def test_date_clarification_preserves_parsed_trip_days(self) -> None:
+        """When user provides a single departure date via calendar, parsed trip_days is preserved."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+
+        mock_response = _ParsedQuery(
+            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=_FieldConfidence(value="Ladakh", confidence=0.95),
+            departure_date=None,
+            trip_days=5,
+            travelers=_FieldConfidence(value="1", confidence=0.8),
+            budget_tier="mid",
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=0.0,
+            confidence=0.5,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(mock_response))
+
+        def mock_interrupt(val: dict) -> dict:
+            return {"dates": "2026-10-14"}
+
+        with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
+            result = await agent(
+                {"query": "I want to go to ladakh from kolkata for 5 days", "session_id": "s_clarify"}
+            )
+
+        assert result.get("source") == "Kolkata"
+        assert result.get("destination") == "Ladakh"
+        dates = result.get("dates")
+        assert dates is not None
+        assert dates.trip_days == 5
+        assert dates.departure == date(2026, 10, 14)
+        assert dates.return_date == date(2026, 10, 18)
+
+    def test_parse_date_answer_formats(self) -> None:
+        from app.agents.orchestrator import _parse_date_answer
+
+        # Standard HTML5 date picker ISO format
+        dep, ret, conf = _parse_date_answer("2026-10-14")
+        assert dep == "2026-10-14"
+        assert ret is None
+        assert conf == 1.0
+
+        # DD/MM/YYYY format
+        dep, ret, conf = _parse_date_answer("14/10/2026")
+        assert dep == "2026-10-14"
+        assert ret is None
+        assert conf == 1.0
+
+        # DD-MM-YYYY format
+        dep, ret, conf = _parse_date_answer("14-10-2026")
+        assert dep == "2026-10-14"
+        assert ret is None
+        assert conf == 1.0
+
+        # Empty / invalid format
+        dep, ret, conf = _parse_date_answer("invalid-date")
+        assert dep is None
+        assert ret is None
+        assert conf == 0.0
 
     @pytest.mark.asyncio
     async def test_max_clarification_rounds_exhausted_proceeds_with_defaults(self) -> None:

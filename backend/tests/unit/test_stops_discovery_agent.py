@@ -39,7 +39,7 @@ def _base_state(**overrides: Any) -> dict[str, Any]:
         **initial_state(query="trip", session_id="s"),
         "source": "Kolkata",
         "destination": "Arunachal Pradesh",
-        "dates": TripDates(departure=date(2026, 7, 1), return_date=date(2026, 7, 6)),  # 5 days
+        "dates": TripDates(departure=date(2026, 7, 1), return_date=date(2026, 7, 5)),  # 5 days
         "travelers": 2,
         "self_drive_intent": False,
     }

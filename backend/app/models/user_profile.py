@@ -30,8 +30,8 @@ class TripDates(BaseModel):
 
     @property
     def trip_days(self) -> int:
-        if self.return_date:
-            return max(1, (self.return_date - self.departure).days)
+        if self.return_date and self.return_date >= self.departure:
+            return (self.return_date - self.departure).days + 1
         return 1
 
 

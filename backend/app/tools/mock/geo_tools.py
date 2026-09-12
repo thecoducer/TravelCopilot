@@ -74,6 +74,7 @@ class MockDistanceMatrixTool:
 
 _KNOWN_COORDINATES: dict[str, tuple[float, float]] = {
     "leh": (34.1526, 77.5771),
+    "ladakh": (34.1526, 77.5771),
     "lisbon": (38.7223, -9.1393),
     "kolkata": (22.5726, 88.3639),
     "delhi": (28.6139, 77.2090),

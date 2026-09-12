@@ -44,8 +44,12 @@ from app.models.user_profile import (
 
 class TestTripDates:
     def test_basic(self):
+        d = TripDates(departure=date(2026, 10, 1), return_date=date(2026, 10, 5))
+        assert d.trip_days == 5
+
+    def test_four_days(self):
         d = TripDates(departure=date(2026, 10, 1), return_date=date(2026, 10, 4))
-        assert d.trip_days == 3
+        assert d.trip_days == 4
 
     def test_no_return_date(self):
         d = TripDates(departure=date(2026, 10, 1))
@@ -53,7 +57,7 @@ class TestTripDates:
 
     def test_same_day_trip(self):
         d = TripDates(departure=date(2026, 10, 1), return_date=date(2026, 10, 1))
-        assert d.trip_days == 1  # clamped to 1
+        assert d.trip_days == 1
 
     def test_flexibility_defaults(self):
         d = TripDates(departure=date(2026, 9, 1))

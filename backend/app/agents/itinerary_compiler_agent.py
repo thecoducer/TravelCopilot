@@ -302,8 +302,20 @@ class ItineraryCompilerAgent:
         itinerary = _inject_transport(itinerary, transport_rec, transport_alts)
 
         # ── Step 7: Stamp metadata ────────────────────────────────────────────
+        dest_list = itinerary.destinations if itinerary.destinations else [destination]
+        segments = itinerary.segments
+        if not segments:
+            stub = _build_stub(source, destination, start_date, trip_days, travelers)
+            segments = stub.segments
+
         itinerary = itinerary.model_copy(
             update={
+                "source": source,
+                "destination": destination,
+                "destinations": dest_list,
+                "dates": dates,
+                "travelers": travelers,
+                "segments": segments,
                 "source_query": state.get("query", ""),
                 "created_at": datetime.now(tz=UTC),
                 "budget_breakdown": budget_report,
@@ -578,10 +590,11 @@ def _assemble_stop_days(
             )
             food_opts.append(FoodOptions(meal_type=meal_type, options=[venue] if venue else []))
 
+        day_num = (alloc.day_index + 1) if (alloc and getattr(alloc, "day_index", None) is not None) else (offset + 1)
         days.append(
             Day(
                 date=alloc.date if alloc else date.today(),
-                day_number=offset + 1,
+                day_number=day_num,
                 location=stop.name,
                 morning=TimeSlotOptions(slot="morning", options=slots["morning"]),
                 afternoon=TimeSlotOptions(slot="afternoon", options=slots["afternoon"]),

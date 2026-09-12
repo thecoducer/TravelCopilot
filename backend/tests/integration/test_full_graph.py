@@ -176,15 +176,19 @@ def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary
 
 
 def _make_fake_llm(
-    destination: str = "Osaka", is_intl: bool = False, route: _Route | None = None
+    destination: str = "Osaka",
+    is_intl: bool = False,
+    route: _Route | None = None,
+    parsed_query: _ParsedQuery | None = None,
 ) -> MagicMock:
     """Return a MagicMock LLM that dispatches by schema type."""
     _responses: dict[type, Any] = {
-        _ParsedQuery: _ParsedQuery(
+        _ParsedQuery: parsed_query
+        or _ParsedQuery(
             source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
             destination=_FieldConfidence(value=destination, confidence=0.95),
             departure_date="2026-10-14",
-            return_date="2026-10-17",
+            return_date="2026-10-16",
             trip_days=3,
             travelers=_FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
@@ -640,6 +644,71 @@ class TestMultiStopRoute:
         )
         dirang_segments = [seg for seg in itinerary.segments if seg.location == "Dirang"]
         assert len(dirang_segments) == 2
+
+    def test_ladakh_5_day_trip_continuous_day_numbers_and_source(self) -> None:
+        """A 5-day multi-stop Ladakh trip must generate 5 days sequentially numbered from 1 to 5."""
+        ladakh_route = _Route(
+            route_discovery_status="multi_stop_provisional",
+            overnight_stops=[
+                _Stop(name="Leh", nights_hint=3),
+                _Stop(name="Nubra Valley", nights_hint=2),
+            ],
+            gateway_options=[
+                _GatewayOption(
+                    option_id="gw_direct",
+                    gateway_name="Direct Flight to Leh",
+                    gateway_stop=_Stop(name="Leh", stop_kind="overnight"),
+                    is_recommended=True,
+                )
+            ],
+        )
+        ladakh_parsed = _ParsedQuery(
+            source_city=_FieldConfidence(value="Kolkata", confidence=1.0),
+            destination=_FieldConfidence(value="Ladakh", confidence=1.0),
+            departure_date="2026-10-14",
+            return_date="2026-10-18",
+            trip_days=5,
+            travelers=_FieldConfidence(value="1", confidence=1.0),
+            budget_tier="mid",
+            interests=["nature", "photography"],
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=1.0,
+        )
+
+        fake_llm = _make_fake_llm(
+            destination="Ladakh",
+            is_intl=False,
+            route=ladakh_route,
+            parsed_query=ladakh_parsed,
+        )
+
+        import asyncio
+
+        async def _run() -> dict[str, Any]:
+            factory = ToolFactory(mock=True)
+            compiled = build_graph(tool_factory=factory, llm=fake_llm)
+            state = initial_state(
+                query="I want to go to ladakh from kolkata for 5 days", session_id="ladakh-5d-test"
+            )
+            state["user_profile"] = UserProfile(user_id="ladakh-5d-test", food_preferences_configured=True)
+            return await compiled.ainvoke(state)
+
+        result = asyncio.run(_run())
+        itinerary = result.get("itinerary")
+        assert itinerary is not None
+        assert itinerary.source == "Kolkata"
+        assert itinerary.dates is not None
+        assert itinerary.dates.trip_days == 5
+        assert len(itinerary.segments) == 2
+
+        # Collect all days across segments
+        all_days = [day for seg in itinerary.segments for day in seg.days]
+        assert len(all_days) == 5, f"Expected 5 days total, got {len(all_days)}"
+
+        # Assert sequential continuous day numbers: 1, 2, 3, 4, 5
+        day_numbers = [day.day_number for day in all_days]
+        assert day_numbers == [1, 2, 3, 4, 5], f"Day numbers should be sequential [1, 2, 3, 4, 5], got {day_numbers}"
 
     def test_discovery_failed_pauses_for_clarification(self) -> None:
         from langgraph.checkpoint.memory import MemorySaver
