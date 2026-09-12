@@ -223,7 +223,52 @@ class TestOrchestratorAgent:
     def test_quick_extract_days(self) -> None:
         assert quick_extract_days("3 days trip to Goa") == 3
         assert quick_extract_days("10 day vacation") == 10
-        assert quick_extract_days("weekend trip") is None
+        assert quick_extract_days("6-day trek in Ladakh") == 6
+        assert quick_extract_days("I want to visit Ladakh from Kolkata for 6 days.") == 6
+        assert quick_extract_days("1 week in Japan") == 7
+        assert quick_extract_days("a week holiday") == 7
+        assert quick_extract_days("5 nights in Paris") == 6
+        assert quick_extract_days("weekend trip") == 2
+        assert quick_extract_days("summer holiday") is None
+
+    @pytest.mark.asyncio
+    async def test_deterministic_duration_override_from_query(self) -> None:
+        """Query duration '6 days' deterministically overrides LLM default trip_days=3."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+
+        # Mock LLM returns default trip_days=3, missing the 'for 6 days' in query
+        mock_response = _ParsedQuery(
+            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=_FieldConfidence(value="Ladakh", confidence=0.95),
+            departure_date=None,
+            trip_days=3,  # LLM failed to extract 6
+            travelers=_FieldConfidence(value="1", confidence=0.8),
+            budget_tier="mid",
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=0.0,
+            confidence=0.5,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(mock_response))
+
+        def mock_interrupt(val: dict) -> dict:
+            return {"dates": "2026-10-28"}
+
+        with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
+            result = await agent(
+                {
+                    "query": "I want to visit Ladakh from Kolkata for 6 days.",
+                    "session_id": "s_6day_test",
+                }
+            )
+
+        assert result.get("source") == "Kolkata"
+        assert result.get("destination") == "Ladakh"
+        dates = result.get("dates")
+        assert dates is not None
+        assert dates.trip_days == 6
+        assert dates.departure == date(2026, 10, 28)
+        assert dates.return_date == date(2026, 11, 2)
 
     @pytest.mark.asyncio
     async def test_clarification_interrupt_contains_input_type(self) -> None:
@@ -296,7 +341,7 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_date_clarification_preserves_parsed_trip_days(self) -> None:
-        """When user provides a single departure date via calendar, parsed trip_days is preserved."""
+        """A single calendar date preserves the parsed trip duration."""
         from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
 
         mock_response = _ParsedQuery(
@@ -318,7 +363,10 @@ class TestOrchestratorAgent:
 
         with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
             result = await agent(
-                {"query": "I want to go to ladakh from kolkata for 5 days", "session_id": "s_clarify"}
+                {
+                    "query": "I want to go to ladakh from kolkata for 5 days",
+                    "session_id": "s_clarify",
+                }
             )
 
         assert result.get("source") == "Kolkata"

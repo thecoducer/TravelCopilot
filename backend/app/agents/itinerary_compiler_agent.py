@@ -590,7 +590,8 @@ def _assemble_stop_days(
             )
             food_opts.append(FoodOptions(meal_type=meal_type, options=[venue] if venue else []))
 
-        day_num = (alloc.day_index + 1) if (alloc and getattr(alloc, "day_index", None) is not None) else (offset + 1)
+        has_day_index = alloc and getattr(alloc, "day_index", None) is not None
+        day_num = (alloc.day_index + 1) if has_day_index else (offset + 1)
         days.append(
             Day(
                 date=alloc.date if alloc else date.today(),

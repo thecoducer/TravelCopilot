@@ -691,7 +691,9 @@ class TestMultiStopRoute:
             state = initial_state(
                 query="I want to go to ladakh from kolkata for 5 days", session_id="ladakh-5d-test"
             )
-            state["user_profile"] = UserProfile(user_id="ladakh-5d-test", food_preferences_configured=True)
+            state["user_profile"] = UserProfile(
+                user_id="ladakh-5d-test", food_preferences_configured=True
+            )
             return await compiled.ainvoke(state)
 
         result = asyncio.run(_run())
@@ -708,7 +710,10 @@ class TestMultiStopRoute:
 
         # Assert sequential continuous day numbers: 1, 2, 3, 4, 5
         day_numbers = [day.day_number for day in all_days]
-        assert day_numbers == [1, 2, 3, 4, 5], f"Day numbers should be sequential [1, 2, 3, 4, 5], got {day_numbers}"
+        assert day_numbers == [1, 2, 3, 4, 5], (
+            "Day numbers should be sequential [1, 2, 3, 4, 5], "
+            f"got {day_numbers}"
+        )
 
     def test_discovery_failed_pauses_for_clarification(self) -> None:
         from langgraph.checkpoint.memory import MemorySaver

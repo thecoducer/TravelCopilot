@@ -175,7 +175,11 @@ class _ParsedQuery(BaseModel):
         default=None, description="ISO-8601 departure date, null if not mentioned"
     )
     return_date: str | None = None
-    trip_days: int = Field(default=3, ge=1)
+    trip_days: int = Field(
+        default=3,
+        ge=1,
+        description="Total duration of the trip in days (e.g. 6 for 'for 6 days', 7 for '1 week')",
+    )
     travelers: _FieldConfidence = Field(
         default_factory=lambda: _FieldConfidence(value="1", confidence=0.8)
     )
@@ -193,6 +197,7 @@ For each field that has ambiguity, set a lower confidence score.
 Rules:
 - If the departure date is relative (e.g. "next month"), resolve to ISO-8601 assuming today is {today}.
 - If no date is mentioned at all, set departure_date=null and dates_confidence=0.0.
+- trip_days: extract the duration of the trip in days (e.g. "6 days" -> 6, "10-day trip" -> 10, "1 week" -> 7, "weekend" -> 2). Default to 3 only if no duration is mentioned or implied.
 - Set is_international=true only when source and destination are clearly in different countries.
 - Set self_drive_intent=true when the user explicitly mentions renting a vehicle or driving.
 - budget_tier: "budget" for hostel/cheapest/backpacker; "luxury" for five-star/premium; else "mid".
@@ -416,6 +421,11 @@ class OrchestratorAgent:
                     rounds_taken += 1
                     continue
 
+            # Deterministic override for trip duration if explicitly stated in query
+            extracted_days = quick_extract_days(query)
+            if extracted_days is not None and parsed is not None:
+                parsed.trip_days = extracted_days
+
             # ── UserProfile pre-fill (idempotent) ────────────────────────────
             _apply_profile_prefill(parsed, user_profile)
 
@@ -545,10 +555,26 @@ class OrchestratorAgent:
 
 # ── Helper ───────────────────────────────────────────────────────────────────
 
-_DAYS_PATTERN = re.compile(r"\b(\d+)\s*days?\b", re.IGNORECASE)
+_DAYS_PATTERN = re.compile(r"\b(\d+)\s*[- ]?days?\b", re.IGNORECASE)
+_NIGHTS_PATTERN = re.compile(r"\b(\d+)\s*[- ]?nights?\b", re.IGNORECASE)
+_WEEKS_PATTERN = re.compile(r"\b(\d+)\s*[- ]?weeks?\b", re.IGNORECASE)
 
 
 def quick_extract_days(query: str) -> int | None:
     """Return number of trip days from a query string if mentioned."""
+    if not query:
+        return None
     m = _DAYS_PATTERN.search(query)
-    return int(m.group(1)) if m else None
+    if m:
+        return max(1, int(m.group(1)))
+    m_nights = _NIGHTS_PATTERN.search(query)
+    if m_nights:
+        return max(1, int(m_nights.group(1)) + 1)
+    m_weeks = _WEEKS_PATTERN.search(query)
+    if m_weeks:
+        return max(1, int(m_weeks.group(1)) * 7)
+    if re.search(r"\ba\s+week\b|\bone\s+week\b", query, re.IGNORECASE):
+        return 7
+    if re.search(r"\bweekend\b", query, re.IGNORECASE):
+        return 2
+    return None
