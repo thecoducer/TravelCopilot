@@ -1,7 +1,10 @@
 .PHONY: dev dev-down dev-logs test lint lint-fix format format-check check-deps \
-	package docker-build build verify evals evals-golden migrate help
+	package docker-build build verify evals evals-golden migrate help \
+	frontend-install frontend-dev frontend-lint frontend-typecheck frontend-test \
+	frontend-build frontend-docker-build
 
 BACKEND_DIR := backend
+FRONTEND_DIR := frontend
 COMPOSE := docker compose
 
 # ── Terminal colors for section banners ─────────────────────────────────────
@@ -17,16 +20,16 @@ endef
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-dev: ## Start all services with docker-compose
-	$(call banner,Starting TravelCopilot dev stack)
+dev: ## Start backend and frontend with root Docker Compose
+	$(call banner,Starting TravelCopilot backend and frontend)
 	$(COMPOSE) up --build
 
 dev-down: ## Stop all services
 	$(call banner,Stopping TravelCopilot dev stack)
 	$(COMPOSE) down
 
-dev-logs: ## Tail backend logs
-	$(COMPOSE) logs -f backend
+dev-logs: ## Tail backend and frontend logs
+	$(COMPOSE) logs -f backend frontend
 
 test: ## Run backend test suite
 	$(call banner,Running backend test suite)
@@ -64,16 +67,41 @@ package: ## Build backend Python wheel and source distribution
 docker-build: ## Build backend Docker image
 	docker build -t travelcopilot-backend $(BACKEND_DIR)/
 
-build: package docker-build ## Build backend Python package and Docker image
+frontend-install: ## Install frontend dependencies
+	cd $(FRONTEND_DIR) && npm install
+
+frontend-dev: ## Run the frontend dev server on port 3001
+	cd $(FRONTEND_DIR) && npm run dev
+
+frontend-lint: ## Lint the frontend
+	cd $(FRONTEND_DIR) && npm run lint
+
+frontend-typecheck: ## Type-check the frontend
+	cd $(FRONTEND_DIR) && npm run typecheck
+
+frontend-test: ## Run frontend unit tests
+	cd $(FRONTEND_DIR) && npm run test
+
+frontend-build: ## Production build of the frontend
+	cd $(FRONTEND_DIR) && npm run build
+
+frontend-docker-build: ## Build frontend Docker image
+	docker build -t travelcopilot-frontend $(FRONTEND_DIR)/
+
+build: package docker-build frontend-build frontend-docker-build ## Build backend + frontend artifacts and Docker images
 	@printf "$(GREEN)$(BOLD)==> Build complete$(RESET)\n"
 
-verify: ## Auto-fix, validate, test, and build backend artifacts
+verify: ## Auto-fix, validate, test, and build backend + frontend artifacts
 	$(call banner,Running full verify pipeline)
 	$(MAKE) check-deps
+	$(MAKE) frontend-install
 	$(MAKE) format
 	$(MAKE) lint-fix
 	$(MAKE) format-check
 	$(MAKE) lint
+	$(MAKE) frontend-lint
+	$(MAKE) frontend-typecheck
 	$(MAKE) test
+	$(MAKE) frontend-test
 	$(MAKE) build
 	@printf "$(GREEN)$(BOLD)==> Verify pipeline passed$(RESET)\n"

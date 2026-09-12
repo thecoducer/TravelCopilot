@@ -76,14 +76,15 @@ class Experience(BaseModel):
     name: str = Field(description="Name of the attraction, activity, or viewpoint.")
     type: str = Field(
         default="tourist_attraction",
-        description="Category type (e.g., historical_landmark, museum, park, viewpoint, temple, art_gallery, outdoor_adventure).",
+        description=(
+            "Category type (e.g., historical_landmark, museum, park, viewpoint, "
+            "temple, art_gallery, outdoor_adventure)."
+        ),
     )
     description: str = Field(
         description="Engaging 1-2 sentence description explaining why it's worth visiting."
     )
-    duration_hours: float = Field(
-        default=2.0, ge=0.0, description="Estimated duration in hours."
-    )
+    duration_hours: float = Field(default=2.0, ge=0.0, description="Estimated duration in hours.")
     price_range: str = Field(
         default="Moderate",
         description="Price tier: 'Free', 'Inexpensive', 'Moderate', 'Expensive', or fee estimate.",
@@ -101,7 +102,9 @@ class Experience(BaseModel):
     opening_hours: OpeningHours | None = None
     best_time_to_visit: str | None = Field(
         default=None,
-        description="Recommended time of day or conditions (e.g., 'Morning', 'Late Afternoon', 'Sunset').",
+        description=(
+            "Recommended time of day or conditions (e.g., 'Morning', 'Late Afternoon', 'Sunset')."
+        ),
     )
     source: str = Field(
         default="llm",

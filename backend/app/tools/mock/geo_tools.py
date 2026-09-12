@@ -97,7 +97,9 @@ _KNOWN_COORDINATES: dict[str, tuple[float, float]] = {
 
 class MockGeocodeTool:
     name = "geocode"
-    description = "Mock geocoding tool — returns deterministic lat/lng coordinates, no network calls."
+    description = (
+        "Mock geocoding tool — returns deterministic lat/lng coordinates, no network calls."
+    )
 
     async def run(self, location: str = "", **kwargs: object) -> dict[str, Any]:
         loc = location.lower().split(",")[0].strip()

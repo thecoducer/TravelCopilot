@@ -102,4 +102,3 @@ class FxConverter:
                 "Actual costs may vary with live rates."
             )
         return None
-

@@ -88,29 +88,23 @@ class BudgetPlannerAgent:
     ) -> tuple[float, float]:
         """Estimate food and activity totals in `dest_currency` using LLM world knowledge."""
         try:
+
+            def extract_name(item: Any) -> str:
+                name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
+                return name if isinstance(name, str) else ""
+
             # Extract sample venue names if available from state
             food_names: list[str] = []
             if isinstance(food_recs, list):
-                food_names = [
-                    f.get("name") if isinstance(f, dict) else getattr(f, "name", str(f))
-                    for f in food_recs[:5]
-                ]
+                food_names = [extract_name(item) for item in food_recs[:5]]
             elif isinstance(food_recs, dict):
                 for item in list(food_recs.values())[:5]:
                     if isinstance(item, list) and item:
-                        first = item[0]
-                        food_names.append(
-                            first.get("name")
-                            if isinstance(first, dict)
-                            else getattr(first, "name", str(first))
-                        )
+                        food_names.append(extract_name(item[0]))
 
             exp_names: list[str] = []
             if isinstance(experiences, list):
-                exp_names = [
-                    e.get("name") if isinstance(e, dict) else getattr(e, "name", str(e))
-                    for e in experiences[:5]
-                ]
+                exp_names = [extract_name(item) for item in experiences[:5]]
 
             prompt = (
                 f"Destination: {destination}\n"

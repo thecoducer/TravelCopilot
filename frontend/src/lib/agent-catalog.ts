@@ -1,0 +1,138 @@
+/**
+ * Static catalog of graph nodes shown to the user, and the phase grouping used
+ * to infer which agents are currently active (the backend does not yet emit a
+ * per-node `agent_start`, so "in progress" is derived from graph topology plus
+ * the `agent_done` events actually received).
+ */
+
+export type AgentInfo = {
+  label: string;
+  description: string;
+};
+
+export const AGENT_CATALOG: Record<string, AgentInfo> = {
+  orchestrator: {
+    label: "Understanding your request",
+    description: "Reading your trip request and filling in the essentials",
+  },
+  stops_discovery: {
+    label: "Building the route",
+    description: "Working out the stops and legs of your trip",
+  },
+  visa: {
+    label: "Checking visa requirements",
+    description: "Looking up visa rules for your route",
+  },
+  transport_search: {
+    label: "Searching transport options",
+    description: "Looking for flights, trains, and transit routes",
+  },
+  stay_search: {
+    label: "Comparing places to stay",
+    description: "Gathering hotel and stay options",
+  },
+  local_experiences: {
+    label: "Finding local experiences",
+    description: "Discovering attractions and things to do",
+  },
+  transport_optimizer: {
+    label: "Optimizing your route",
+    description: "Weighing transport options against each other",
+  },
+  stay_analyst: {
+    label: "Ranking your stay options",
+    description: "Shortlisting the best places to stay",
+  },
+  self_drive_search: {
+    label: "Checking self-drive options",
+    description: "Looking into rentals and driving routes",
+  },
+  reviews: {
+    label: "Reading traveler reviews",
+    description: "Summarizing reviews for top picks",
+  },
+  food_discovery: {
+    label: "Finding great food",
+    description: "Looking for restaurants and local food",
+  },
+  budget_planner: {
+    label: "Balancing the budget",
+    description: "Adding up costs and checking them against your budget",
+  },
+  safety: {
+    label: "Checking safety and local conditions",
+    description: "Reviewing safety notes and local conditions",
+  },
+  itinerary_compiler: {
+    label: "Assembling the itinerary",
+    description: "Putting the full itinerary together",
+  },
+  route_clarification: {
+    label: "Confirming your route",
+    description: "Needs a bit more detail about your route",
+  },
+  food_clarification: {
+    label: "Confirming food preferences",
+    description: "Needs a bit more detail about food preferences",
+  },
+  discovery_failed_end: {
+    label: "Needs more information",
+    description: "Couldn't build a route with the details given",
+  },
+};
+
+export type PlanningPhase = {
+  id: number;
+  name: string;
+  agents: string[];
+};
+
+/** Ordered phases mirroring the graph's actual execution layers. */
+export const PLANNING_PHASES: PlanningPhase[] = [
+  { id: 0, name: "Understanding your trip", agents: ["orchestrator"] },
+  { id: 1, name: "Building the route", agents: ["stops_discovery"] },
+  { id: 2, name: "Checking destination details", agents: ["visa"] },
+  {
+    id: 3,
+    name: "Searching options",
+    agents: ["transport_search", "stay_search", "local_experiences"],
+  },
+  {
+    id: 4,
+    name: "Comparing and ranking",
+    agents: ["transport_optimizer", "stay_analyst", "self_drive_search"],
+  },
+  {
+    id: 5,
+    name: "Finalizing details",
+    agents: ["reviews", "food_discovery", "budget_planner", "safety"],
+  },
+  { id: 6, name: "Assembling the itinerary", agents: ["itinerary_compiler"] },
+];
+
+export function agentInfo(agent: string): AgentInfo {
+  return (
+    AGENT_CATALOG[agent] ?? {
+      label: titleizeAgentId(agent),
+      description: "Working on your trip",
+    }
+  );
+}
+
+export function titleizeAgentId(agent: string): string {
+  return agent
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/** Agents from the current phase that have not yet posted `agent_done`. */
+export function activeAgentsFor(completedAgents: ReadonlySet<string>): string[] {
+  for (const phase of PLANNING_PHASES) {
+    const pending = phase.agents.filter((agent) => !completedAgents.has(agent));
+    if (pending.length > 0) {
+      return pending;
+    }
+  }
+  return [];
+}

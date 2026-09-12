@@ -9,4 +9,3 @@ __all__ = [
     "FxConverter",
     "render_pdf",
 ]
-

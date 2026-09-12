@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import pytest
 
-from app.models.reports import FxRateEntry
 from app.services.fx_converter_service import FxConverter
 from app.tools.factory import ToolFactory
 
@@ -18,7 +17,9 @@ class MockFxTool:
         self.raise_error = raise_error
         self.calls: list[dict[str, Any]] = []
 
-    async def run(self, amount: float = 1.0, base: str = "USD", quote: str = "INR", **kwargs: Any) -> dict[str, Any]:
+    async def run(
+        self, amount: float = 1.0, base: str = "USD", quote: str = "INR", **kwargs: Any
+    ) -> dict[str, Any]:
         self.calls.append({"amount": amount, "base": base, "quote": quote})
         if self.raise_error:
             raise RuntimeError("FX API connection failed")

@@ -563,7 +563,9 @@ class TestLocalExperiencesAgent:
             "route_discovery_status": "multi_stop_provisional",
             "stops": {
                 "stop_1": TripStop(stop_id="stop_1", name="Leh", stop_kind="overnight", sequence=0),
-                "stop_2": TripStop(stop_id="stop_2", name="Nubra", stop_kind="overnight", sequence=1),
+                "stop_2": TripStop(
+                    stop_id="stop_2", name="Nubra", stop_kind="overnight", sequence=1
+                ),
             },
             "route_version": 1,
         }

@@ -32,7 +32,8 @@ high-quality list of 6 to 12 top experiences and attractions.
 Rules:
 1. Tailor choices to the traveler's specified interests, travel style, and fitness level.
 2. Include both iconic must-see highlights and authentic local gems.
-3. Provide realistic duration_hours (e.g. 1.0 - 4.0) and best_time_to_visit (e.g. 'Morning for soft light and fewer crowds', 'Sunset').
+3. Provide realistic duration_hours (e.g. 1.0 - 4.0) and best_time_to_visit
+    (e.g. 'Morning for soft light and fewer crowds', 'Sunset').
 4. Estimate realistic price_range ('Free', 'Inexpensive', 'Moderate', 'Expensive').
 5. Estimate approximate latitude (lat) and longitude (lng) coordinates if known.
 6. Avoid generic or fabricated places — only suggest real, verifiable venues and landmarks.
@@ -160,7 +161,7 @@ class LocalExperiencesAgent:
         session_id: str,
         log: Any,
     ) -> list[Experience]:
-        """Query the LLM with structured output to generate personalized attraction recommendations."""
+        """Generate personalized attraction recommendations with structured LLM output."""
         llm = self._llm or get_llm("local_experiences", session_id)
         structured_llm = llm.with_structured_output(ExperiencesOutput)
 
@@ -175,9 +176,12 @@ class LocalExperiencesAgent:
             if dep:
                 dates_info = f"Travel Dates: {dep} to {ret or dep} (Month: {dep.strftime('%B')})"
 
+        interest_text = (
+            ", ".join(interests) if interests else ("General sightseeing, culture, nature")
+        )
         prompt = (
             f"Destination / Location: {location}\n"
-            f"User Interests: {', '.join(interests) if interests else 'General sightseeing, culture, nature'}\n"
+            f"User Interests: {interest_text}\n"
             f"Travel Style: {travel_style}\n"
             f"Fitness Level: {fitness_level}\n"
             f"{dates_info}\n\n"
@@ -202,7 +206,7 @@ class LocalExperiencesAgent:
         experiences: list[Experience],
         fallback_coords: tuple[float | None, float | None] | None = None,
     ) -> list[Experience]:
-        """Resolve valid geographic coordinates for each experience to enable downstream spatial clustering."""
+        """Resolve coordinates for downstream spatial clustering."""
         base_lat: float | None = fallback_coords[0] if fallback_coords else None
         base_lng: float | None = fallback_coords[1] if fallback_coords else None
         if base_lat is None or base_lng is None or base_lat == 0.0:
@@ -224,7 +228,7 @@ class LocalExperiencesAgent:
         base_lat: float | None,
         base_lng: float | None,
     ) -> Experience:
-        """Resolve coordinates for an individual experience, falling back to geocoding or offset coordinates."""
+        """Resolve coordinates, falling back to geocoding or offset coordinates."""
         lat = exp.lat
         lng = exp.lng
         if lat == 0.0 and lng == 0.0:
@@ -257,7 +261,9 @@ class LocalExperiencesAgent:
         return Experience(
             name=f"Explore {location}",
             type="tourist_attraction",
-            description=f"Discover the historic sights, vibrant streets, and local culture of {location}.",
+            description=(
+                f"Discover the historic sights, vibrant streets, and local culture of {location}."
+            ),
             duration_hours=2.5,
             price_range="Free",
             lat=lat,

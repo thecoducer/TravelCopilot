@@ -1,0 +1,249 @@
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.date {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.warning {
+  margin: 0 0 var(--space-2);
+  font-size: 0.78rem;
+  color: var(--color-danger);
+}
+
+.badges,
+.metaRow,
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.badges {
+  margin-bottom: var(--space-3);
+}
+
+.badge,
+.rank {
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-hover);
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.slots {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.slot {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.slotHeading,
+.optionTitleRow,
+.sectionHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.slotHeading {
+  margin-bottom: var(--space-2);
+}
+
+.slotLabel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-faint);
+}
+
+.slotPlace {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.slotReason {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.slotNotes,
+.note,
+.unresolved,
+.description,
+.reason {
+  margin: var(--space-1) 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+.unresolved,
+.warning {
+  color: var(--color-danger);
+}
+
+.options,
+.foodGrid {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.option {
+  display: flex;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: var(--color-canvas);
+}
+
+.image {
+  width: 96px;
+  height: 82px;
+  flex: 0 0 96px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-border);
+}
+
+.optionBody {
+  min-width: 0;
+  flex: 1;
+}
+
+.optionTitle,
+.mealTitle,
+.sectionHeading h6 {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--color-text);
+}
+
+.rank {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--color-text-faint);
+  padding: 0;
+}
+
+.metaRow {
+  margin-top: var(--space-2);
+  color: var(--color-text-faint);
+  font-size: 0.72rem;
+}
+
+.reason {
+  color: var(--color-text);
+}
+
+.links {
+  margin-top: var(--space-2);
+}
+
+.links a,
+.foodOption a {
+  color: var(--color-accent-hover);
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.foodSection {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.sectionHeading {
+  margin-bottom: var(--space-2);
+}
+
+.sectionHeading span {
+  color: var(--color-text-faint);
+  font-size: 0.72rem;
+}
+
+.foodGrid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.meal {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
+.mealTitle {
+  text-transform: capitalize;
+}
+
+.foodOption {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.foodOption .image {
+  width: 60px;
+  height: 56px;
+  flex-basis: 60px;
+}
+
+.foodOption strong {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.foodOption p,
+.foodOption small {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 560px) {
+  .option {
+    display: block;
+  }
+
+  .option .image {
+    width: 100%;
+    height: 140px;
+    margin-bottom: var(--space-2);
+  }
+}
