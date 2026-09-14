@@ -50,6 +50,7 @@ from app.models.transport import (
     TransportRecommendation,
 )
 from app.models.user_profile import BudgetPreference, BudgetTier, UserProfile
+from app.services.tool_response_store import ToolResponseStore
 from app.tools.factory import ToolFactory
 
 # ── Fake LLM factory ──────────────────────────────────────────────────────────
@@ -353,6 +354,14 @@ def _run_graph_with_fake_llm(
     return asyncio.run(_run())
 
 
+def _has_recorded_tool_responses() -> bool:
+    response_store = ToolResponseStore()
+    fingerprint = response_store.fingerprint(
+        {"origin": "KOL", "destination": "OSA", "departure_date": "2026-10-14"}
+    )
+    return response_store.find_latest_success("search_flights", fingerprint) is not None
+
+
 class TestFullGraph:
     def test_food_preferences_interrupt_and_resume(self) -> None:
         """An incomplete profile must supply food preferences before food search runs."""
@@ -409,7 +418,7 @@ class TestFullGraph:
         assert len(itinerary.segments) >= 1
         assert len(itinerary.segments[0].days) == 3
 
-        # Accommodation shortlist (may be empty if no mock fixture for this destination)
+        # Accommodation shortlist may be empty when the replay archive lacks this request.
         stays = result.get("stays_shortlist", [])
         assert isinstance(stays, list), "stays_shortlist must be a list"
         # Each shortlisted hotel must have personalization_reason + price_disclaimer
@@ -450,6 +459,8 @@ class TestFullGraph:
 
     # Case 4: route optimisation — alternatives + price_disclaimer on legs
     def test_transport_alternatives_populated(self) -> None:
+        if not _has_recorded_tool_responses():
+            pytest.skip("requires recorded tool responses under backend/tool_responses")
         result = _run_graph_with_fake_llm(
             query="Kolkata to Leh 4 days",
             destination="Leh",
@@ -580,7 +591,7 @@ class TestFullGraph:
             pytest.skip("Visa report not populated — check is_international routing")
         assert visa.confidence in ("high", "medium", "low")
         # last_verified_at is set by the agent when it receives at least one source
-        # In mock mode with no official source fixture, confidence may be "low"
+        # With no official source recording, confidence may be "low"
         assert visa.confidence is not None
 
 
@@ -711,8 +722,7 @@ class TestMultiStopRoute:
         # Assert sequential continuous day numbers: 1, 2, 3, 4, 5
         day_numbers = [day.day_number for day in all_days]
         assert day_numbers == [1, 2, 3, 4, 5], (
-            "Day numbers should be sequential [1, 2, 3, 4, 5], "
-            f"got {day_numbers}"
+            f"Day numbers should be sequential [1, 2, 3, 4, 5], got {day_numbers}"
         )
 
     def test_discovery_failed_pauses_for_clarification(self) -> None:

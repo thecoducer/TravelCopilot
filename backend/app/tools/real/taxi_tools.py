@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
-
-from app.config import settings
+from app.config import TOOL_RUNTIME_KEY
+from app.services.external_api_client import ExternalAPIClient, get_external_api_client
+from app.tools.real.places_tools import PlaceSearchTool
 
 
 class TaxiInfoTool:
     name = "search_taxi_info"
     description = "Google Places search for taxi services and taxi stands."
+
+    def __init__(self, client: ExternalAPIClient | None = None) -> None:
+        self._places = PlaceSearchTool(client or get_external_api_client())
 
     async def run(
         self, location: str = "", destination: str = "", **kwargs: object
@@ -20,25 +23,14 @@ class TaxiInfoTool:
         if not query_location:
             return {"options": [], "source": "google_places"}
 
-        headers = {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": settings.google_places_api_key or settings.google_maps_api_key,
-            "X-Goog-FieldMask": (
-                "places.displayName,places.formattedAddress,places.nationalPhoneNumber,"
-                "places.websiteUri,places.googleMapsUri,places.rating,places.userRatingCount"
-            ),
-        }
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(
-                "https://places.googleapis.com/v1/places:searchText",
-                headers=headers,
-                json={"textQuery": f"taxi service in {query_location}"},
-            )
-            response.raise_for_status()
-            data = response.json()
-
+        result = await self._places.run(
+            location=query_location,
+            query=f"taxi service in {query_location}",
+            included_types=["taxi_stand"],
+        )
+        runtime = result.pop(TOOL_RUNTIME_KEY, {})
         options = []
-        for place in data.get("places", []):
+        for place in result.get("places", []):
             options.append(
                 {
                     "name": place.get("displayName", {}).get("text"),
@@ -52,4 +44,4 @@ class TaxiInfoTool:
                     "source": "google_places",
                 }
             )
-        return {"options": options, "source": "google_places"}
+        return {"options": options, "source": "google_places", TOOL_RUNTIME_KEY: runtime}

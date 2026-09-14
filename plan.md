@@ -14,7 +14,7 @@
 
 A production-grade LangGraph multi-agent trip planning system built for real users to plan end-to-end domestic and international trips. Chat-first UI. LLM-agnostic via LiteLLM. Multi-modal transport via Google Routes API + SerpAPI + LLM hub reasoning. Agents are organised into 6 clear execution layers with explicit dependencies (Layer 1 now includes both route discovery and destination intelligence). Full observability: OpenTelemetry → Cloud Trace + local Jaeger, Langfuse (open-source, self-hostable) for LLM tracing and evals, Prometheus → Cloud Monitoring. Deploys to Google Cloud Run with Cloud SQL + Memorystore via Terraform.
 
-**Development strategy**: Mock-first → Real APIs → Frontend last. All external APIs (SerpAPI, Tavily, Google Maps) are mocked via fixture JSON during development. A `ToolFactory` controlled by `MOCK_EXTERNAL_APIS` env flag swaps mock ↔ real tools with zero agent code changes. Backend is Postman-testable before any frontend work begins.
+**Development strategy**: Real API capture → recorded-response replay → Frontend. A `ToolFactory` controlled by `MOCK_EXTERNAL_APIS` has exactly two modes: real invokes provider adapters and mock replays recorded real responses without network calls. Backend is Postman-testable before any frontend work begins.
 
 ---
 
@@ -24,7 +24,7 @@ Based on Google's Agent whitepaper and ReAct framework:
 
 1. **ReAct loop per agent**: Every agent follows Reason → Act → Observe → Reason. Each tool call is a discrete Act; results are fed back as Observe before the next reasoning step. Never fire-and-forget.
 2. **Memory tiers in TripState**: Short-term (current graph state), episodic (session history in Redis), long-term (UserProfile in DB). Agents read from all three tiers.
-3. **Tool abstraction layer**: All external calls go through a typed `BaseTool` protocol. Tools are injected into agents — never imported directly. Agents are fully testable with mock tools.
+3. **Tool abstraction layer**: All external calls go through a typed `BaseTool` protocol. Tools are injected into agents — never imported directly. Agents are fully testable with replay wrappers and isolated test doubles.
 4. **Self-refining**: `ItineraryCompilerAgent` runs a self-critique pass after compiling — checks transit times, schedule gaps, pace — and revises before finalising.
 5. **Guardrails**: Input sanitization at OrchestratorAgent (no prompt injection), Pydantic validation at every agent boundary, LiteLLM `BudgetManager` per-trip spend cap.
 6. **Single responsibility**: Search agents = pure tool calls (no LLM). Analyst agents = pure LLM reasoning (no API calls). One job per agent.
@@ -294,16 +294,7 @@ trip-planner/
 │   │   ├── agents/          # one file per agent
 │   │   ├── tools/
 │   │   │   ├── base.py      # BaseTool protocol
-│   │   │   ├── factory.py   # ToolFactory — reads MOCK_EXTERNAL_APIS, returns mock or real
-│   │   │   ├── mock/        # mock implementations — read from fixtures, no network calls
-│   │   │   │   ├── serpapi_tools.py
-│   │   │   │   ├── transit_tools.py
-│   │   │   │   ├── places_tools.py
-│   │   │   │   ├── tavily_tools.py
-│   │   │   │   ├── visa_tools.py
-│   │   │   │   ├── rental_tools.py
-│   │   │   │   ├── geo_tools.py
-│   │   │   │   ├── fx_tools.py
+│   │   │   ├── factory.py   # ToolFactory — replay wrapper or real adapter
 │   │   │   └── real/        # real API implementations (stubs → filled in Phase 5)
 │   │   │       ├── serpapi_tools.py
 │   │   │       ├── transit_tools.py
@@ -326,13 +317,12 @@ trip-planner/
 │   ├── evals/
 │   │   ├── datasets/        # domestic_trips.jsonl, international_trips.jsonl, edge_cases.jsonl
 │   │   ├── golden/          # human-verified ground truth for REAL-API runs (visa, transit existence, opening hours)
-│   │   ├── evaluators/      # 7 pure-Python evaluator scripts (mock-mode) + golden_accuracy (real-mode)
-│   │   ├── baselines.json   # baseline scores for regression detection (mock-mode)
-│   │   └── run_evals.py     # CI eval runner (--mode mock | golden)
+│   │   ├── evaluators/      # 7 pure-Python evaluator scripts (replay-mode) + golden_accuracy (real-mode)
+│   │   ├── baselines.json   # baseline scores for regression detection (replay-mode)
+│   │   └── run_evals.py     # CI eval runner (--mode replay | golden)
 │   ├── tests/
-│   │   ├── fixtures/        # realistic JSON fixture files per destination/scenario
-│   │   ├── unit/            # per-agent tests with mock tools injected
-│   │   └── integration/     # full graph tests (MOCK_EXTERNAL_APIS=true)
+│   │   ├── unit/            # per-agent tests with injected test doubles
+│   │   └── integration/     # full graph tests using recorded responses
 │   ├── postman/
 │   │   ├── TripPlanner.postman_collection.json
 │   │   ├── local.postman_environment.json
@@ -365,8 +355,8 @@ class Settings(BaseSettings):
     llm_model:               str   = "gpt-4o"
     llm_budget_per_trip_usd: float = 0.50
 
-    # When True: all tools use fixture JSON — no network calls, no API quota used.
-    # Set False only in Phase 5+ when real API keys are available.
+    # When True: tools replay exact successful real-mode recordings — no network calls.
+    # Set False when real provider API keys are available.
     mock_external_apis: bool = True
 
     serpapi_key:        str = ""   # required when mock_external_apis=False
@@ -426,21 +416,22 @@ class BaseTool(Protocol):
     async def run(self, **kwargs) -> dict: ...
 ```
 
-**`tools/factory.py`** — reads `settings.mock_external_apis`, returns the correct implementation:
+**`tools/factory.py`** — reads `settings.mock_external_apis`, returning a replay wrapper or real adapter:
 ```python
 class ToolFactory:
     def __init__(self, mock: bool = settings.mock_external_apis):
         self._mock = mock
 
     def get(self, tool_name: str) -> BaseTool:
-        module = "mock" if self._mock else "real"
-        # dynamically import from tools.mock.* or tools.real.*
-        ...
+        if self._mock:
+          # Replay the newest successful exact-match real recording.
+          ...
+        else:
+          # Dynamically import the registered adapter from tools.real.*.
+          ...
 ```
 
-All agents receive `list[BaseTool]` via constructor injection. In unit tests, `ToolFactory(mock=True)` is passed — zero network calls, zero patching needed. In Phase 5, flipping `MOCK_EXTERNAL_APIS=false` in `.env` and providing real API keys is the only change required.
-
-**Fixture files** (`tests/fixtures/`) contain realistic hardcoded JSON per destination and scenario (flights, hotels, places, food venues, scams, visa, rentals). Mock tools read from these files based on input params.
+All agents receive `list[BaseTool]` via constructor injection. In integration tests, `ToolFactory(mock=True)` replays recorded responses with zero network calls; a missing recording is a typed error. In production, flipping `MOCK_EXTERNAL_APIS=false` and providing real API keys is the only change required.
 
 ### 5. LangGraph StateGraph wiring (`graph/graph.py`)
 
@@ -795,7 +786,7 @@ lf = Langfuse(
 Runs on every PR in Cloud Build → **blocks merge if any eval score regresses >5%**.
 
 `run_evals.py` takes a `--mode` flag:
-- `--mode mock` (default, every PR): runs the 7 evaluators against fixtures, zero API quota, regression-gated on `baselines.json`.
+- `--mode replay` (default, every PR): runs the 7 evaluators against recorded responses, zero API quota, regression-gated on `baselines.json`.
 - `--mode golden` (scheduled / pre-release): sets `MOCK_EXTERNAL_APIS=false` and runs `golden_accuracy.py` against `evals/golden/*` with real APIs, asserting factual correctness against human-verified ground truth. Any visa/transit/opening-hours/FX mismatch fails the run — this is the gate that actually protects user-facing accuracy.
 
 **`evals/baselines.json`** — stores initial passing scores after first clean eval run. Committed to repo. Updated manually when intentional quality improvements are made.
@@ -1150,15 +1141,7 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/app/agents/budget_planner_agent.py` | Layer 4: cost aggregation + FX-normalised totals + budget verdict + `per_stop_accommodation_breakdown` |
 | `backend/app/agents/itinerary_compiler_agent.py` | Layer 5: geo-cluster + compile (`_compile_multi_stop` for route trips) + self-critique + deterministic final gate |
 | `backend/app/tools/base.py` | `BaseTool` protocol |
-| `backend/app/tools/factory.py` | `ToolFactory` — reads `MOCK_EXTERNAL_APIS`, returns mock or real tool instance |
-| `backend/app/tools/mock/serpapi_tools.py` | Mock: `MockFlightSearchTool`, `MockHotelSearchTool` (reads fixtures) |
-| `backend/app/tools/mock/transit_tools.py` | Mock: `MockTransitSearchTool` |
-| `backend/app/tools/mock/places_tools.py` | Mock: `MockPlaceSearchTool`, `MockPlaceDetailsTool` |
-| `backend/app/tools/mock/tavily_tools.py` | Mock: `MockTavilySearchTool` |
-| `backend/app/tools/mock/visa_tools.py` | Mock: `MockVisaCentreSearchTool`, `MockEmbassySearchTool` |
-| `backend/app/tools/mock/rental_tools.py` | Mock: `MockRentalSearchTool`, `MockFuelPriceTool` |
-| `backend/app/tools/mock/geo_tools.py` | Mock: `MockClusterByProximityTool`, `MockDistanceMatrixTool` |
-| `backend/app/tools/mock/fx_tools.py` | Mock: `MockCurrencyConvertTool` (reads `fx_rates.json` fixture) |
+| `backend/app/tools/factory.py` | `ToolFactory` — replay wrapper in `MOCK_EXTERNAL_APIS` mode, real adapters otherwise |
 | `backend/app/tools/real/serpapi_tools.py` | Real: `FlightSearchTool`, `HotelSearchTool` (SerpAPI) |
 | `backend/app/tools/real/transit_tools.py` | Real: `TransitSearchTool` (Google Routes API — transit mode) |
 | `backend/app/tools/real/places_tools.py` | Real: `PlaceSearchTool`, `PlaceDetailsTool` (Google Places API) |
@@ -1194,9 +1177,8 @@ Step 5:  ItineraryCompilerAgent          (after all Step 4 complete)
 | `backend/evals/evaluators/golden_accuracy.py` | (J, real-API) Live output vs `evals/golden/*` ground truth — visa/transit/hours/FX |
 | `backend/evals/baselines.json` | Baseline eval scores for CI regression detection (mock-mode) |
 | `backend/evals/run_evals.py` | CI eval runner (`--mode mock` per-PR │ `--mode golden` pre-release) → posts scores to Langfuse, exits 1 if regression |
-| `backend/tests/fixtures/` | Realistic JSON fixtures per destination/scenario (flights, hotels, places, weather, scams, visa, rentals, FX) |
-| `backend/tests/unit/` | Per-agent unit tests with mock tools injected |
-| `backend/tests/integration/` | Full graph tests (4 scenarios, MOCK_EXTERNAL_APIS=true) |
+| `backend/tests/unit/` | Per-agent unit tests with injected test doubles |
+| `backend/tests/integration/` | Full graph tests using recorded responses (`MOCK_EXTERNAL_APIS=true`) |
 | `backend/postman/TripPlanner.postman_collection.json` | All endpoints with test assertions |
 | `backend/postman/local.postman_environment.json` | Local env (`base_url=http://localhost:8000`) |
 | `Makefile` | Targets: `dev`, `test`, `lint`, `evals`, `evals-golden`, `migrate` |
@@ -1243,14 +1225,27 @@ LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o
 LLM_BUDGET_PER_TRIP_USD=0.50
 
-# Development mode — set true during Phases 0-4, false when real API keys are available (Phase 5+)
+# Execution mode — false invokes real providers; true replays recorded responses only
 MOCK_EXTERNAL_APIS=true
 
-# APIs — leave blank when MOCK_EXTERNAL_APIS=true; fill in for Phase 5+
+# Local response capture/replay (keep disabled in production by default)
+TOOL_RESPONSE_RECORDING_ENABLED=false
+TOOL_RESPONSE_DIR=backend/tool_responses
+TOOL_RESPONSE_RETENTION_DAYS=30
+EXTERNAL_API_CONNECT_TIMEOUT_SECONDS=5
+EXTERNAL_API_READ_TIMEOUT_SECONDS=20
+EXTERNAL_API_WRITE_TIMEOUT_SECONDS=10
+EXTERNAL_API_POOL_TIMEOUT_SECONDS=5
+EXTERNAL_API_MAX_RETRIES=3
+
+# APIs — leave blank when MOCK_EXTERNAL_APIS=true; fill in for real capture runs
 SERPAPI_KEY=
 GOOGLE_MAPS_KEY=          # Directions + Places + Maps JS + Static Maps + Distance Matrix
 TAVILY_KEY=
 FX_API_KEY=              # currency exchange-rate provider (e.g. exchangerate.host / Open Exchange Rates)
+
+# Readiness requires the provider keys above when MOCK_EXTERNAL_APIS=false.
+# GET /ready returns 503 with the missing provider names until configured.
 
 # Clarification gate — critical fields that must be present before planning starts
 CLARIFICATION_REQUIRED_FIELDS=destination,dates,travelers
@@ -1279,7 +1274,7 @@ GCP_REGION=asia-south1
 ## Verification Checklist
 
 1. `docker-compose up` → 5 services healthy (postgres, redis, langfuse, jaeger, backend), `GET /health` 200
-2. `MOCK_EXTERNAL_APIS=true` (default): full planning run completes with zero network calls to SerpAPI/Tavily/Google Maps — fixture data flows through all 14 agents correctly
+2. `MOCK_EXTERNAL_APIS=true` (default): full planning run uses recorded responses with zero network calls to SerpAPI/Tavily/Google Maps; missing recordings fail explicitly
 3. **Domestic**: "3 days Osaka from Kolkata, mid-October, food + nightlife" → StayOptionsPanel shows 3–5 budget-filtered hotels, all matching standard tier, no luxury properties; `personalization_reason` visible on each; `price_disclaimer` shown
 4. **Budget filtering**: Submit with `budget_tier=budget` → verify zero luxury or premium-class options appear in any StayOptionsPanel, TransportOptionsPanel, or activity slots
 5. **Opening hours**: All places in every slot are open on the assigned travel date and time — `enforce_opening_hours()` output shows zero unresolved conflicts
@@ -1328,8 +1323,8 @@ GCP_REGION=asia-south1
 - **BudgetPlannerAgent dedicated**: Real users have budgets. Aggregating costs from 4+ agents into a single verdict with day-by-day breakdown requires its own agent — the compiler shouldn't be doing financial aggregation.
 - **Transport search: SerpAPI + Google Routes API + LLM hub reasoning**: Covers real-time flight prices, structured train/bus data (IRCTC, European rail, intercity buses), and combinatorial route intelligence.
 - **Langfuse for LLM tracing + evals**: Open-source (MIT), self-hostable for $0 via Docker Compose alongside postgres and redis in `docker-compose.yml`. Free cloud tier: 50,000 events/month. Integrated via a single `CallbackHandler` passed to every LangGraph invocation — zero agent code changes. Also registered as a LiteLLM callback for cost tracking at the gateway level. User feedback (thumbs up/down) wired via `lf.score()` for real user signal. Evaluator logic is pure Python — completely portable if switching observability tool later.
-- **Mock-first development**: `MOCK_EXTERNAL_APIS=true` flag + `ToolFactory` + fixture JSON files allow all 14 agents to be built, tested, and evaluated without any API keys or network calls. Flip to `false` + add real keys in Phase 5 — zero agent code changes required.
-- **BaseTool protocol + DI**: Agents are testable without any API calls. `ToolFactory(mock=True)` injected in tests — no monkey-patching.
+- **Two-mode execution**: `MOCK_EXTERNAL_APIS=false` captures real provider responses, while `MOCK_EXTERNAL_APIS=true` replays exact recorded responses without API keys or network calls. Missing recordings are explicit errors, never curated-data or provider fallbacks.
+- **BaseTool protocol + DI**: Agents are testable without any API calls. `ToolFactory(mock=True)` replays exact real-mode recordings; isolated unit tests may inject focused test doubles.
 - **Shareable itineraries from day one**: `slug` + `public` in schema; community discovery page is post-MVP but no migration needed when built.
 - **Secret Manager in prod**: Zero secrets in code, Dockerfiles, or build artifacts.
 

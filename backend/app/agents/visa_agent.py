@@ -106,7 +106,7 @@ class VisaAgent:
             if item.get("url")
         ]
 
-        # Fixture / tool sources (visa_centre tool returns its own sources)
+        # Tool sources (visa_centre tool returns its own sources)
         if not isinstance(centre_result, BaseException):
             for src in centre_result.get("sources", []):
                 if isinstance(src, dict) and src.get("url"):

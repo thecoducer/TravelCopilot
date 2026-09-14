@@ -19,7 +19,7 @@
 4. No cap on number of stops/legs — a request like "15-day, 10-city Europe trip" fans out Layer 2/3/4 per stop with no ceiling, multiplying API+LLM cost combinatorially.
 5. No dedup when the same stop appears twice in a circular/there-and-back route (e.g., Dirang outbound + return) — spec's "duplicate handling" covers stop identity but not re-searching stays/experiences for the same place twice.
 6. No incremental re-plan path — editing one day/stop after compilation appears to require rerunning the whole graph (full re-spend of API/LLM budget) rather than patching just the affected stop's subgraph.
-7. Mock fixtures only cover a handful of named destinations (Osaka, Lisbon, Leh) — no documented graceful-degradation path for arbitrary/tail destinations once real APIs are live.
+7. Replay archives cover only the recorded requests — arbitrary or tail destinations must surface typed missing-recording errors in replay mode and use real providers when enabled.
 
 ### B. Orchestration / spend control
 8. After `max_clarification_rounds` is exhausted, best-effort defaults are applied and the graph proceeds — but there's no check that critical fields (e.g., destination) are non-empty/sane before firing Layer 2, risking API calls with garbage input.
@@ -40,10 +40,10 @@
 ## Steps
 
 ### Phase 1: Tool-call caching + quota governance (foundational, unblocks everything else)
-1. Add a `CachedTool` wrapper in `backend/app/tools/factory.py` — `ToolFactory.get()` wraps every **real** tool instance (mock tools stay uncached, they're free) with a decorator that: builds a canonical cache key via existing `CacheService.*_key()` builders, checks `cache_service.get()` first, calls the underlying tool only on a miss, then `cache_service.set()` with the tool-appropriate TTL constant already defined in `cache_service.py`. Cache hits/misses logged via `structlog` for observability.
+1. Add a `CachedTool` wrapper in `backend/app/tools/factory.py` — `ToolFactory.get()` wraps every **real** tool instance (replay calls stay uncached) with a decorator that: builds a canonical cache key via existing `CacheService.*_key()` builders, checks `cache_service.get()` first, calls the underlying tool only on a miss, then `cache_service.set()` with the tool-appropriate TTL constant already defined in `cache_service.py`. Cache hits/misses logged via `structlog` for observability.
 2. Add a Redis-based single-flight lock (short-TTL `SET NX`) inside the same wrapper so concurrent identical cache-key requests await one in-flight upstream call instead of firing N.
 3. Add negative-result caching: cache empty/error results with a short TTL (e.g. 10 min) to stop retry storms on failing queries.
-4. Add a `QuotaGovernor` service (new `backend/app/services/quota_service.py`) — Redis counters keyed by provider+month (`quota:serpapi:2026-09`, `quota:tavily:2026-09`), incremented on every real (non-cached) call. Configurable hard ceilings in `config.py` (`serpapi_monthly_quota=250`, `tavily_monthly_quota=1000`) with a soft-warn threshold (e.g. 80%) that logs/alerts, and a hard-stop that forces fallback (cached-stale-if-available → secondary source → mock/LLM-estimate with a `low_confidence`/`estimated` flag) once exceeded.
+4. Add a `QuotaGovernor` service (new `backend/app/services/quota_service.py`) — Redis counters keyed by provider+month (`quota:serpapi:2026-09`, `quota:tavily:2026-09`), incremented on every real (non-cached) call. Configurable hard ceilings in `config.py` (`serpapi_monthly_quota=250`, `tavily_monthly_quota=1000`) with a soft-warn threshold (e.g. 80%) that logs/alerts, and a hard-stop that forces fallback (cached-stale-if-available -> secondary source -> explicitly flagged LLM estimate) once exceeded.
 5. Enforce `max_llm_spend_usd_per_trip`: extend the existing `_write_usage`/`UsageLogger` accumulation in `llm.py` to check the running per-session total against `settings.max_llm_spend_usd_per_trip` before each `get_llm()` call site (or via a lightweight pre-call guard in `orchestrator.py`/agent `base.py`), short-circuiting to a cheaper/no-op path when exceeded.
 6. Extend `UsageLogger`'s pattern to tool calls: record per-session, per-provider call counts/estimated cost in Redis (reuse `usage_key`-style keys), surfaced through the existing `/trip/{session_id}` usage read path in `routers/trip.py`.
 
@@ -62,7 +62,7 @@
 14. Add a narrow "patch" entrypoint (new function alongside `run_graph` in `graph.py`) that accepts a target stop/day/leg id and re-invokes only the affected Layer 2/3/4 subset (e.g. `stay_search` + `stay_analyst` for one stop), reusing all cached/resolved data from the prior full run via the Phase 1 cache + Phase 2 registry — required so routine chat edits ("swap this hotel", "add a day in Dirang") don't re-burn the full trip's API/LLM budget.
 
 ### Phase 5: Regression protection
-15. Add `backend/evals/` (referenced but never created) with a cost-regression evaluator: run fixture trips in mock mode, assert per-agent tool-call counts stay within a checked-in baseline (`baselines.json`) so a future change that silently adds an extra SerpAPI/Tavily call per run is caught in CI, not in production quota burn.
+15. Add `backend/evals/` (referenced but never created) with a cost-regression evaluator: run recorded trips in replay mode, assert per-agent tool-call counts stay within a checked-in baseline (`baselines.json`) so a future change that silently adds an extra SerpAPI/Tavily call per run is caught in CI, not in production quota burn.
 16. Add unit tests for the `CachedTool` wrapper (cache hit/miss/negative-cache/single-flight), `QuotaGovernor` (soft-warn, hard-stop, fallback path), and the place registry dedup behavior.
 
 ## Relevant files
@@ -81,13 +81,13 @@
 ## Verification
 1. Unit test `CachedTool`: identical calls within TTL hit cache once; concurrent identical calls single-flight to one upstream call; negative cache short-circuits repeated failing queries.
 2. Unit test `QuotaGovernor`: soft-warn logs at 80%, hard-stop forces fallback path at 100%, monthly key rollover resets counters.
-3. Integration test: multi-stop fixture (reuse Arunachal scenario from the spec) asserts total SerpAPI/Tavily/Places call count stays within an expected bound and duplicate stops aren't re-searched.
+3. Integration test: multi-stop recorded-response scenario (reuse Arunachal scenario from the spec) asserts total SerpAPI/Tavily/Places call count stays within an expected bound and duplicate stops aren't re-searched.
 4. Run `backend/evals/run_evals.py --mode mock` (once created) against `baselines.json` to catch call-count regressions.
 5. Manual: confirm `/trip/{session_id}` usage endpoint surfaces both LLM spend and external API call counts.
 
 ## Decisions
 - Cache/quota/dedup layer is foundational and should land before or alongside the stops-discovery-agent-spec implementation, not after — otherwise multi-stop fan-out ships directly into the tight SerpAPI/Tavily ceilings with zero protection.
-- Mock tools remain uncached (no cost, fixtures are static); only real tool instances get wrapped.
+- Replay calls remain uncached because they do not contact providers; only real tool instances get wrapped.
 - Prefer surfacing `verification_status: provisional` immediately (Phase 3 here / Phase 1 of the spec) over waiting for full Phase 6 external verification, so the product never silently presents unverified routes as final.
 - Quota hard-stop fallback order: stale cache (even if past TTL) → cheaper/alternate source (e.g. Tavily instead of SerpAPI) → LLM-estimated data clearly flagged as an estimate — never a silent hard failure.
 

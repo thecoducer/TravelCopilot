@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -72,7 +73,10 @@ class SelfDriveSearchAgent:
 
         fuel_price = 104.0  # INR/L fallback
         if not isinstance(fuel_result, BaseException):
-            fuel_price = float(fuel_result.get("price_per_litre", 104.0))
+            raw_fuel_price = fuel_result.get("price_per_litre")
+            if raw_fuel_price is not None:
+                with suppress(TypeError, ValueError):
+                    fuel_price = float(raw_fuel_price)
 
         # Rough distance estimate: 80 km/day in a hilly destination
         estimated_km_per_day = 80.0

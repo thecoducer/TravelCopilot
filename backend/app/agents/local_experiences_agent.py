@@ -51,6 +51,7 @@ class LocalExperiencesAgent:
         factory = tool_factory or ToolFactory()
         self._tool_factory = factory
         self._geocode_tool = factory.get("geocode")
+        self._places_tool = factory.get("search_places")
         self._llm = llm
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -162,6 +163,11 @@ class LocalExperiencesAgent:
         log: Any,
     ) -> list[Experience]:
         """Generate personalized attraction recommendations with structured LLM output."""
+        candidates = await self._retrieve_candidates(location, user_profile)
+        if not candidates:
+            log.warning("places_search_empty", location=location)
+            return []
+
         llm = self._llm or get_llm("local_experiences", session_id)
         structured_llm = llm.with_structured_output(ExperiencesOutput)
 
@@ -187,6 +193,8 @@ class LocalExperiencesAgent:
             f"{dates_info}\n\n"
             f"Please recommend 6 to 12 top experiences and attractions for {location}."
         )
+        prompt += "\nOnly choose from these verified candidates:\n"
+        prompt += "\n".join(f"- {candidate}" for candidate in candidates)
 
         try:
             response: ExperiencesOutput = await structured_llm.ainvoke(
@@ -195,10 +203,36 @@ class LocalExperiencesAgent:
                     HumanMessage(content=prompt),
                 ]
             )
-            return response.experiences or []
+            return self._retain_retrieved_experiences(response.experiences, candidates)
         except Exception as exc:
             log.warning("local_experiences_llm_failed", error=str(exc))
             return []
+
+    async def _retrieve_candidates(self, location: str, user_profile: Any) -> set[str]:
+        interests = user_profile.interests if user_profile else []
+        query = f"attractions and experiences {' '.join(interests)} in {location}".strip()
+        result = await self._places_tool.run(
+            location=location,
+            query=query,
+            included_types=["tourist_attraction"],
+        )
+        candidates: set[str] = set()
+        for place in result.get("places", []):
+            display_name = place.get("displayName", {})
+            name = display_name.get("text") or place.get("name")
+            if isinstance(name, str) and name.strip():
+                candidates.add(name.strip().casefold())
+        return candidates
+
+    def _retain_retrieved_experiences(
+        self, experiences: list[Experience], candidates: set[str]
+    ) -> list[Experience]:
+        grounded: list[Experience] = []
+        for experience in experiences:
+            normalized_name = experience.name.casefold().strip()
+            if normalized_name in candidates:
+                grounded.append(experience)
+        return grounded
 
     async def _enrich_coordinates(
         self,

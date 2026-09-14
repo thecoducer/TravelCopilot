@@ -1,8 +1,131 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Shared tool-runtime constants. Keeping these values here makes provider adapters
+# configurable without scattering protocol names, statuses, or retention policy.
+TOOL_RESPONSE_SCHEMA_VERSION = 1
+TOOL_RESPONSE_EXECUTION_MODE_KEY = "execution_mode"
+TOOL_RESPONSE_REAL_MODE = "real"
+TOOL_RESPONSE_STATUS_SUCCESS = "success"
+TOOL_RESPONSE_STATUS_PARTIAL = "partial"
+TOOL_RESPONSE_STATUS_ERROR = "error"
+TOOL_RESPONSE_REPLAY_HIT = "replay_hit"
+TOOL_RESPONSE_REPLAY_MISS = "replay_miss"
+TOOL_RESPONSE_REPLAY_DISABLED = "replay_disabled"
+TOOL_RESPONSE_META_KEY = "_meta"
+TOOL_RESPONSE_ERROR_KEY = "error"
+TOOL_RESPONSE_META_STATUS_KEY = "status"
+TOOL_RESPONSE_META_PROVIDER_KEY = "provider"
+TOOL_RESPONSE_META_REPLAY_KEY = "replay"
+TOOL_RESPONSE_META_RETRY_COUNT_KEY = "retry_count"
+TOOL_RESPONSE_META_DURATION_MS_KEY = "duration_ms"
+TOOL_RESPONSE_META_REQUEST_FINGERPRINT_KEY = "request_fingerprint"
+TOOL_RESPONSE_META_FETCHED_AT_KEY = "fetched_at"
+TOOL_RESPONSE_META_ERROR_KEY = "error"
+TOOL_RESPONSE_SCHEMA_VERSION_KEY = "schema_version"
+TOOL_RESPONSE_TOOL_NAME_KEY = "tool_name"
+TOOL_RESPONSE_PROVIDER_KEY = "provider"
+TOOL_RESPONSE_RECORDED_AT_KEY = "recorded_at"
+TOOL_RESPONSE_ARGUMENTS_KEY = "arguments"
+TOOL_RESPONSE_EXCHANGES_KEY = "exchanges"
+TOOL_RESPONSE_NORMALIZED_RESULT_KEY = "normalized_result"
+TOOL_RESPONSE_STATUS_KEY = "status"
+TOOL_RESPONSE_ERROR_FIELD_KEY = "error"
+TOOL_RUNTIME_KEY = "__tool_runtime"
+TOOL_RUNTIME_EXCHANGES_KEY = "exchanges"
+TOOL_RUNTIME_RETRY_COUNT_KEY = "retry_count"
+TOOL_RUNTIME_DURATION_MS_KEY = "duration_ms"
+TOOL_RUNTIME_ERROR_KEY = "error"
+TOOL_RUNTIME_STATUS_KEY = "status"
+PROVIDER_APPLICATION = "application"
+PROVIDER_SERPAPI = "serpapi"
+PROVIDER_TAVILY = "tavily"
+PROVIDER_GOOGLE = "google"
+PROVIDER_OPEN_EXCHANGE_RATES = "open_exchange_rates"
+TOOL_RESPONSE_FILENAME_SEPARATOR = "-"
+TOOL_RESPONSE_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%S.%fZ"
+TOOL_RESPONSE_FINGERPRINT_PREFIX = "sha256:"
+TOOL_RESPONSE_TEMP_SUFFIX = ".tmp"
+TOOL_RESPONSE_JSON_SUFFIX = ".json"
+TOOL_RESPONSE_REDACTED_VALUE = "[REDACTED]"
+TOOL_RESPONSE_SENSITIVE_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "token",
+)
+TOOL_RESPONSE_SENSITIVE_QUERY_KEYS = {
+    "api_key",
+    "app_id",
+    "key",
+    "access_token",
+    "token",
+    "secret",
+}
+
+EXTERNAL_API_DEFAULT_HTTP_HEADERS = {"Accept": "application/json"}
+SERPAPI_FLIGHTS_ENGINE = "google_flights"
+SERPAPI_FLIGHTS_AUTOCOMPLETE_ENGINE = "google_flights_autocomplete"
+SERPAPI_HOTELS_ENGINE = "google_hotels"
+SERPAPI_ONE_WAY_TYPE = "2"
+ISO_CURRENCY_CODE_LENGTH = 3
+HTTP_HEADER_AUTHORIZATION = "Authorization"
+HTTP_HEADER_CONTENT_TYPE = "Content-Type"
+HTTP_HEADER_JSON = "application/json"
+HTTP_HEADER_GOOGLE_API_KEY = "X-Goog-Api-Key"
+HTTP_HEADER_GOOGLE_FIELD_MASK = "X-Goog-FieldMask"
+HTTP_AUTH_BEARER_PREFIX = "Bearer "
+GOOGLE_GEOCODE_FIELD_MASK = (
+    "results.placeId,results.location,results.formattedAddress,results.granularity"
+)
+GOOGLE_ROUTES_FIELD_MASK = "routes.duration,routes.distanceMeters,routes.description,routes.legs"
+GOOGLE_MATRIX_FIELD_MASK = "originIndex,destinationIndex,status,condition,distanceMeters,duration"
+GOOGLE_PLACES_SEARCH_FIELD_MASK = (
+    "places.id,places.name,places.displayName,places.formattedAddress,places.location,"
+    "places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,"
+    "places.googleMapsUri,places.websiteUri,places.nationalPhoneNumber,places.photos,"
+    "places.regularOpeningHours,places.businessStatus"
+)
+GOOGLE_PLACES_DETAILS_FIELD_MASK = (
+    "id,name,displayName,formattedAddress,location,rating,userRatingCount,googleMapsUri,"
+    "websiteUri,nationalPhoneNumber,regularOpeningHours,currentOpeningHours,reviews,photos,"
+    "businessStatus"
+)
+GOOGLE_TRAVEL_MODE_DRIVE = "DRIVE"
+GOOGLE_TRAVEL_MODE_TRANSIT = "TRANSIT"
+GOOGLE_ROUTING_PREFERENCE_TRAFFIC_AWARE = "TRAFFIC_AWARE"
+GOOGLE_ROUTE_MATRIX_OK_STATUS = "OK"
+GOOGLE_ROUTE_MATRIX_ROUTE_EXISTS = "ROUTE_EXISTS"
+REAL_PROVIDER_CREDENTIAL_NAMES: Final[dict[str, str]] = {
+    "serpapi": "SERPAPI_KEY",
+    "tavily": "TAVILY_API_KEY",
+    "google": "GOOGLE_CLOUD_API_KEY",
+    "fx": "FX_API_KEY",
+}
+TOOL_EMPTY_RESULT_SHAPES: Final[dict[str, dict[str, object]]] = {
+    "search_flights": {"best_flights": [], "other_flights": []},
+    "search_hotels": {"properties": []},
+    "tavily_search": {"results": [], "answer": None},
+    "search_places": {"places": []},
+    "place_details": {"reviews": [], "photos": []},
+    "search_transit": {"options": []},
+    "search_road_routes": {"options": []},
+    "search_taxi_info": {"options": []},
+    "distance_matrix": {"rows": []},
+    "geocode": {"status": "ERROR", "lat": None, "lng": None},
+    "currency_convert": {"amount_converted": 0.0, "rate": 1.0},
+    "visa_centre_search": {"application_centre": None, "sources": []},
+    "embassy_search": {"embassy": None},
+    "rental_search": {"rentals": []},
+    "fuel_price": {"price_per_litre": None, "available": False, "sources": []},
+}
 
 # Resolve .env from the project root regardless of working directory.
 # Local dev: backend/app/config.py → ../../.. → project root.
@@ -44,22 +167,66 @@ class Settings(BaseSettings):
     # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
     llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama
 
-    # Mock flag — when True all tools return fixture data, no network calls
+    # Execution mode switch: real invokes provider adapters; mock replays recordings only.
     mock_external_apis: bool = True
+
+    # Local tool response capture and replay
+    tool_response_recording_enabled: bool = False
+    tool_response_dir: str = "backend/tool_responses"
+    tool_response_retention_days: int = 30
+
+    # Shared external HTTP runtime
+    external_api_connect_timeout_seconds: float = 5.0
+    external_api_read_timeout_seconds: float = 20.0
+    external_api_write_timeout_seconds: float = 10.0
+    external_api_pool_timeout_seconds: float = 5.0
+    external_api_max_retries: int = 3
+    external_api_max_keepalive_connections: int = 20
+    external_api_max_connections: int = 100
+    external_api_keepalive_expiry_seconds: float = 5.0
+    external_api_provider_concurrency: int = 5
+    external_api_retryable_status_codes: str = "408,429,500,502,503,504"
+    external_api_retry_base_delay_seconds: float = 0.5
+    external_api_retry_max_delay_seconds: float = 8.0
+
+    @property
+    def retryable_status_codes(self) -> tuple[int, ...]:
+        """Parse the comma-separated HTTP statuses eligible for retries."""
+        return tuple(
+            int(value.strip())
+            for value in self.external_api_retryable_status_codes.split(",")
+            if value.strip().isdigit()
+        )
 
     # External Search APIs
     serpapi_key: str = ""
     tavily_api_key: str = ""
+    serpapi_search_url: str = "https://serpapi.com/search.json"
+    serpapi_default_language: str = "en"
+    serpapi_default_country: str = "us"
+    serpapi_default_adults: int = 1
+    serpapi_default_hotel_adults: int = 2
+    tavily_search_url: str = "https://api.tavily.com/search"
+    tavily_default_search_depth: str = "basic"
+    tavily_default_max_results: int = 5
+    tavily_default_language: str = "en"
 
     # Maps & Places
-    google_maps_api_key: str = ""
-    google_places_api_key: str = ""
-
-    # Weather
-    openweathermap_api_key: str = ""
+    google_cloud_api_key: str = ""
+    google_places_search_url: str = "https://places.googleapis.com/v1/places:searchText"
+    google_places_details_url: str = "https://places.googleapis.com/v1/places"
+    google_routes_url: str = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    google_route_matrix_url: str = (
+        "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+    )
+    google_geocode_url: str = "https://geocode.googleapis.com/v4/geocode/address"
+    google_routes_max_matrix_elements: int = 625
+    google_routes_max_transit_matrix_elements: int = 100
+    google_routes_max_matrix_address_count: int = 50
 
     # Currency exchange
     fx_api_key: str = ""
+    open_exchange_rates_latest_url: str = "https://openexchangerates.org/api/latest.json"
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/travelcopilot"
@@ -127,6 +294,21 @@ class Settings(BaseSettings):
                 with contextlib.suppress(ValueError):
                     result[field.strip()] = float(val.strip())
         return result
+
+    def missing_real_provider_credentials(self) -> dict[str, str]:
+        if self.mock_external_apis:
+            return {}
+        credentials = {
+            "serpapi": self.serpapi_key,
+            "tavily": self.tavily_api_key,
+            "google": self.google_cloud_api_key,
+            "fx": self.fx_api_key,
+        }
+        return {
+            provider: REAL_PROVIDER_CREDENTIAL_NAMES[provider]
+            for provider, credential in credentials.items()
+            if not credential.strip()
+        }
 
 
 settings = Settings()

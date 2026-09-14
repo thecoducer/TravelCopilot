@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -46,6 +47,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         mock_apis=settings.mock_external_apis,
         env=settings.app_env,
     )
+    missing_credentials = settings.missing_real_provider_credentials()
+    if missing_credentials:
+        logger.warning("real_provider_credentials_missing", providers=missing_credentials)
 
     # Initialise LangGraph checkpointer (creates checkpoint tables if needed)
     try:
@@ -73,6 +77,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await close_checkpointer()
     except Exception as exc:
         logger.warning("checkpointer_close_failed", error=str(exc))
+    try:
+        from app.services.external_api_client import close_external_api_client
+
+        await close_external_api_client()
+    except Exception as exc:
+        logger.warning("external_api_client_close_failed", error=str(exc))
 
 
 def create_app() -> FastAPI:
@@ -118,6 +128,17 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["ops"])
     async def health() -> dict[str, str]:
         return {"status": "ok", "env": settings.app_env, "version": "0.1.0"}
+
+    @app.get("/ready", tags=["ops"])
+    async def readiness() -> Response:
+        missing = settings.missing_real_provider_credentials()
+        if missing:
+            return Response(
+                content=json.dumps({"status": "not_ready", "missing_credentials": missing}),
+                status_code=503,
+                media_type="application/json",
+            )
+        return Response(content='{"status":"ready"}', media_type="application/json")
 
     @app.get("/metrics", tags=["ops"], include_in_schema=False)
     async def metrics() -> Response:

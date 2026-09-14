@@ -8,7 +8,7 @@ import logging
 import pytest
 import structlog
 
-from app.config import settings
+from app.config import Settings, settings
 
 
 def test_settings_llm_provider() -> None:
@@ -32,6 +32,14 @@ def test_clarification_fields_parsed() -> None:
     assert "destination" in fields
     assert "dates" in fields
     assert "travelers" in fields
+
+
+def test_retryable_status_codes_parsed() -> None:
+    configured_settings = Settings(
+        _env_file=None,
+        external_api_retryable_status_codes="408, 429, 503",
+    )
+    assert configured_settings.retryable_status_codes == (408, 429, 503)
 
 
 def test_structlog_json_output(caplog: pytest.LogCaptureFixture) -> None:

@@ -69,6 +69,22 @@ def _make_llm(return_value: Any) -> MagicMock:
     return mock_llm
 
 
+class _StaticTool:
+    def __init__(self, response: dict[str, Any]) -> None:
+        self._response = response
+
+    async def run(self, **kwargs: object) -> dict[str, Any]:
+        return self._response
+
+
+class _StaticToolFactory:
+    def __init__(self, responses: dict[str, dict[str, Any]]) -> None:
+        self._responses = responses
+
+    def get(self, tool_name: str) -> _StaticTool:
+        return _StaticTool(self._responses.get(tool_name, {}))
+
+
 # ── Graph compilation ─────────────────────────────────────────────────────────
 
 
@@ -496,7 +512,27 @@ class TestVisaAgent:
             visa_type="tourist",
             processing_timeline="10–15 business days",
         )
-        agent = VisaAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_report))
+        agent = VisaAgent(
+            tool_factory=_StaticToolFactory(
+                {
+                    "tavily_search": {
+                        "results": [
+                            {
+                                "title": "Official visa guidance",
+                                "url": "https://example.gov/visa",
+                                "content": "Visa requirements for travellers.",
+                            }
+                        ]
+                    },
+                    "visa_centre_search": {
+                        "application_centre": {"name": "Application Centre"},
+                        "sources": [],
+                    },
+                    "embassy_search": {"embassy": {"name": "Embassy"}},
+                }
+            ),
+            llm=_make_llm(mock_report),
+        )
         state = {
             **base_state,
             "destination": "Lisbon",
@@ -530,7 +566,16 @@ class TestTransportSearchAgent:
                 _RouteCombo(origin="KOL", destination="IXL", mode="flight"),
             ]
         )
-        agent = TransportSearchAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_hubs))
+        agent = TransportSearchAgent(
+            tool_factory=_StaticToolFactory(
+                {
+                    "search_transit": {"options": [{"mode": "train"}]},
+                    "search_road_routes": {"options": [{"mode": "taxi"}]},
+                    "search_taxi_info": {"options": [{"name": "Local Taxi"}]},
+                }
+            ),
+            llm=_make_llm(mock_hubs),
+        )
         result = await agent(base_state)
 
         assert "transport_legs_raw" in result
@@ -566,7 +611,16 @@ class TestTransportSearchAgent:
                 {"origin": "KOL", "destination": "LEH", "mode": "other"},
             ]
         )
-        agent = TransportSearchAgent(tool_factory=mock_tool_factory, llm=_make_llm(mock_hubs))
+        agent = TransportSearchAgent(
+            tool_factory=_StaticToolFactory(
+                {
+                    "search_transit": {"options": [{"mode": "train"}]},
+                    "search_road_routes": {"options": [{"mode": "taxi"}]},
+                    "search_taxi_info": {"options": [{"name": "Local Taxi"}]},
+                }
+            ),
+            llm=_make_llm(mock_hubs),
+        )
         result = await agent({**base_state, "source": "KOL", "destination": "LEH"})
 
         assert "KOL→DEL" in result["transport_legs_raw"]
@@ -593,7 +647,7 @@ class TestStaySearchAgent:
         """Should return empty list when hotel tool finds nothing."""
         factory = ToolFactory(mock=True)
         agent = StaySearchAgent(tool_factory=factory)
-        # zzz destination has no fixture
+        # zzz destination has no recorded provider response
         result = await agent({**initial_state("trip", "s"), "destination": "zzz_no_fixture"})
         assert result["stays_raw"] == []
 
@@ -637,7 +691,20 @@ class TestLocalExperiencesAgent:
             ]
         )
         mock_llm = _make_llm(mock_experiences)
-        agent = LocalExperiencesAgent(tool_factory=mock_tool_factory, llm=mock_llm)
+        agent = LocalExperiencesAgent(
+            tool_factory=_StaticToolFactory(
+                {
+                    "search_places": {
+                        "places": [
+                            {"displayName": {"text": "Shanti Stupa"}},
+                            {"displayName": {"text": "Leh Palace"}},
+                        ]
+                    },
+                    "geocode": {"lat": 34.16, "lng": 77.58},
+                }
+            ),
+            llm=mock_llm,
+        )
         result = await agent(base_state)
 
         assert "experiences_raw" in result

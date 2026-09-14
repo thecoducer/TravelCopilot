@@ -11,9 +11,9 @@ Implement the currently required live provider adapters behind the existing
 connection pooling, bounded concurrency, retries, redaction, metrics, and raw
 response capture.
 
-Real calls must produce the same normalized dictionaries as mock calls. Mock mode
-must replay the newest successful recording matching a canonical request fingerprint,
-then fall back to the existing curated fixtures. Raw archives remain gitignored, are
+Real calls must produce the normalized dictionaries consumed by replay mode. Mock mode
+must replay the newest successful real-mode recording matching a canonical request
+fingerprint, and return a typed missing-recording error when no match exists. Raw archives remain gitignored, are
 retained for 30 days, and are disabled by default in production.
 
 ## Goals
@@ -27,7 +27,7 @@ retained for 30 days, and are disabled by default in production.
 - Replay exact request matches in mock mode without making network calls.
 - Prevent secrets and sensitive headers from entering response recordings.
 - Provide bounded retries and truthful partial failures without silently substituting
-  mock data in real mode.
+  replay data in real mode.
 - Ground attraction, route, visa, rental, and self-drive results in external sources.
 
 ## Non-Goals
@@ -63,15 +63,22 @@ retained for 30 days, and are disabled by default in production.
   silently used in real mode.
 - Raw request and response archives are gitignored, capture is independently
   configurable, capture defaults off in production, and retention is 30 days.
-- Mock selection uses a canonical request fingerprint and the newest successful exact
-  match, then the existing curated fixture fallback.
+- Replay selection uses a canonical request fingerprint and the newest successful exact
+  match. Missing recordings return a typed error; mock mode never calls provider
+  adapters or loads curated data.
 - Provider errors degrade to typed partial results after bounded retries.
 - Existing agent-facing payload keys remain stable. Shared metadata is added under a
   reserved `_meta` key.
+- Existing tool and agent data structures are provisional. Before implementing
+  or preserving any provider payload, consult the provider's current official
+  documentation and reconcile request parameters, authentication, response fields,
+  pagination, error shapes, field masks, freshness, and policy constraints. Provider
+  documentation is authoritative; existing recordings are not evidence that a schema is
+  correct.
 - Use the existing `httpx` dependency instead of provider SDKs so pooling, testing,
   redaction, recording, and replay work consistently across providers.
 - Google Places and Routes content is subject to caching and attribution restrictions.
-  Place IDs are explicitly exempt. The raw archive is a local debugging and fixture
+  Place IDs are explicitly exempt. The raw archive is a local debugging and replay
   capture facility, not an approved production cache, and requires terms review before
   live retention or replay.
 - SerpAPI results are discovery and pricing snapshots, not booking guarantees.
@@ -97,13 +104,33 @@ and `options`, and adds a reserved `_meta` object containing:
 Add shared result and error helpers so exhausted calls return the tool-specific empty
 shape instead of raising or silently serving mock data.
 
+#### Mandatory Contract Reconciliation Rule
+
+If current official provider documentation shows that an existing recorded structure,
+model, parser, or agent assumption is incorrect, do not preserve the incorrect
+shape for backward compatibility. Treat the correction as one atomic contract
+migration and update all affected layers together:
+
+1. The real-provider response normalizer and stable application contract.
+2. The real-provider normalizer and every affected recorded normalized response.
+3. The relevant Pydantic models and serialization aliases.
+4. Every agent that constructs, reads, filters, or transforms the affected fields.
+5. The response-envelope schema version and replay compatibility logic when previously
+  recorded `normalized_result` payloads use the obsolete shape.
+6. Developer documentation and examples that describe the contract.
+
+Do not add permanent dual-shape handling unless an external compatibility requirement
+is documented. Old recordings with an incompatible normalized contract must be
+rejected or migrated explicitly; they must not be replayed as though they satisfy the
+new contract.
+
 ### 2. Environment Configuration
 
 Extend `Settings` and `.env.example` with explicit response-capture and transport
 controls:
 
 ```dotenv
-# Real/mock tool selection
+# Real/replay tool selection
 MOCK_EXTERNAL_APIS=true
 
 # Local response capture and replay
@@ -121,8 +148,7 @@ EXTERNAL_API_MAX_RETRIES=3
 # Provider credentials
 SERPAPI_KEY=
 TAVILY_API_KEY=
-GOOGLE_MAPS_API_KEY=
-GOOGLE_PLACES_API_KEY=
+GOOGLE_CLOUD_API_KEY=
 FX_API_KEY=
 ```
 
@@ -210,7 +236,7 @@ In mock mode:
 
 1. Canonicalize arguments and calculate the request fingerprint.
 2. Replay `normalized_result` from the newest exact successful match.
-3. If no recording matches, use the existing curated fixture implementation.
+3. If no recording matches, return a typed missing-recording error.
 4. Expose replay-hit or replay-miss information in `_meta`.
 
 Never select an unrelated latest response solely because it belongs to the same tool.
@@ -272,7 +298,10 @@ continues to start without external credentials.
 
 ### 11. SerpAPI
 
-Implement the following adapters:
+Read the current official SerpApi documentation for each endpoint before defining or
+preserving request and response structures. Do not infer the live schema from existing
+recordings or current agent assumptions. Reconcile the verified provider contract
+with repository models and agent inputs, then implement the following adapters:
 
 - Resolve free-text origins and destinations through Google Flights Autocomplete before
   Google Flights search. Cache resolved airport or location IDs where permitted.
@@ -287,9 +316,17 @@ Implement the following adapters:
 - Keep SerpAPI provider caching enabled.
 - Leave `deep_search` disabled by default to control latency and cost.
 
+If official responses differ from the existing `best_flights`, `other_flights`, or
+`properties` structures, update the normalized internal contract and all dependent
+parsers and mocks together. Provider-specific fields that are not part of the stable
+agent contract belong only in the raw recording envelope.
+
 ### 12. Tavily Search
 
-Implement Tavily Search through the shared REST client with:
+Read the current official Tavily Search documentation before defining the request or
+response model. Verify authentication, search-depth values, usage accounting, result
+fields, error status codes, and content-size controls. Then implement Tavily Search
+through the shared REST client with:
 
 - concise, focused queries
 - `basic` search depth by default
@@ -304,8 +341,12 @@ request metadata.
 
 ### 13. Google Places API (New)
 
-Implement Text Search and Place Details using minimal explicit field masks. Never use a
-wildcard field mask in production.
+Read the current official Google Places API (New) documentation and field/SKU tables
+before defining the request or response model. Verify endpoint version, authentication,
+required field masks, field names, pagination, place identifiers, attribution, review
+and photo requirements, and caching restrictions. Then implement Text Search and Place
+Details using minimal explicit field masks. Never use a wildcard field mask in
+production.
 
 Normalize:
 
@@ -325,6 +366,12 @@ and rental discovery rather than duplicating HTTP code.
 
 ### 14. Google Routes and Geocoding
 
+Read the current official Google Routes API and Geocoding API documentation before
+defining request or response models. Verify endpoint versions, authentication,
+waypoint formats, travel-mode enums, field masks, duration and distance encodings,
+matrix limits, per-element errors, Geocoding v4 field names, and migration differences
+from existing v3-shaped assumptions.
+
 Migrate the existing transit and road-route adapters to the shared runtime while
 preserving their `options` contracts.
 
@@ -342,6 +389,11 @@ masks. Normalize lower-camel-case provider responses to the existing
 `{status, lat, lng, ...}` contract.
 
 ### 15. Composite Travel Tools
+
+For every composite tool, verify each upstream provider's official documentation before
+choosing the intermediate data structure. Composite results must identify provider
+facts, derived values, and unavailable values separately. Do not let an LLM or old
+recording silently fill a field that the provider does not return.
 
 Implement the tools that combine multiple providers:
 
@@ -370,6 +422,10 @@ unavailable result rather than presenting a hardcoded value as live data.
 
 ### 16. Currency Conversion
 
+Read the current official Open Exchange Rates documentation before defining the rates
+model. Verify authentication, base-currency plan restrictions, rate and timestamp
+fields, error responses, symbol filtering, and freshness semantics.
+
 Implement Open Exchange Rates for `currency_convert`:
 
 - Fetch and cache the latest rates once per base snapshot.
@@ -385,12 +441,22 @@ Keep `cluster_by_proximity`, `enforce_opening_hours`, and `validate_day_duration
 local deterministic tools. Pass them through the logical recorder when capture is
 enabled so response capture covers every tool invocation, not only HTTP providers.
 
+Their input and output structures must still be checked against the owning agent,
+models, and current algorithm requirements. Local tools are not exempt from contract
+reconciliation; they only do not require an external provider.
+
 ## Phase 4: Agent Integration and Behavioral Gaps
 
 ### 18. Preserve Dependency Injection
 
 Keep constructor injection and update only tool arguments and result handling at agent
 boundaries.
+
+Do not assume that preserving an existing agent-facing structure is always correct. If
+official provider documentation exposes a mismatch, define an explicit normalized
+application contract at the tool boundary and update the affected agent, Pydantic
+  model, recorded normalized response, and recorder envelope together. Never make provider payload shape
+leak directly into unrelated agents.
 
 - `TransportSearchAgent` supplies traveler and currency context and accepts normalized
   partial failures per leg.
@@ -422,7 +488,7 @@ failure does not discard successful sibling results.
 
 ### 21. Truthful Degradation
 
-Do not replay mock data automatically in real mode. Agents continue with available
+Do not replay recorded data automatically in real mode. Agents continue with available
 sibling results and expose `_meta.status=partial` or `_meta.status=error`.
 
 Visa and safety outputs retain source links and confidence. Critical unknown values
@@ -436,7 +502,7 @@ Update `plan.md` and developer documentation with:
 
 - the implemented provider matrix
 - response-envelope schema
-- mock lookup order
+- replay lookup order
 - capture and retention policy
 - Google attribution and caching warning
 - server-side API key restrictions
@@ -449,6 +515,15 @@ Do not write or modify automated tests as part of this implementation. Unit,
 integration, provider-contract, live-smoke, and end-to-end tests are deferred to a
 separate follow-up specification and change set.
 
+Manual contract verification remains required now: compare each implemented request
+and response model against current official documentation, inspect representative raw
+responses, and confirm normalized output consumed by the agent. The deferred test
+restriction does not defer provider-documentation review.
+
+For every corrected provider contract, manually inspect the complete migration across
+the normalizer, recorded normalized responses, Pydantic models, consuming agents, and replay
+schema handling before considering the implementation complete.
+
 ## Relevant Files
 
 - `backend/app/config.py`: capture, transport, provider, and validation settings.
@@ -456,7 +531,7 @@ separate follow-up specification and change set.
 - `.gitignore`: ignore `backend/tool_responses/`.
 - `backend/app/tools/base.py`: shared result metadata and typed tool errors.
 - `backend/app/tools/factory.py`: real recording and mock replay wrappers.
-- `backend/app/tools/mock/_helpers.py`: curated fixture fallback after replay lookup.
+- `backend/app/tools/factory.py`: two-mode selection and recorded-response replay.
 - `backend/app/services/external_api_client.py`: pooled HTTP client, retries, limits,
   coalescing, and raw exchange capture.
 - `backend/app/services/tool_response_store.py`: envelope writer, redaction,
@@ -495,11 +570,13 @@ separate follow-up specification and change set.
 2. With `MOCK_EXTERNAL_APIS=false` and capture enabled in a local secret-bearing
   environment, invoke each remote tool once through a manual development command or
   application flow. Inspect one file under every remote tool directory for filename
-  correctness, raw exchanges, normalized output, and redaction.
+  correctness, raw exchanges, normalized output, and redaction. Before accepting the
+  result, compare the request, response fields, pagination, errors, and field masks
+  with the current official provider documentation.
 
 3. Set `MOCK_EXTERNAL_APIS=true` and repeat the same requests without network access.
    Verify exact fingerprint-matched normalized recordings are replayed. Remove a
-   matching recording and verify curated fixture fallback plus replay-miss metadata.
+  matching recording and verify a typed missing-recording error plus replay-miss metadata.
 
 4. Start the backend in production configuration with capture unset. Verify no response
    files are written and readiness fails clearly when required real-mode credentials
@@ -515,26 +592,32 @@ separate follow-up specification and change set.
    tools callable without modifying agent code.
 2. Setting `MOCK_EXTERNAL_APIS=true` makes the graph perform zero external network
    calls.
-3. Every real and mock implementation satisfies the same agent-facing output contract.
-4. When capture is enabled, each logical tool invocation creates exactly one separate
+3. Every provider adapter's request and response structures are verified against current
+  official provider documentation before implementation is accepted.
+4. When official documentation invalidates an existing structure, the normalizer,
+  recorded normalized responses, Pydantic models, consuming agents, and replay schema
+  handling are updated together as one contract migration.
+5. Real adapters and replay wrappers satisfy the same reconciled agent-facing output
+  contract.
+6. When capture is enabled, each logical tool invocation creates exactly one separate
    JSON envelope under its tool-specific directory.
-5. Recorded filenames follow `<tool_name>-<UTC datetime>.json` and cannot collide under
+7. Recorded filenames follow `<tool_name>-<UTC datetime>.json` and cannot collide under
    concurrent execution.
-6. Recorded data contains no API keys, authorization headers, cookies, or credential
+8. Recorded data contains no API keys, authorization headers, cookies, or credential
    query parameters.
-7. Recordings older than 30 days are pruned automatically.
-8. Mock replay selects only the newest successful exact fingerprint match and otherwise
-   falls back to curated fixtures.
-9. Real-mode failures never silently return mock data.
-10. Retry behavior is bounded, respects `Retry-After`, and excludes permanent failures.
-11. Google Places requests use explicit minimal field masks and retain required source
+9. Recordings older than 30 days are pruned automatically.
+10. Mock replay selects only the newest successful exact fingerprint match and otherwise
+  returns a typed missing-recording error.
+11. Real-mode failures never silently return mock data.
+12. Retry behavior is bounded, respects `Retry-After`, and excludes permanent failures.
+13. Google Places requests use explicit minimal field masks and retain required source
     attribution.
-12. `LocalExperiencesAgent` cannot introduce an attraction absent from retrieved
+14. `LocalExperiencesAgent` cannot introduce an attraction absent from retrieved
     candidates.
-13. `SelfDriveSearchAgent` uses route-matrix distance when available and labels any
+15. `SelfDriveSearchAgent` uses route-matrix distance when available and labels any
     heuristic distance as degraded.
-14. Response capture defaults off in production.
-15. No automated tests are created or modified as part of this implementation.
+16. Response capture defaults off in production.
+17. No automated tests are created or modified as part of this implementation.
 
 ## Research Basis
 
@@ -567,6 +650,9 @@ separate follow-up specification and change set.
   mandatory controls, not optional guidance.
 - Provider response schemas can evolve. Normalizers must tolerate absent fields and
   isolate provider payloads from stable agent contracts.
+- Existing recordings and models may encode stale or incorrect provider assumptions.
+  They must be treated as migration inputs, not authoritative schemas; official
+  documentation review is required whenever a provider adapter is added or changed.
 - Web-discovered rental and fuel information is indicative, not guaranteed inventory
   or transactional pricing.
 - Automated test coverage is deferred. Until a follow-up test specification lands,

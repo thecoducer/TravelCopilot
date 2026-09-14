@@ -3,7 +3,7 @@
 > Created: 2026-06-15  
 > Last updated: 2026-07-04  
 > Based on: System Design Plan v7  
-> Strategy: Mock-first → Real APIs → Frontend last
+> Strategy: Real API capture → Recorded-response replay → Frontend last
 
 **Phase 0 status**: ✅ All code items complete. 3 runtime-verification items (docker up, psql, log check) pending first `docker-compose up`.  
 **Phase 1 status**: ✅ Complete. 113/113 tests passing, 0 ruff violations, 0 mypy errors.  
@@ -14,7 +14,7 @@
 - Itinerary is options-based: every time slot, stay, and food choice has 2–3 ranked options with `recommendation_reason` and `best_for` tags
 - Multi-stop trips use `TripSegment` (one per location) — each segment carries its own `StayOptions`, `permits_required`, `altitude_meters`, `connectivity` note
 - AI clarification: `ClarificationRequest` model; `Itinerary.clarifications_needed[]` surfaces gaps before the user gets a fixed plan
-- Fixtures aligned to real SerpAPI / Google Places / Tavily API response shapes — Phase 5 parsers will be drop-in
+- Recorded responses preserve normalized provider result shapes for replay and evaluation
 - `ClusterByProximityTool` uses haversine distance matrix + `AgglomerativeClustering` (sklearn) rather than Euclidean k-means
 - All tool `run()` methods typed `-> dict[str, Any]`; mypy strict mode passes cleanly
 
@@ -22,7 +22,7 @@
 
 ## Guiding Principles
 
-- **Mock-first**: Every external API (SerpAPI, Tavily, Google Maps) is mocked during Phases 1–4. Real APIs are drop-in replacements in Phase 5. Zero wasted API quota during development.
+- **Replay-first**: Real provider responses are captured once and replayed in tests. Replay mode never calls the network or substitutes curated data.
 - **Backend-first**: All FastAPI endpoints are Postman-testable before any frontend work begins.
 - **Agent-first within backend**: Agents and graph are fully functional before endpoints are wired.
 - **Evals from day one**: Langfuse and eval datasets set up in Phase 3 — not as an afterthought.
@@ -32,7 +32,7 @@
 
 ## Phase 0 — Project Scaffolding
 
-> **Goal**: Empty repo → runnable skeleton with all services up, folder structure in place, config loading, and mock tool stubs created.
+> **Goal**: Empty repo → runnable skeleton with all services up, folder structure in place, and config loading.
 > **Done when**: `docker-compose up` starts all services; `GET /health` returns 200; `python -c "from app.config import settings; print(settings.llm_model)"` works.
 
 ### P0-1 · Repository & Tooling Setup
@@ -56,8 +56,8 @@
 - [x] Create `.env.example` with all keys from plan (no real values)
 - [x] Create `.env` from example — fill in `DATABASE_URL`, `REDIS_URL`, `LANGFUSE_*` (local), dummy strings for API keys (will be replaced in Phase 5)
 - [x] Implement `backend/app/config.py` — `Settings` class via `pydantic-settings`, reads from `.env`
-- [x] Add `MOCK_EXTERNAL_APIS=true` flag to `Settings` — when true, all tools return mock data
-- [x] Add `FX_API_KEY` to `Settings` (currency exchange-rate provider — blank in mock mode)
+- [x] Add `MOCK_EXTERNAL_APIS=true` flag to `Settings` — when true, tools replay recorded responses
+- [x] Add `FX_API_KEY` to `Settings` (currency exchange-rate provider — blank in replay mode)
 - [x] Add clarification-gate settings: `CLARIFICATION_REQUIRED_FIELDS=destination,dates,travelers`, `PARSE_CONFIDENCE_THRESHOLD=0.6`
 - [x] Write smoke test: `assert settings.llm_provider == "openai"`
 
@@ -74,15 +74,15 @@
 
 ---
 
-## Phase 1 — Data Models + Mock Tool Layer
+## Phase 1 — Data Models + Tool Layer
 
-> **Goal**: All Pydantic models defined. All external tools implemented twice — once as mock (returns hardcoded realistic fixtures), once as real (stubs with `raise NotImplementedError`). `BaseTool` protocol enforced.
-> **Done when**: Every tool can be instantiated in both mock and real mode; `MOCK_EXTERNAL_APIS=true` → all tools return fixture data without any network call.
+> **Goal**: All Pydantic models defined. Real adapters and the replaying `ToolFactory` satisfy one `BaseTool` protocol.
+> **Done when**: Every registered tool can be instantiated in both modes; replay mode returns exact recorded responses or typed missing-recording errors without network calls.
 
 ### P1-1 · BaseTool Protocol + Tool Factory
 - [x] Implement `backend/app/tools/base.py` — `BaseTool` Protocol with `name`, `description`, `async def run(**kwargs) -> dict`
-- [x] Implement `ToolFactory` in `backend/app/tools/factory.py` — reads `settings.mock_external_apis`, returns mock or real tool instance for each tool name
-- [x] Write unit test: `ToolFactory(mock=True).get("search_flights")` returns `MockFlightSearchTool`
+- [x] Implement `ToolFactory` in `backend/app/tools/factory.py` — reads `settings.mock_external_apis`, returns a replay wrapper or real adapter
+- [x] Write unit test: replay mode returns a named callable wrapper and unknown names raise `KeyError`
 
 ### P1-2 · Pydantic Models — User & Core
 - [x] `backend/app/models/user_profile.py`: `UserProfile`, `TripDates`, `BudgetPreference`, `ClarificationPrompt` (`field`, `question`, `reason`)
@@ -94,33 +94,11 @@
 - [x] Add clarification fields to `TripState` in `state.py`: `needs_clarification: bool`, `clarification_prompts: list[ClarificationPrompt]`, `parse_confidence: dict[str, float]`
 - [x] Write model validation tests for every Pydantic model (required fields, type coercion), incl. `VisaReport.sources` and `BudgetReport.fx_rates_used`
 
-### P1-3 · Mock Tool Fixtures
-- [x] Create `backend/tests/fixtures/` directory with realistic JSON fixture files:
-  - `flights_kolkata_leh.json` — 3 domestic flight options (SerpAPI google_flights format)
-  - `flights_kolkata_lisbon.json` — 3 international flight options (SerpAPI format)
-  - `hotels_leh.json` — 8 hotel options with ratings, prices (SerpAPI google_hotels format)
-  - `hotels_lisbon.json` — 8 hotel options
-  - `places_leh_attractions.json` — 12 attractions with lat/lng (Google Places new API format)
-  - `places_lisbon_attractions.json` — 12 attractions
-  - `food_leh.json` — 9 food venues across restaurants, cafes, street food (Google Places format)
-  - `transit_kolkata_delhi.json` — train + bus options (Google Routes API format)
-  - `scams_leh.json` — 4 scam entries (Tavily format)
-  - `scams_lisbon.json` — 3 scam entries (Tavily format)
-  - `visa_india_portugal.json` — full visa report (VFS Global; `application_centre`, `sources[]`, `last_verified_at`, `confidence`)
-  - `rentals_leh.json` — 5 rental options
-  - `fx_rates.json` — reference exchange rates (JPY/EUR/USD/GBP → INR) with `fetched_at`
+### P1-3 · Recorded Response Store
+- [x] Implement `backend/app/services/tool_response_store.py` — sanitized, versioned real-mode recordings with exact request replay
+- [x] Keep response archives gitignored and return typed missing-recording errors when no exact match exists
 
-### P1-4 · Mock Tool Implementations
-- [x] `backend/app/tools/mock/serpapi_tools.py` — `MockFlightSearchTool`, `MockHotelSearchTool` (read from fixtures based on origin/dest/location)
-- [x] `backend/app/tools/mock/transit_tools.py` — `MockTransitSearchTool` (read from fixtures)
-- [x] `backend/app/tools/mock/places_tools.py` — `MockPlaceSearchTool`, `MockPlaceDetailsTool` (read from fixtures)
-- [x] `backend/app/tools/mock/tavily_tools.py` — `MockTavilySearchTool` (returns fixture for scam/reality/visa queries based on destination)
-- [x] `backend/app/tools/mock/visa_tools.py` — `MockVisaCentreSearchTool` (returns fixture with application centre company name, address, booking URL — company varies by corridor; returns `sources[]` and `last_verified_at`), `MockEmbassySearchTool`
-- [x] `backend/app/tools/mock/rental_tools.py` — `MockRentalSearchTool`, `MockFuelPriceTool`
-- [x] `backend/app/tools/mock/geo_tools.py` — `MockClusterByProximityTool`, `MockDistanceMatrixTool`
-- [x] `backend/app/tools/mock/fx_tools.py` — `MockCurrencyConvertTool` (reads `fx_rates.json`; returns converted amount + `rate` + `fetched_at`) **(H)**
-
-### P1-5 · Real Tool Stubs (raise NotImplementedError)
+### P1-4 · Real Tool Adapters
 - [x] `backend/app/tools/real/serpapi_tools.py` — stubs for `FlightSearchTool`, `HotelSearchTool`
 - [x] `backend/app/tools/real/transit_tools.py` — stub for `TransitSearchTool`
 - [x] `backend/app/tools/real/places_tools.py` — stubs for `PlaceSearchTool`, `PlaceDetailsTool`
@@ -130,17 +108,17 @@
 - [x] `backend/app/tools/real/geo_tools.py` — `ClusterByProximityTool` (pure math, no external API — implement fully now), `DistanceMatrixTool` stub
 - [x] `backend/app/tools/real/fx_tools.py` — stub for `CurrencyConvertTool` (raise `NotImplementedError`) **(H)**
 
-### P1-6 · Cache Service
+### P1-5 · Cache Service
 - [x] Implement `backend/app/services/cache_service.py` — Redis wrapper with `get(key)`, `set(key, value, ttl)`, `delete(key)`
 - [x] Add TTL constants matching plan (flights 4h, hotels 2h, places 48h, FX 12h, etc.)
 - [x] Write unit test with mock Redis client
 
 ---
 
-## Phase 2 — LangGraph Graph + All Agents (mock tools)
+## Phase 2 — LangGraph Graph + All Agents (recorded-response replay)
 
-> **Goal**: Full 14-agent LangGraph graph is wired and executes end-to-end using mock tools. Every agent produces correct typed output written to TripState. Graph runs without errors from OrchestratorAgent through ItineraryCompilerAgent.
-> **Done when**: `python -c "from app.graph.graph import run_graph; import asyncio; asyncio.run(run_graph({'query': '3 days Osaka from Kolkata'}))"` returns a complete `Itinerary` object.
+> **Goal**: Full 14-agent LangGraph graph is wired and executes end-to-end using recorded responses. Every agent produces correct typed output written to TripState. Missing archives remain explicit typed failures.
+> **Done when**: `python -c "from app.graph.graph import run_graph; import asyncio; asyncio.run(run_graph({'query': '3 days Osaka from Kolkata'}))"` returns a complete `Itinerary` when the required response archive is present.
 
 ### P2-1 · TripState + Graph Skeleton
 - [x] Implement `backend/app/graph/state.py` — full `TripState` TypedDict with all fields from plan (incl. `needs_clarification`, `clarification_prompts`, `parse_confidence`, `stays_shortlist`, `transport_alternatives`)
@@ -185,7 +163,7 @@
 - [x] Implement `backend/app/agents/transport_search_agent.py` (hub ID + parallel flight/transit calls)
 - [x] Implement `backend/app/agents/stay_search_agent.py` (SerpAPI hotels → `StayOption` list)
 - [x] Implement `backend/app/agents/local_experiences_agent.py`
-  - [x] **(D)** Tavily grounding check: Tavily names verified via `MockPlaceSearchTool` before inclusion; unconfirmed dropped silently
+  - [x] **(D)** Tavily grounding check: Tavily names verified via the Places adapter before inclusion; unconfirmed dropped silently
 
 ### P2-6 · LAYER 3 — Analysis Agents (all complete)
 - [x] Implement `backend/app/agents/transport_optimizer_agent.py`
@@ -197,7 +175,7 @@
   - [x] `_budget_filter()` removes hotels outside price-tier thresholds before LLM ranking
   - [x] `stays_shortlist[]` — each option has `personalization_reason` + `price_disclaimer`
   - [x] `stays_pick` = first shortlist item (recommended default)
-  - [x] Integration test: stays_shortlist populated when fixture data available
+  - [x] Integration test: stays_shortlist populated when recorded responses are available
 - [x] Implement `backend/app/agents/self_drive_search_agent.py`
   - [x] No-op (returns `{"self_drive_report": None}`) when `self_drive_intent=False`
   - [x] Fuel cost estimate: total_km / mileage x fuel_price
@@ -206,14 +184,12 @@
 - [x] Implement `backend/app/agents/reviews_agent.py` — fetches for ALL `stays_shortlist` hotels + top 8 experiences
 - [x] Implement `backend/app/agents/food_discovery_agent.py` — neighbourhood-grouped, diet-filtered
 - [x] Implement `backend/app/agents/budget_planner_agent.py`
-  - [x] **(H)** FX normalisation via `MockCurrencyConvertTool`; `fx_rates_used` + `fx_disclaimer` populated
+  - [x] **(H)** FX normalisation via the currency adapter; `fx_rates_used` + `fx_disclaimer` populated
   - [x] All 6 cost categories in `per_category_breakdown`
 
 ### P2-8 · LAYER 5 — ItineraryCompilerAgent
 - [x] Implement `backend/app/agents/itinerary_compiler_agent.py`
-  - [x] Inject `MockClusterByProximityTool` + real `ClusterByProximityTool` (sklearn)
-  - [x] Inject `MockEnforceOpeningHoursTool` + real `EnforceOpeningHoursTool` **(A)**
-  - [x] Inject `MockValidateDayDurationTool` + real `ValidateDayDurationTool` **(B)**
+  - [x] Inject the registered replay wrappers and real deterministic tools (sklearn) **(A)(B)**
   - [x] Pre-gate: resolve opening-hours + duration issues before first LLM call
   - [x] First LLM: compile `Itinerary` with `recommendation_reason` + `best_for` per activity **(C)**
   - [x] Second LLM: soft self-critique (gaps, rain days, pace)
@@ -235,7 +211,7 @@
 - [x] Tool-level: `EnforceOpeningHoursTool` real implementation test
 - [x] Tool-level: `ValidateDayDurationTool` real implementation test
 - [x] Deterministic gate: closed venue injected → resolved by Python (not LLM)
-- [x] All cases: zero network calls (mock tools + fake LLM), < 2s total
+- [x] All cases: zero network calls (replay wrappers + fake LLM), < 2s total
 
 ---
 
@@ -347,11 +323,11 @@
 - [ ] `backend/evals/evaluators/restaurant_relevance.py` — if `dietary_restrictions` set in profile, verify none of the recommended restaurants violate them (e.g. no beef restaurants for vegetarian profile)
 - [ ] `backend/evals/evaluators/clarification_trigger.py` **(F)** — queries missing a critical field yield `needs_clarification=True` and **no** itinerary; complete queries do **not** trigger it
 - [ ] `backend/evals/evaluators/golden_accuracy.py` **(J, real-API only)** — compare live output to `evals/golden/*`: visa requirement/type match, transit-route existence, opening-hours match, FX within tolerance
-- [ ] Unit test each evaluator with a hand-crafted passing and failing `Itinerary` fixture
+- [ ] Unit test each evaluator with a hand-crafted passing and failing `Itinerary` sample
 
 ### P4-6 · Eval Runner
 - [ ] Implement `backend/evals/run_evals.py` with a `--mode {mock,golden}` flag:
-  - [ ] `--mode mock` (default, every PR): load each dataset, run `run_graph()` with mock tools, run the mock-mode evaluators (incl. `clarification_trigger`), zero API quota
+  - [ ] `--mode replay` (default, every PR): load each dataset, run `run_graph()` with recorded responses, run replay-mode evaluators (incl. `clarification_trigger`), zero API quota
   - [ ] `--mode golden` **(J)**: set `MOCK_EXTERNAL_APIS=false`, run `run_graph()` against real APIs for `evals/golden/*`, run `golden_accuracy` (visa/transit/opening-hours/FX vs ground truth)
   - [ ] Post score to Langfuse via `lf.score()`
   - [ ] Compare to baseline (stored in `backend/evals/baselines.json`)
@@ -366,7 +342,7 @@
 
 ## Phase 5 — Real API Integration (plug and play)
 
-> **Goal**: Replace all mock tool implementations with real API calls. Set `MOCK_EXTERNAL_APIS=false`. All 4 integration test cases pass with real data. Zero changes to agent code or graph.
+> **Goal**: Complete the real provider adapters. Set `MOCK_EXTERNAL_APIS=false`. All 4 integration test cases pass with real data. Zero changes to agent code or graph.
 > **Done when**: `MOCK_EXTERNAL_APIS=false` with real API keys → `"3 days Osaka from Kolkata"` returns a real itinerary with real flights, real hotels, and grounded destination context.
 
 ### P5-1 · Obtain API Keys
@@ -377,7 +353,7 @@
 - [ ] Set LLM key (`OPENAI_API_KEY` or equivalent) in `.env`
 
 ### P5-2 · Implement Real SerpAPI Tools
-- [ ] `backend/app/tools/real/serpapi_tools.py` — `FlightSearchTool.run()`: call SerpAPI `google_flights` engine, parse response into `list[dict]` matching fixture schema
+- [ ] `backend/app/tools/real/serpapi_tools.py` — `FlightSearchTool.run()`: call SerpAPI `google_flights` engine, parse response into the normalized tool contract
 - [ ] `backend/app/tools/real/serpapi_tools.py` — `HotelSearchTool.run()`: call SerpAPI `google_hotels` engine, parse response into `list[dict]`
 - [ ] Wrap both tools with `cache_service` (4h TTL for flights, 2h for hotels)
 - [ ] Test: call `FlightSearchTool.run(origin="CCU", dest="IXL", date="2026-10-14")` → returns real flight data
@@ -576,8 +552,8 @@
 | Phase | Goal | Key Artifact |
 |---|---|---|
 | **0** | Scaffolding | `docker-compose up` → all services green |
-| **1** | Models + mock tools | All tools work in mock mode; fixtures ready |
-| **2** | All 14 agents + graph | Full graph runs end-to-end with mock data |
+| **1** | Models + tool layer | Real adapters and replay wrappers satisfy the shared contract |
+| **2** | All 14 agents + graph | Full graph runs end-to-end with recorded responses |
 | **3** | FastAPI endpoints | Postman collection passes all requests |
 | **4** | Observability + evals | Langfuse traces visible; `make evals` exits 0 |
 | **5** | Real API integration | Real data flows through system; evals still pass |
@@ -592,4 +568,4 @@
 - Code reviewed (self-review checklist: no hardcoded values, no secrets in code, Pydantic types used, async everywhere)
 - Unit test written and passing
 - No new `# TODO` comments left in code
-- Relevant fixture or postman test updated if applicable
+- Relevant recording or Postman test updated if applicable

@@ -7,6 +7,7 @@ from typing import Any
 
 import structlog
 
+from app.config import TOOL_RESPONSE_ERROR_KEY
 from app.models.reports import FxRateEntry
 from app.tools.factory import ToolFactory
 
@@ -26,7 +27,7 @@ class FxConverter:
 
         Args:
             target_currency: Default target/quote currency for conversions.
-            fx_tool: Pre-instantiated FX tool (e.g. CurrencyConvertTool or MockCurrencyConvertTool).
+            fx_tool: Pre-instantiated FX tool, such as a real adapter or test double.
             tool_factory: ToolFactory instance to resolve the FX tool if `fx_tool` is not provided.
         """
         self.target_currency = target_currency
@@ -55,6 +56,8 @@ class FxConverter:
 
         try:
             result = await self._fx_tool.run(amount=amount, base=from_ccy, quote=dest_ccy)
+            if result.get(TOOL_RESPONSE_ERROR_KEY):
+                return float(amount)
             rate = float(result.get("rate", 1.0))
             fetched_at_val = result.get("fetched_at")
 

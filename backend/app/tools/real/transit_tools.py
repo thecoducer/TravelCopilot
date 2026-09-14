@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
-
-from app.config import settings
+from app.config import GOOGLE_TRAVEL_MODE_TRANSIT
+from app.services.external_api_client import ExternalAPIClient, get_external_api_client
+from app.tools.real.routes_helpers import GoogleRoutesClient, route_result
 
 
 class TransitSearchTool:
     name = "search_transit"
     description = "Google Routes API routes for train, bus, and ferry legs."
+
+    def __init__(self, client: ExternalAPIClient | None = None) -> None:
+        self._routes = GoogleRoutesClient(client or get_external_api_client())
 
     async def run(
         self,
@@ -23,42 +26,8 @@ class TransitSearchTool:
     ) -> dict[str, Any]:
         if not origin or not destination:
             return {"options": [], "source": "google_routes"}
-
-        payload: dict[str, Any] = {
-            "origin": {"address": origin},
-            "destination": {"address": destination},
-            "travelMode": "TRANSIT",
-            "computeAlternativeRoutes": True,
-        }
-        if departure_date:
-            payload["departureTime"] = f"{departure_date}T09:00:00Z"
-        if mode in {"train", "bus"}:
-            payload["transitPreferences"] = {"allowedTravelModes": [mode.upper()]}
-
-        headers = {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": settings.google_maps_api_key,
-            "X-Goog-FieldMask": (
-                "routes.duration,routes.distanceMeters,routes.description,routes.legs"
-            ),
-        }
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(
-                "https://routes.googleapis.com/directions/v2:computeRoutes",
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        options = [
-            {
-                **route,
-                "mode": mode,
-                "origin": origin,
-                "destination": destination,
-                "source": "google_routes",
-            }
-            for route in data.get("routes", [])
-        ]
-        return {"options": options, "source": "google_routes"}
+        departure_time = f"{departure_date}T09:00:00Z" if departure_date else ""
+        response = await self._routes.compute_route(
+            origin, destination, GOOGLE_TRAVEL_MODE_TRANSIT, departure_time
+        )
+        return route_result(response, origin, destination, mode)

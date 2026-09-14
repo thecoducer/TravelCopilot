@@ -121,10 +121,10 @@ async def test_fx_converter_clear_rates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fx_converter_with_mock_tool_factory() -> None:
+async def test_fx_converter_with_replay_factory_missing_recording() -> None:
     factory = ToolFactory(mock=True)
     converter = FxConverter(target_currency="JPY", tool_factory=factory)
 
     converted = await converter.convert(1000.0, "INR", "JPY")
-    assert converted > 0
-    assert "INR→JPY" in converter.fx_rates_used
+    assert converted == 1000.0
+    assert "INR→JPY" not in converter.fx_rates_used

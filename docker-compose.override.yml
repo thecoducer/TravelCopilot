@@ -6,7 +6,8 @@ services:
     # Expose extra debug port if needed locally
     environment:
       LOG_LEVEL: debug
-      MOCK_EXTERNAL_APIS: "true"
+      # MOCK_EXTERNAL_APIS intentionally not set here so the value from .env
+      # (env_file) takes effect. Setting it here would always win over .env.
 
   # Skip langfuse in fast local dev by overriding its restart policy
   # Uncomment to disable: langfuse: { profiles: ["full"] }
