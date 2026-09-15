@@ -49,10 +49,6 @@ class UserProfile(BaseModel):
     nationality: str | None = None
     passport_country: str | None = None
     preferred_currency: str = "INR"
-    # Concrete budget amounts (BudgetPreference is graph-only and has no endpoint).
-    total_budget: float | None = Field(default=None, ge=0)
-    per_day_budget: float | None = Field(default=None, ge=0)
-    budget_currency: str = "INR"
     dietary_restrictions: list[str] = Field(default_factory=list)
     preferred_cuisines: list[str] = Field(default_factory=list)
     # Distinguishes an explicit "no dietary restrictions" answer from unset preferences.
@@ -62,7 +58,6 @@ class UserProfile(BaseModel):
     preferred_airlines: list[str] = Field(default_factory=list)
     preferred_hotel_chains: list[str] = Field(default_factory=list)
     hotel_style: HotelStyle | None = None
-    budget_tier: BudgetTier = BudgetTier.mid
     travel_style: str | None = None  # "adventure"|"cultural"|"luxury"|"backpacker"|"family"
     fitness_level: str | None = None  # "low"|"moderate"|"high" — affects activity recommendations
     altitude_experience: bool | None = None  # True = has previously travelled above 3,000 m

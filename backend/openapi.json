@@ -678,10 +678,6 @@
               }
             ]
           },
-          "budget_tier": {
-            "$ref": "#/components/schemas/BudgetTier",
-            "default": "mid"
-          },
           "travel_style": {
             "anyOf": [
               {

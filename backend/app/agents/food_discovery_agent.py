@@ -13,6 +13,7 @@ from typing import Any
 from app.logging import get_agent_logger
 from app.models.itinerary import FoodOptions, FoodVenue
 from app.models.stops import DayAllocation, TripStop
+from app.models.user_profile import budget_from_state
 from app.tools.factory import ToolFactory
 
 _FOOD_TYPES = ["restaurant", "cafe", "meal_takeaway", "bakery"]
@@ -110,7 +111,7 @@ class FoodDiscoveryAgent:
 
         dietary = user_profile.dietary_restrictions if user_profile else []
         preferred_cuisines = user_profile.preferred_cuisines if user_profile else []
-        budget_tier = str(user_profile.budget_tier) if user_profile else "mid"
+        budget_tier = str(budget_from_state(state.get("budget")).tier)
 
         stops: dict[str, TripStop] = state.get("stops", {})
         stops_by_day: dict[int, DayAllocation] = state.get("stops_by_day", {})

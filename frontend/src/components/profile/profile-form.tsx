@@ -5,10 +5,8 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getProfile, saveProfile } from "@/lib/api";
 import type { UserProfileData } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-current-user";
 
-const BUDGET_TIERS = ["budget", "mid", "luxury"];
 const HOTEL_STYLES = ["hostel", "budget", "boutique", "business", "luxury"];
 const TRAVEL_STYLES = ["adventure", "cultural", "luxury", "backpacker", "family"];
 const FITNESS_LEVELS = ["low", "moderate", "high"];
@@ -122,51 +120,6 @@ export function ProfileForm() {
             className={inputClass}
             value={profile.passport_country ?? ""}
             onChange={(e) => update("passport_country", e.target.value)}
-          />
-        </Field>
-      </Section>
-
-      <Section title="Budget">
-        <Field label="Budget tier">
-          <div className="inline-flex gap-[3px] rounded-md border border-border-strong bg-canvas p-[3px]">
-            {BUDGET_TIERS.map((tier) => (
-              <button
-                key={tier}
-                type="button"
-                className={cn(
-                  "rounded-sm px-3 py-1 text-[0.82rem] font-semibold capitalize text-muted",
-                  profile.budget_tier === tier && "bg-accent text-white",
-                )}
-                onClick={() => update("budget_tier", tier)}
-              >
-                {tier}
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label="Total budget">
-          <input
-            className={inputClass}
-            type="number"
-            min={0}
-            value={profile.total_budget ?? ""}
-            onChange={(e) => update("total_budget", e.target.value ? Number(e.target.value) : null)}
-          />
-        </Field>
-        <Field label="Per-day budget">
-          <input
-            className={inputClass}
-            type="number"
-            min={0}
-            value={profile.per_day_budget ?? ""}
-            onChange={(e) => update("per_day_budget", e.target.value ? Number(e.target.value) : null)}
-          />
-        </Field>
-        <Field label="Currency">
-          <input
-            className={inputClass}
-            value={profile.budget_currency ?? "INR"}
-            onChange={(e) => update("budget_currency", e.target.value.toUpperCase())}
           />
         </Field>
       </Section>

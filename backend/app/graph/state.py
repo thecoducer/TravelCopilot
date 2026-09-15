@@ -54,6 +54,7 @@ class TripState(TypedDict, total=False):
 
     # ── Clarification gate (F) ─────────────────────────────────────────────
     needs_clarification: bool  # kept for backward-compat; no longer written by orchestrator
+    missing_required_fields: list[str]
     clarification_prompts: list[ClarificationPrompt]  # kept for backward-compat
     parse_confidence: dict[str, float]  # field → confidence score 0–1
     clarification_round: int  # number of completed clarification rounds
@@ -137,6 +138,7 @@ class TripStateModel(BaseModel):
     self_drive_intent: bool = False
 
     needs_clarification: bool = False
+    missing_required_fields: list[str] = Field(default_factory=list)
     clarification_prompts: list[ClarificationPrompt] = Field(default_factory=list)
     parse_confidence: dict[str, float] = Field(default_factory=dict)
     clarification_round: int = 0

@@ -250,6 +250,17 @@ async def emit_completion_events(
     username: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Emit ``complete`` and ``usage_summary`` SSE events after the graph finishes."""
+    if final_state.get("error") and not final_state.get("itinerary"):
+        yield sse_event(
+            "error",
+            {
+                "message": final_state["error"],
+                "missing_required_fields": final_state.get("missing_required_fields", []),
+                "session_id": session_id,
+            },
+        )
+        return
+
     itinerary = final_state.get("itinerary")
     if itinerary and hasattr(itinerary, "model_copy"):
         itinerary = itinerary.model_copy(update={"id": trip_id})

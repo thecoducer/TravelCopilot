@@ -153,6 +153,7 @@ def _stub_narrative(destination: str, max_days: int = 8) -> TripNarrative:
 def _make_fake_llm(
     destination: str = "Osaka",
     is_intl: bool = False,
+    self_drive: bool = False,
     route: _Route | None = None,
     parsed_query: _ParsedQuery | None = None,
 ) -> MagicMock:
@@ -160,7 +161,7 @@ def _make_fake_llm(
     _responses: dict[type, Any] = {
         _ParsedQuery: parsed_query
         or _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
+            source=_FieldConfidence(value="Kolkata", confidence=0.9),
             destination=_FieldConfidence(value=destination, confidence=0.95),
             departure_date="2026-10-14",
             return_date="2026-10-16",
@@ -170,7 +171,7 @@ def _make_fake_llm(
             budget_tier="mid",
             interests=["food", "history"],
             is_international=is_intl,
-            self_drive_intent=False,
+            self_drive_intent=self_drive,
             dates_confidence=0.9,
         ),
         SafetyReport: SafetyReport(
@@ -303,13 +304,19 @@ def _run_graph_with_fake_llm(
     session_id: str = "test-session",
     destination: str = "Osaka",
     is_intl: bool = False,
+    self_drive: bool = False,
     extra_state: dict[str, Any] | None = None,
     route: _Route | None = None,
 ) -> dict[str, Any]:
     """Run the graph with a fake LLM injected directly into all agents."""
     import asyncio
 
-    fake_llm = _make_fake_llm(destination=destination, is_intl=is_intl, route=route)
+    fake_llm = _make_fake_llm(
+        destination=destination,
+        is_intl=is_intl,
+        self_drive=self_drive,
+        route=route,
+    )
 
     async def _run() -> dict[str, Any]:
         factory = ToolFactory(mock=True)
@@ -428,7 +435,7 @@ class TestFullGraph:
             query="3 days Goa from Mumbai, want to rent a scooter",
             destination="Goa",
             is_intl=False,
-            extra_state={"self_drive_intent": True},
+            self_drive=True,
         )
         assert result.get("self_drive_report") is not None
         assert result.get("visa_report") is None
@@ -494,7 +501,7 @@ class TestFullGraph:
         from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
 
         vague_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="unknown", confidence=0.5),
+            source=_FieldConfidence(value="unknown", confidence=0.5),
             destination=_FieldConfidence(value=None, confidence=0.0),  # missing
             departure_date=None,
             trip_days=3,
@@ -649,7 +656,7 @@ class TestMultiStopRoute:
             ],
         )
         ladakh_parsed = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=1.0),
+            source=_FieldConfidence(value="Kolkata", confidence=1.0),
             destination=_FieldConfidence(value="Ladakh", confidence=1.0),
             departure_date="2026-10-14",
             return_date="2026-10-18",
@@ -708,13 +715,16 @@ class TestMultiStopRoute:
             if schema is _ParsedQuery:
                 chain.ainvoke = AsyncMock(
                     return_value=_ParsedQuery(
-                        source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
+                        source=_FieldConfidence(value="Kolkata", confidence=0.9),
                         destination=_FieldConfidence(value="Nowhereland", confidence=0.95),
                         departure_date="2026-10-14",
                         return_date="2026-10-17",
                         trip_days=3,
                         trip_days_confidence=0.9,
                         travelers=_FieldConfidence(value="2", confidence=1.0),
+                        budget_tier="mid",
+                        is_international=False,
+                        self_drive_intent=True,
                         dates_confidence=0.9,
                     )
                 )

@@ -41,9 +41,6 @@ export type UserProfileData = {
   nationality?: string | null;
   passport_country?: string | null;
   preferred_currency?: string;
-  total_budget?: number | null;
-  per_day_budget?: number | null;
-  budget_currency?: string;
   dietary_restrictions?: string[];
   preferred_cuisines?: string[];
   food_preferences_configured?: boolean;
@@ -52,7 +49,6 @@ export type UserProfileData = {
   preferred_airlines?: string[];
   preferred_hotel_chains?: string[];
   hotel_style?: string | null;
-  budget_tier?: string;
   travel_style?: string | null;
   fitness_level?: string | null;
   altitude_experience?: boolean | null;

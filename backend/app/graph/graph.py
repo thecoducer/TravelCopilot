@@ -140,6 +140,22 @@ async def _discovery_failed_end_node(state: dict[str, Any]) -> dict[str, Any]:
     return {"error": "Could not determine a usable trip route from the query provided."}
 
 
+async def _required_fields_end_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Hard-stop before route discovery when required query fields remain missing."""
+    log = get_agent_logger("orchestrator", state.get("session_id", ""))
+    fields = state.get("missing_required_fields", [])
+    log.error("required_trip_fields_missing", fields=fields)
+    return {
+        "error": "Required trip details are missing: " + ", ".join(fields),
+    }
+
+
+def _route_after_orchestrator(state: dict[str, Any]) -> str:
+    if state.get("missing_required_fields") or state.get("error"):
+        return "required_fields_end"
+    return "stops_discovery"
+
+
 def _route_after_discovery(state: dict[str, Any]) -> str | list[str]:
     if state.get("route_discovery_status") != "discovery_failed":
         return [
@@ -194,6 +210,7 @@ def build_graph(
     graph.add_node("route_clarification", _route_clarification_node)
     graph.add_node("food_clarification", _food_clarification_node)
     graph.add_node("discovery_failed_end", _discovery_failed_end_node)
+    graph.add_node("required_fields_end", _required_fields_end_node)
 
     # Layer 1 — Route Discovery + Destination Intelligence
     # (stops_discovery gates every Layer 2 supply-search node; visa runs in
@@ -223,9 +240,17 @@ def build_graph(
     # ── Edges ──────────────────────────────────────────────────────────────
     graph.add_edge(START, "orchestrator")
 
-    # Orchestrator → stops_discovery (interrupt() inside the orchestrator handles
-    # its own clarification; the graph pauses mid-node and resumes transparently)
-    graph.add_edge("orchestrator", "stops_discovery")
+    # Orchestrator clarification pauses inside the node. If the configured
+    # rounds are exhausted, stop before any route or supply search begins.
+    graph.add_conditional_edges(
+        "orchestrator",
+        _route_after_orchestrator,
+        {
+            "stops_discovery": "stops_discovery",
+            "required_fields_end": "required_fields_end",
+        },
+    )
+    graph.add_edge("required_fields_end", END)
 
     # Successful route discovery fans out directly to the Layer 1/2 entry nodes;
     # a discovery_failed route never reaches supply search with a fabricated

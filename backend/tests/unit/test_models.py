@@ -105,7 +105,6 @@ class TestUserProfile:
     def test_defaults(self):
         up = UserProfile(user_id="u1")
         assert up.preferred_currency == "INR"
-        assert up.budget_tier == BudgetTier.mid
         assert up.preferred_cuisines == []
         assert up.food_preferences_configured is False
         assert up.interests == []
@@ -119,7 +118,6 @@ class TestUserProfile:
             passport_country="India",
             interests=["food", "history"],
             hotel_style=HotelStyle.boutique,
-            budget_tier=BudgetTier.luxury,
             travel_style="cultural",
             fitness_level="moderate",
         )
