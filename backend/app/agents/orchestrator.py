@@ -119,9 +119,6 @@ _SELF_DRIVE_KEYWORDS = frozenset(
     ]
 )
 
-# Required fields — trigger clarification gate if missing/low-confidence
-_REQUIRED_FIELDS: list[str] = ["destination", "dates", "travelers"]
-
 # ── Field metadata for contextual clarification prompts ───────────────────────
 _FIELD_META: dict[str, dict[str, Any]] = {
     "destination": {

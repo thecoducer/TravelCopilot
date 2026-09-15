@@ -1,13 +1,10 @@
-import Image from "next/image";
 import { Accordion } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
 import type {
   BudgetReport,
   Itinerary,
   RouteLeg,
-  StayOption,
   TransportRecommendation,
-  TripDays,
 } from "@/lib/types";
 
 type ItineraryDetailsProps = {
@@ -35,69 +32,6 @@ function Checklist({ items }: { items: string[] }) {
       ))}
     </ul>
   );
-}
-
-function StayCard({ stay }: { stay: StayOption }) {
-  const image = stay.photos?.[0];
-  return (
-    <article className="flex gap-3 rounded-md border border-border bg-canvas p-3">
-      {image ? (
-        <Image
-          className="size-[84px] shrink-0 rounded-sm object-cover"
-          src={image}
-          alt={stay.name ?? "Accommodation"}
-          width={84}
-          height={84}
-          unoptimized
-        />
-      ) : null}
-      <div className="min-w-0">
-        <h5 className="mb-1 text-sm text-fg">{stay.name ?? "Accommodation option"}</h5>
-        <div className="flex flex-wrap gap-2 text-xs text-muted">
-          {stay.rating ? <span>★ {stay.rating.toFixed(1)}</span> : null}
-          {stay.price_per_night ? <span>{money(stay.price_per_night, stay.currency_code)} / night</span> : null}
-          {stay.hotel_style ? <span>{stay.hotel_style}</span> : null}
-        </div>
-        {stay.amenities && stay.amenities.length > 0 ? (
-          <p className="my-1 text-xs text-faint">{stay.amenities.slice(0, 6).join(" · ")}</p>
-        ) : null}
-        {stay.free_cancellation_until ? (
-          <p className="my-1 text-xs text-success">Free cancellation until {stay.free_cancellation_until}</p>
-        ) : null}
-        {stay.address ? <small className="my-1 block text-xs text-faint">{stay.address}</small> : null}
-        {stay.booking_url ? (
-          <a className="text-xs font-semibold text-accent hover:underline" href={stay.booking_url} target="_blank" rel="noreferrer">
-            View booking
-          </a>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-type StopGroup = {
-  location: string;
-  stopId: string | null;
-  first: TripDays;
-  days: TripDays[];
-};
-
-/** Presentational grouping only — the itinerary data itself stays flat and day-wise. */
-function groupDaysByStop(tripDays: TripDays[]): StopGroup[] {
-  return tripDays.reduce<StopGroup[]>((groups, day) => {
-    const current = groups.at(-1);
-    if (current && current.location === day.location && current.stopId === (day.stop_id ?? null)) {
-      current.days.push(day);
-    } else {
-      groups.push({
-        location: day.location,
-        stopId: day.stop_id ?? null,
-        first: day,
-        days: [day],
-      });
-    }
-    return groups;
-  }, []);
 }
 
 function LegTimeline({ legs }: { legs: RouteLeg[] }) {
@@ -129,7 +63,7 @@ function LegTimeline({ legs }: { legs: RouteLeg[] }) {
             <p className="mt-1 text-xs text-faint">Cancellation: {leg.cancellation_policy}</p>
           ) : null}
           {leg.booking_url ? (
-            <a className="text-xs font-semibold text-accent hover:underline" href={leg.booking_url} target="_blank" rel="noreferrer">
+              <a className="text-xs font-semibold text-chat-blue hover:text-chat-blue-hover hover:underline" href={leg.booking_url} target="_blank" rel="noreferrer">
               Book this leg
             </a>
           ) : null}
@@ -151,7 +85,7 @@ function TransportPanel({ itinerary }: { itinerary: Itinerary }) {
     <Accordion eyebrow="Route logistics" title="Transport" meta={`${options.length} option${options.length === 1 ? "" : "s"}`} defaultOpen>
       <div className="flex flex-col gap-4">
         {options.map((option, index) => (
-          <article key={index} className="rounded-md border border-border bg-canvas p-4">
+          <article key={index} className="border-t border-border py-4 first:border-t-0">
             <div className="mb-2 flex items-center gap-2">
               <h5 className="text-[0.95rem] text-fg">{option.route_label ?? option.mode ?? (index === 0 ? "Recommended route" : "Alternative")}</h5>
               {index === 0 ? (
@@ -160,12 +94,12 @@ function TransportPanel({ itinerary }: { itinerary: Itinerary }) {
                 </span>
               ) : null}
               {money(option.total_cost, option.currency_code) ? (
-                <span className="ml-auto font-semibold tabular-nums text-fg">{money(option.total_cost, option.currency_code)}</span>
+                <span className="ml-auto font-mono font-semibold tabular-nums text-fg">{money(option.total_cost, option.currency_code)}</span>
               ) : null}
             </div>
             {option.rationale ? <p className="text-sm text-muted">{option.rationale}</p> : null}
             {option.non_obvious_insight ? (
-              <p className="mb-2 mt-2 rounded-sm bg-accent-soft px-3 py-2 text-sm">💡 {option.non_obvious_insight}</p>
+              <p className="mb-2 mt-2 border-l-2 border-accent px-3 py-2 text-sm">💡 {option.non_obvious_insight}</p>
             ) : null}
             {option.recommended_legs && option.recommended_legs.length > 0 ? (
               <LegTimeline legs={option.recommended_legs} />
@@ -183,27 +117,38 @@ function BudgetPanel({ budget }: { budget: BudgetReport }) {
   const fxRates = Object.entries(budget.fx_rates_used ?? {});
 
   return (
-    <Accordion
-      eyebrow="Costs"
-      title="Budget breakdown"
-      meta={`${money(budget.total_estimated_cost, budget.currency_code)} · ${budget.vs_budget_verdict}`}
-    >
-      <div className="flex flex-col gap-4">
+    <section className="flex flex-col gap-6 border-b border-border pb-8 pt-4">
+      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-faint">Trip cost</span>
+          <h3 className="mt-1 font-display text-[1.7rem] font-semibold tracking-tight text-fg sm:text-[1.9rem]">
+            Cost breakdown
+          </h3>
+        </div>
+        <div className="flex items-baseline gap-2 sm:flex-col sm:items-end sm:gap-0">
+          <strong className="font-mono text-lg font-semibold tabular-nums text-fg">
+            {money(budget.total_estimated_cost, budget.currency_code)}
+          </strong>
+          <span className="text-sm text-muted">{budget.vs_budget_verdict}</span>
+        </div>
+      </header>
+
+      <div className="flex flex-col gap-5">
         {categories.length > 0 ? (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {categories.map(([label, value]) => (
-              <div key={label} className="grid grid-cols-[110px_1fr_auto] items-center gap-3">
-                <span className="text-[0.82rem] capitalize text-muted">{label.replaceAll("_", " ")}</span>
+              <div key={label} className="grid grid-cols-[minmax(100px,0.3fr)_1fr_auto] items-center gap-3">
+                <span className="text-sm capitalize text-muted">{label.replaceAll("_", " ")}</span>
                 <span className="h-2 overflow-hidden rounded-full bg-border">
-                  <span className="block h-full rounded-full bg-accent" style={{ width: `${(value / max) * 100}%` }} />
+                  <span className="block h-full rounded-full bg-chat-blue" style={{ width: `${(value / max) * 100}%` }} />
                 </span>
-                <span className="text-[0.82rem] tabular-nums text-fg">{money(value, budget.currency_code)}</span>
+                <span className="font-mono text-sm font-medium tabular-nums text-fg">{money(value, budget.currency_code)}</span>
               </div>
             ))}
           </div>
         ) : null}
 
-        <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted">
+        <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-border pt-4 text-sm text-muted">
           {budget.per_person_cost ? <span>Per person: {money(budget.per_person_cost, budget.currency_code)}</span> : null}
           {budget.permit_costs ? <span>Permits: {money(budget.permit_costs, budget.currency_code)}</span> : null}
         </div>
@@ -225,7 +170,7 @@ function BudgetPanel({ budget }: { budget: BudgetReport }) {
           </div>
         ) : null}
       </div>
-    </Accordion>
+    </section>
   );
 }
 
@@ -287,7 +232,7 @@ function VisaPanel({ itinerary }: { itinerary: Itinerary }) {
               {centre.address ? `, ${centre.address}` : ""}
             </p>
             {centre.booking_url ? (
-              <a className="text-xs font-semibold text-accent hover:underline" href={centre.booking_url} target="_blank" rel="noreferrer">
+              <a className="text-xs font-semibold text-chat-blue hover:text-chat-blue-hover hover:underline" href={centre.booking_url} target="_blank" rel="noreferrer">
                 Book an appointment
               </a>
             ) : null}
@@ -295,7 +240,7 @@ function VisaPanel({ itinerary }: { itinerary: Itinerary }) {
         ) : null}
 
         {visa.apply_online_url ? (
-          <a className="text-xs font-semibold text-accent hover:underline" href={visa.apply_online_url} target="_blank" rel="noreferrer">
+          <a className="text-xs font-semibold text-chat-blue hover:text-chat-blue-hover hover:underline" href={visa.apply_online_url} target="_blank" rel="noreferrer">
             Apply online
           </a>
         ) : null}
@@ -306,7 +251,7 @@ function VisaPanel({ itinerary }: { itinerary: Itinerary }) {
             <ul className="list-disc pl-4 text-sm">
               {visa.sources.map((source) => (
                 <li key={source.url}>
-                  <a className="text-accent hover:underline" href={source.url} target="_blank" rel="noreferrer">
+                    <a className="text-chat-blue hover:text-chat-blue-hover hover:underline" href={source.url} target="_blank" rel="noreferrer">
                     {source.title}
                   </a>
                   {source.published_or_fetched_date ? ` — ${source.published_or_fetched_date}` : ""}
@@ -320,106 +265,6 @@ function VisaPanel({ itinerary }: { itinerary: Itinerary }) {
           <small className={disclaimerClass}>Last verified: {visa.last_verified_at}</small>
         ) : null}
         <small className={disclaimerClass}>{visa.disclaimer}</small>
-      </div>
-    </Accordion>
-  );
-}
-
-function HotelsPanel({ itinerary }: { itinerary: Itinerary }) {
-  const stopGroups = groupDaysByStop(itinerary.trip_days);
-  const withStays = stopGroups.filter((group) => (group.first.stay_options?.options.length ?? 0) > 0);
-  if (withStays.length === 0) return null;
-
-  return (
-    <Accordion eyebrow="Where you'll stay" title="Hotels by stop" meta={`${withStays.length} stop${withStays.length === 1 ? "" : "s"}`}>
-      <div className="flex flex-col gap-4">
-        {withStays.map((group) => {
-          const permits = [...new Set(group.days.flatMap((day) => day.permits_required))];
-          return (
-            <div
-              key={`${group.location}-${group.stopId ?? group.first.day_number}`}
-              className="border-b border-border pb-3 last:border-0 last:pb-0"
-            >
-              <div className="mb-2 flex items-baseline justify-between">
-                <h5 className="text-[0.95rem] text-fg">{group.location}</h5>
-                <span className="text-sm text-muted">
-                  {group.days.length} night{group.days.length === 1 ? "" : "s"}
-                </span>
-              </div>
-              {permits.length > 0 ? <p className="text-xs text-faint">Permits: {permits.join(", ")}</p> : null}
-              <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
-                {(group.first.stay_options?.options ?? []).map((stay, index) => (
-                  <StayCard key={`${stay.name ?? "stay"}-${index}`} stay={stay} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Accordion>
-  );
-}
-
-function SafetyPanel({ itinerary }: { itinerary: Itinerary }) {
-  const safety = itinerary.safety_section;
-  if (!safety) return null;
-  const scams = safety.top_scams ?? [];
-  const contacts = Object.entries(safety.emergency_contacts ?? {});
-
-  return (
-    <Accordion eyebrow="Stay safe" title="Safety report" meta={safety.advisory_level ?? undefined}>
-      <div className="flex flex-col gap-4">
-        {itinerary.safety_briefing ? <p className="text-sm text-fg">{itinerary.safety_briefing}</p> : null}
-        {scams.length > 0 ? (
-          <div>
-            <h5 className={miniHeading}>Common scams</h5>
-            <ul className="flex list-disc flex-col gap-1 pl-4 text-[0.88rem] text-fg">
-              {scams.map((scam) => (
-                <li key={scam.name}>
-                  <strong>{scam.name}</strong> — {scam.how_to_avoid}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        {contacts.length > 0 ? (
-          <div>
-            <h5 className={miniHeading}>Emergency contacts</h5>
-            <ul className="flex list-disc flex-col gap-1 pl-4 text-[0.88rem] text-fg">
-              {contacts.map(([label, number]) => (
-                <li key={label}>
-                  {label}: {number}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        {safety.safe_areas && safety.safe_areas.length > 0 ? (
-          <div>
-            <h5 className={miniHeading}>Safer areas</h5>
-            <p className="text-[0.88rem] text-fg">{safety.safe_areas.join(", ")}</p>
-          </div>
-        ) : null}
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
-          {safety.medical_facilities ? (
-            <div>
-              <h5 className={miniHeading}>Medical</h5>
-              <p className="text-[0.88rem] text-fg">{safety.medical_facilities}</p>
-            </div>
-          ) : null}
-          {safety.women_safety_notes ? (
-            <div>
-              <h5 className={miniHeading}>Women travellers</h5>
-              <p className="text-[0.88rem] text-fg">{safety.women_safety_notes}</p>
-            </div>
-          ) : null}
-          {safety.insurance_recommendation ? (
-            <div>
-              <h5 className={miniHeading}>Insurance</h5>
-              <p className="text-[0.88rem] text-fg">{safety.insurance_recommendation}</p>
-            </div>
-          ) : null}
-        </div>
       </div>
     </Accordion>
   );
@@ -462,8 +307,6 @@ export function ItineraryDetails({ itinerary }: ItineraryDetailsProps) {
       <TransportPanel itinerary={itinerary} />
       {itinerary.budget_breakdown ? <BudgetPanel budget={itinerary.budget_breakdown} /> : null}
       <VisaPanel itinerary={itinerary} />
-      <HotelsPanel itinerary={itinerary} />
-      <SafetyPanel itinerary={itinerary} />
       <PracticalPanel itinerary={itinerary} />
     </div>
   );

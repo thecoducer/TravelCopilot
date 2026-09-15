@@ -9,20 +9,27 @@
 
 /* Raw token values — flipped by [data-theme]; surfaced to Tailwind via @theme inline. */
 :root {
-  --canvas: #faf9f7;
-  --surface: #ffffff;
-  --border: #e5e2dd;
-  --border-strong: #d4d0c9;
-  --fg: #262420;
-  --muted: #6b6862;
-  --faint: #928e86;
-  --accent: #2f6fed;
-  --accent-hover: #2559c7;
-  --accent-soft: #eaf0fe;
-  --danger: #c4432b;
-  --danger-soft: #fbeae6;
-  --success: #1f7a4d;
-  --success-soft: #e6f4ec;
+  /* Brushed steel neutrals with a restrained graphite accent. */
+  --canvas: #E9ECEF;
+  --surface: #F8F9FA;
+  --border: #D2D7DB;
+  --border-strong: #AEB6BD;
+  --fg: #171B1F;
+  --muted: #5F6871;
+  --faint: #8B959D;
+  --accent: #65717B;
+  --accent-hover: #4A555E;
+  --accent-soft: #E0E4E7;
+  --accent-warm: #7B858D;
+  --accent-warm-soft: #E5E8EA;
+  --danger: #B65F62;
+  --danger-soft: #F5E7E8;
+  --success: #5F8174;
+  --success-soft: #E4EEEA;
+  --chat-blue: #2563EB;
+  --chat-blue-hover: #1D4ED8;
+  --chat-blue-soft: #DBEAFE;
+  --chat-blue-border: #93C5FD;
 
   /* Legacy aliases for any component still on CSS Modules during migration. */
   --color-text: var(--fg);
@@ -35,31 +42,37 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-  --shadow-sm: 0 1px 2px rgba(38, 36, 32, 0.06);
-  --shadow-md: 0 4px 16px rgba(38, 36, 32, 0.08);
-  --sidebar-width: 280px;
+  --shadow-sm: 0 1px 2px rgba(22, 27, 31, 0.08), 0 4px 14px rgba(22, 27, 31, 0.06);
+  --shadow-md: 0 12px 30px rgba(22, 27, 31, 0.12);
+  --sidebar-width: 272px;
 
   color-scheme: light;
 }
 
 [data-theme="dark"] {
-  --canvas: #17161a;
-  --surface: #201f25;
-  --border: #322f38;
-  --border-strong: #45414c;
-  --fg: #ededf0;
-  --muted: #a8a4b0;
-  --faint: #78747f;
-  --accent: #6f9bff;
-  --accent-hover: #89adff;
-  --accent-soft: #22283b;
-  --danger: #ff7a63;
-  --danger-soft: #3a221e;
-  --success: #4fbd85;
-  --success-soft: #1d2c25;
+  --canvas: #131719;
+  --surface: #1E2226;
+  --border: #363D43;
+  --border-strong: #56616A;
+  --fg: #EEF1F3;
+  --muted: #B0B9C0;
+  --faint: #808B93;
+  --accent: #B7C0C6;
+  --accent-hover: #D2D8DC;
+  --accent-soft: #30363B;
+  --accent-warm: #AEB8BE;
+  --accent-warm-soft: #353B40;
+  --danger: #E29A9D;
+  --danger-soft: #3B292B;
+  --success: #9BC5B4;
+  --success-soft: #283A34;
+  --chat-blue: #2563EB;
+  --chat-blue-hover: #1D4ED8;
+  --chat-blue-soft: #1E3A5F;
+  --chat-blue-border: #3B82F6;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.42);
   color-scheme: dark;
 }
 
@@ -74,25 +87,36 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-warm: var(--accent-warm);
+  --color-accent-warm-soft: var(--accent-warm-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
+  --color-chat-blue: var(--chat-blue);
+  --color-chat-blue-hover: var(--chat-blue-hover);
+  --color-chat-blue-soft: var(--chat-blue-soft);
+  --color-chat-blue-border: var(--chat-blue-border);
+  --color-chat-bubble: var(--chat-bubble);
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
 
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: var(--font-instrument), var(--font-inter), -apple-system, sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --font-mono: var(--font-jetbrains-mono), "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 @layer base {
   body {
-    background: var(--color-canvas);
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 38%, transparent), transparent 46%),
+      var(--color-canvas);
     color: var(--color-fg);
     font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }

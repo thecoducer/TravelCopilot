@@ -81,7 +81,9 @@ async def stream_graph(
     from app.llm import reset_active_llm_session_id, set_active_llm_session_id
     from app.observability.langfuse import get_langfuse_handler
     from app.services import chat_turn_service
+    from app.services.cancellation_service import register, unregister
 
+    register(session_id)
     llm_session_token = set_active_llm_session_id(session_id)
     is_followup = mode == "followup"
 
@@ -163,6 +165,7 @@ async def stream_graph(
         logger.exception("stream_graph_error", session_id=session_id, error=str(exc))
         yield sse_event("error", {"message": str(exc), "session_id": session_id})
     finally:
+        unregister(session_id)
         reset_active_llm_session_id(llm_session_token)
 
 
@@ -175,7 +178,9 @@ async def stream_resumed_graph(
     """Resume a paused graph after the user answers clarification prompts."""
     from app.llm import reset_active_llm_session_id, set_active_llm_session_id
     from app.observability.langfuse import get_langfuse_handler
+    from app.services.cancellation_service import register, unregister
 
+    register(session_id)
     llm_session_token = set_active_llm_session_id(session_id)
 
     try:
@@ -231,6 +236,7 @@ async def stream_resumed_graph(
         logger.exception("stream_resumed_error", session_id=session_id, error=str(exc))
         yield sse_event("error", {"message": str(exc), "session_id": session_id})
     finally:
+        unregister(session_id)
         reset_active_llm_session_id(llm_session_token)
 
 
@@ -293,6 +299,9 @@ async def emit_completion_events(
 
 async def build_usage_summary(final_state: dict[str, Any], session_id: str) -> dict[str, Any]:
     """Build usage summary from Redis usage cache; fallback to graph state when absent."""
+    from app.llm import flush_usage_events
+
+    await flush_usage_events()
     per_agent: dict[str, dict[str, Any]] = {}
     total_tokens = 0
     total_cost_usd = 0.0

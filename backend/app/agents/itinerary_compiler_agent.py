@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -213,7 +213,7 @@ class ItineraryCompilerAgent:
             for e in experiences
         ]
         result = await self._cluster_tool.run(experiences=exp_dicts, num_clusters=day_count)
-        return result.get("clusters", [])
+        return cast(list[dict[str, Any]], result.get("clusters", []))
 
     async def _closed_venue_names(
         self, clusters: list[dict[str, Any]], day_count: int, dates: Any
@@ -240,24 +240,27 @@ class ItineraryCompilerAgent:
 
         chain = self._llm.with_structured_output(DayPlan)
         try:
-            return await chain.ainvoke(
-                [
-                    SystemMessage(
-                        content=_DAY_PLAN_PROMPT.format(
-                            day_count=day_count,
-                            stop_name=stop.name,
-                            max_activities_per_day=settings.itinerary_max_activities_per_day,
-                            meal_types="/".join(MEAL_TYPES),
-                        )
-                    ),
-                    HumanMessage(
-                        content=(
-                            f"Candidate experiences by day:\n"
-                            f"{json.dumps(day_candidates, indent=2)}\n\n"
-                            f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
-                        )
-                    ),
-                ]
+            return cast(
+                DayPlan,
+                await chain.ainvoke(
+                    [
+                        SystemMessage(
+                            content=_DAY_PLAN_PROMPT.format(
+                                day_count=day_count,
+                                stop_name=stop.name,
+                                max_activities_per_day=settings.itinerary_max_activities_per_day,
+                                meal_types="/".join(MEAL_TYPES),
+                            )
+                        ),
+                        HumanMessage(
+                            content=(
+                                f"Candidate experiences by day:\n"
+                                f"{json.dumps(day_candidates, indent=2)}\n\n"
+                                f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
+                            )
+                        ),
+                    ]
+                ),
             )
         except Exception as exc:
             log.warning("day_plan_llm_failed", stop_id=stop.stop_id, error=str(exc))
@@ -312,11 +315,14 @@ class ItineraryCompilerAgent:
             return TripNarrative()
         chain = self._llm.with_structured_output(TripNarrative)
         try:
-            return await chain.ainvoke(
-                [
-                    SystemMessage(content=_NARRATIVE_PROMPT),
-                    HumanMessage(content=self._compiler.build_narrative_context(state, days)),
-                ]
+            return cast(
+                TripNarrative,
+                await chain.ainvoke(
+                    [
+                        SystemMessage(content=_NARRATIVE_PROMPT),
+                        HumanMessage(content=self._compiler.build_narrative_context(state, days)),
+                    ]
+                ),
             )
         except Exception as exc:
             log.warning("narrative_failed", error=str(exc))

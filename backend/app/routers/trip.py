@@ -30,6 +30,7 @@ from app.models.trip import (
     PlanRequest,
 )
 from app.services import trip_service
+from app.services.cancellation_service import cancel as cancel_planning
 from app.services.trip_stream_service import stream_graph, stream_resumed_graph
 
 logger = structlog.get_logger(__name__)
@@ -97,6 +98,14 @@ async def clarify_trip(session_id: str, request: ClarifyRequest) -> StreamingRes
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+@router.post("/{session_id}/cancel")
+async def cancel_trip_planning(session_id: str) -> dict[str, Any]:
+    """Cancel the active planning stream for a session, if one exists."""
+    cancelled = cancel_planning(session_id)
+    logger.info("trip_cancellation_requested", session_id=session_id, cancelled=cancelled)
+    return {"session_id": session_id, "cancelled": cancelled}
 
 
 @router.get("/{session_id}/turns")

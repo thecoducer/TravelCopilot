@@ -11,8 +11,8 @@ type AccordionProps = {
 /** A single collapsible panel built on native <details> for zero-JS disclosure. */
 export function Accordion({ title, eyebrow, meta, defaultOpen = false, children }: AccordionProps) {
   return (
-    <details className="group overflow-hidden rounded-lg border border-border bg-surface" open={defaultOpen}>
-      <summary className="flex cursor-pointer list-none select-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
+    <details className="group border-b border-border pb-4" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none select-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           {eyebrow ? (
             <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-faint">
@@ -28,7 +28,7 @@ export function Accordion({ title, eyebrow, meta, defaultOpen = false, children 
           ⌄
         </span>
       </summary>
-      <div className="border-t border-border px-4 pb-4 pt-4">{children}</div>
+      <div className="pb-2 pt-2">{children}</div>
     </details>
   );
 }

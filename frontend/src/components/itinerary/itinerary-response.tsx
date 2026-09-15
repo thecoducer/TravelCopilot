@@ -1,8 +1,9 @@
 import { ItineraryDayCard } from "@/components/itinerary/itinerary-day-card";
-import { ItineraryDayNav } from "@/components/itinerary/itinerary-day-nav";
 import { ItineraryHero } from "@/components/itinerary/itinerary-hero";
 import { ItineraryHighlights } from "@/components/itinerary/itinerary-highlights";
 import { ItineraryDetails } from "@/components/itinerary/itinerary-details";
+import { PdfDownloadButton } from "@/components/itinerary/pdf-download-button";
+import { groupItineraryDays } from "@/lib/day-grouping";
 import { daysToShowStay } from "@/lib/stay-dedupe";
 import type { Itinerary } from "@/lib/types";
 
@@ -20,51 +21,51 @@ export function ItineraryResponse({
   pdfError,
 }: ItineraryResponseProps) {
   const stayDays = daysToShowStay(itinerary.trip_days);
+  const dayGroups = groupItineraryDays(itinerary.trip_days);
 
   return (
-    <section className="grid grid-cols-[180px_minmax(0,1fr)] items-start gap-5 max-[900px]:grid-cols-1">
-      <aside className="relative">
-        <ItineraryDayNav days={itinerary.trip_days} />
-      </aside>
+    <section className="flex min-w-0 flex-col gap-4">
+      <ItineraryHero
+        itinerary={itinerary}
+      />
 
-      <div className="flex min-w-0 flex-col gap-4">
-        <ItineraryHero
-          itinerary={itinerary}
-          onDownloadPdf={onDownloadPdf}
-          isPdfDownloading={isPdfDownloading}
-          pdfError={pdfError}
-        />
+      <ItineraryHighlights
+        transportSection={itinerary.transport_section}
+        visaSection={itinerary.visa_section}
+        safetySection={itinerary.safety_section}
+        safetyBriefing={itinerary.safety_briefing}
+      />
 
-        <ItineraryHighlights
-          transportSection={itinerary.transport_section}
-          budgetBreakdown={itinerary.budget_breakdown}
-          safetyBriefing={itinerary.safety_briefing}
-          visaSection={itinerary.visa_section}
-        />
-
-        <div className="flex flex-col gap-4">
-          {itinerary.trip_days.map((day, index) => {
-            const isNewStop = day.location !== itinerary.trip_days[index - 1]?.location;
-            return (
-              <div
-                key={day.day_number}
-                id={`day-${day.day_number}`}
-                data-day={day.day_number}
-                className="scroll-mt-4"
-              >
-                {isNewStop ? (
-                  <h3 className="mb-2 mt-4 font-display text-[1.15rem] font-bold tracking-tight text-fg">
-                    {day.location}
-                  </h3>
-                ) : null}
-                <ItineraryDayCard day={day} showStay={stayDays.has(day.day_number)} />
-              </div>
-            );
-          })}
-        </div>
-
-        <ItineraryDetails itinerary={itinerary} />
+      <div className="flex flex-col gap-10">
+        {dayGroups.map(({ day, dayNumbers }) => {
+          return (
+            <div
+              key={dayNumbers[0]}
+              id={`day-${dayNumbers[0]}`}
+              data-day={dayNumbers[0]}
+              className="scroll-mt-4"
+            >
+              <ItineraryDayCard
+                day={day}
+                dayNumbers={dayNumbers}
+                showStay={stayDays.has(day.day_number)}
+              />
+            </div>
+          );
+        })}
+        <div className="h-px w-full bg-border" aria-hidden="true" />
       </div>
+
+      <ItineraryDetails itinerary={itinerary} />
+
+      <footer className="flex justify-center px-4 pb-8 pt-12">
+        <PdfDownloadButton
+          onDownload={onDownloadPdf}
+          disabled={!itinerary.id}
+          isDownloading={isPdfDownloading}
+          error={pdfError}
+        />
+      </footer>
     </section>
   );
 }

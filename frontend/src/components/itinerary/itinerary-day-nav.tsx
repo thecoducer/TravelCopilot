@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { groupItineraryDays } from "@/lib/day-grouping";
 import type { TripDays } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -21,8 +22,9 @@ function findScrollParent(node: HTMLElement | null): HTMLElement | null {
 }
 
 export function ItineraryDayNav({ days }: ItineraryDayNavProps) {
+  const dayGroups = groupItineraryDays(days);
   const navRef = useRef<HTMLElement>(null);
-  const [activeDay, setActiveDay] = useState<number | null>(days[0]?.day_number ?? null);
+  const [activeDay, setActiveDay] = useState<number | null>(dayGroups[0]?.dayNumbers[0] ?? null);
 
   useEffect(() => {
     const root = findScrollParent(navRef.current);
@@ -41,14 +43,14 @@ export function ItineraryDayNav({ days }: ItineraryDayNavProps) {
       { root, rootMargin: "-15% 0px -75% 0px", threshold: 0 },
     );
 
-    for (const day of days) {
-      const el = document.getElementById(`day-${day.day_number}`);
+    for (const group of dayGroups) {
+      const el = document.getElementById(`day-${group.dayNumbers[0]}`);
       if (el) {
         observer.observe(el);
       }
     }
     return () => observer.disconnect();
-  }, [days]);
+  }, [dayGroups]);
 
   if (days.length <= 1) {
     return null;
@@ -70,11 +72,11 @@ export function ItineraryDayNav({ days }: ItineraryDayNavProps) {
         Itinerary
       </span>
       <ol className="flex flex-col gap-0.5 border-l-2 border-border">
-        {days.map((day, index) => {
-          const newStop = day.location !== days[index - 1]?.location;
-          const isActive = activeDay === day.day_number;
+        {dayGroups.map(({ day, dayNumbers }, index) => {
+          const newStop = day.location !== dayGroups[index - 1]?.day.location;
+          const isActive = dayNumbers.includes(activeDay ?? -1);
           return (
-            <li key={day.day_number}>
+            <li key={dayNumbers[0]}>
               {newStop ? (
                 <span className="ml-3 mt-3 block text-[0.72rem] font-bold text-muted">
                   {day.location}
@@ -94,7 +96,9 @@ export function ItineraryDayNav({ days }: ItineraryDayNavProps) {
                     isActive && "text-accent-hover",
                   )}
                 >
-                  Day {day.day_number}
+                  {dayNumbers.length > 1
+                    ? `Days ${dayNumbers[0]}-${dayNumbers.at(-1)}`
+                    : `Day ${day.day_number}`}
                 </span>
                 <span className="text-[0.72rem] text-faint">{day.date}</span>
               </button>
