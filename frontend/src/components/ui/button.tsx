@@ -10,13 +10,13 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const base =
-  "inline-flex items-center justify-center gap-2 rounded-md font-semibold transition-colors " +
+  "inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-colors " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 " +
   "disabled:cursor-default disabled:opacity-60";
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-white hover:bg-accent-hover",
-  secondary: "border border-border-strong bg-surface text-fg hover:bg-canvas",
+  primary: "bg-accent text-white shadow-sm hover:bg-accent-hover",
+  secondary: "border border-border-strong bg-surface text-fg hover:border-accent hover:bg-accent-soft",
   ghost: "text-fg hover:bg-canvas",
 };
 

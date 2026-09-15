@@ -52,6 +52,14 @@ export async function clarifyTrip(
   return assertOk(response);
 }
 
+/** Requests cancellation of the active planning stream for a session. */
+export async function cancelTripPlanning(sessionId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/trip/${sessionId}/cancel`, {
+    method: "POST",
+  });
+  await assertOk(response);
+}
+
 export type PdfDownload = {
   blob: Blob;
   filename: string;

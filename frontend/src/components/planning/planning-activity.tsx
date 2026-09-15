@@ -9,12 +9,13 @@ import { useElapsedTimer } from "@/hooks/use-elapsed-timer";
 import {
   activeAgentsFor,
   buildAgentTasks,
+  AGENT_PIPELINE,
   PLANNING_PHASES,
   type AgentTask,
 } from "@/lib/agent-catalog";
-import { formatElapsed, formatLatencyMs, formatTokenCount, formatUsd } from "@/lib/format";
+import { formatElapsed } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { CompletedAgentActivity, PlannerStatus, UsageSummaryEvent } from "@/lib/types";
+import type { CompletedAgentActivity, PlannerStatus } from "@/lib/types";
 
 /** Rows kept visible in the timeline viewport; the rest scroll into view. */
 const VISIBLE_TASKS = 5;
@@ -23,16 +24,15 @@ type PlanningActivityProps = {
   status: PlannerStatus;
   completedAgents: CompletedAgentActivity[];
   planningStartedAt: number | null;
-  usage: UsageSummaryEvent | null;
 };
 
 export function PlanningActivity({
   status,
   completedAgents,
   planningStartedAt,
-  usage,
 }: PlanningActivityProps) {
   const isPlanning = status === "planning";
+  const isAwaitingClarification = status === "awaiting_clarification";
   const elapsedMs = useElapsedTimer(planningStartedAt, isPlanning);
   const completedIds = new Set(completedAgents.map((entry) => entry.agent));
   const activeAgents = isPlanning ? activeAgentsFor(completedIds) : [];
@@ -40,12 +40,21 @@ export function PlanningActivity({
     phase.agents.some((agent) => activeAgents.includes(agent)),
   );
 
-  const tasks = buildAgentTasks(completedAgents, activeAgents, isPlanning);
+  const tasks = buildAgentTasks(
+    completedAgents,
+    activeAgents,
+    isPlanning || isAwaitingClarification,
+  ).sort((left, right) => {
+    const statusOrder = { done: 0, active: 1, pending: 2 };
+    return statusOrder[left.status] - statusOrder[right.status];
+  });
   const doneCount = tasks.filter((task) => task.status === "done").length;
 
   const subtitle = isPlanning
     ? `${currentPhase?.name ?? "Planning"} · ${formatElapsed(elapsedMs)} elapsed`
-    : `${doneCount} step${doneCount === 1 ? "" : "s"} · finished in ${formatElapsed(elapsedMs)}`;
+    : isAwaitingClarification
+      ? "Planning is paused while we get a few details"
+      : `${doneCount} step${doneCount === 1 ? "" : "s"} · finished in ${formatElapsed(elapsedMs)}`;
 
   return (
     <SectionCard
@@ -54,12 +63,11 @@ export function PlanningActivity({
       actions={
         <span className="inline-flex items-baseline text-[0.9rem] font-bold tabular-nums text-fg">
           {doneCount}
-          <span className="text-[0.78rem] font-semibold text-faint">/{tasks.length}</span>
+          <span className="text-[0.78rem] font-semibold text-faint">/{AGENT_PIPELINE.length}</span>
         </span>
       }
     >
       <TaskTimeline tasks={tasks} />
-      {usage ? <MetricsStrip usage={usage} /> : null}
     </SectionCard>
   );
 }
@@ -78,7 +86,7 @@ function TaskTimeline({ tasks }: { tasks: AgentTask[] }) {
 
   return (
     <ol
-      className="flex max-h-[calc(3.25rem*var(--visible-tasks))] flex-col overflow-y-auto"
+      className="flex min-w-0 max-h-[calc(3.25rem*var(--visible-tasks))] flex-col overflow-x-hidden overflow-y-auto"
       style={{ "--visible-tasks": VISIBLE_TASKS } as CSSProperties}
       aria-label="Agent tasks"
     >
@@ -100,7 +108,7 @@ function TaskRow({ task, rowRef }: { task: AgentTask; rowRef?: Ref<HTMLLIElement
     <li
       ref={rowRef}
       className={cn(
-        "grid grid-cols-[1.5rem_1fr_auto] items-center gap-3 border-b border-border px-1 py-2 last:border-0",
+        "grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-1 py-2 last:border-0",
         isActive && "-mx-2 rounded-md border-b-transparent bg-accent-soft px-2",
         isPending && "opacity-60",
       )}
@@ -144,24 +152,5 @@ function TaskRow({ task, rowRef }: { task: AgentTask; rowRef?: Ref<HTMLLIElement
         </span>
       ) : null}
     </li>
-  );
-}
-
-function MetricsStrip({ usage }: { usage: UsageSummaryEvent }) {
-  return (
-    <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3">
-      <Metric label="Tokens" value={formatTokenCount(usage.total_tokens)} />
-      <Metric label="Cost" value={formatUsd(usage.total_cost_usd)} />
-      <Metric label="LLM latency" value={formatLatencyMs(usage.total_latency_ms)} />
-    </dl>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-[0.7rem] uppercase tracking-wide text-faint">{label}</dt>
-      <dd className="m-0 text-[0.9rem] font-semibold tabular-nums text-fg">{value}</dd>
-    </div>
   );
 }

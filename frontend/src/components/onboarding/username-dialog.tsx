@@ -5,6 +5,7 @@ import { registerUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { TravelCopilotLogo } from "@/components/brand/travel-copilot-logo";
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_-]{3,32}$/;
 
@@ -41,6 +42,7 @@ export function UsernameDialog() {
       aria-labelledby="welcome-title"
     >
       <div className="w-full max-w-md rounded-lg border border-border bg-surface p-8 shadow-md">
+        <TravelCopilotLogo className="mb-6" />
         <h1 id="welcome-title" className="font-display text-2xl font-bold tracking-tight text-fg">
           Welcome to Travel Copilot
         </h1>

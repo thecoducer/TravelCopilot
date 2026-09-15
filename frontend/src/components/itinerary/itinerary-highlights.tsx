@@ -1,31 +1,23 @@
-import type { BudgetReport, TransportSection, VisaReport } from "@/lib/types";
-import { formatUsd } from "@/lib/format";
+import type { SafetyReport, TransportSection, VisaReport } from "@/lib/types";
 
 type ItineraryHighlightsProps = {
   transportSection: TransportSection | null;
-  budgetBreakdown: BudgetReport | null;
-  safetyBriefing: string | null;
   visaSection: VisaReport | null;
+  safetySection: SafetyReport | null;
+  safetyBriefing: string | null;
 };
 
 /** Compact strip of transport, budget, safety, and visa highlights. */
 export function ItineraryHighlights({
   transportSection,
-  budgetBreakdown,
-  safetyBriefing,
   visaSection,
+  safetySection,
+  safetyBriefing,
 }: ItineraryHighlightsProps) {
   const cards = [
     transportSection?.recommended?.rationale
       ? { label: "Transport", value: transportSection.recommended.rationale }
       : null,
-    budgetBreakdown
-      ? {
-          label: "Budget",
-          value: `${formatUsd(budgetBreakdown.total_estimated_cost)} · ${budgetBreakdown.vs_budget_verdict}`,
-        }
-      : null,
-    safetyBriefing ? { label: "Safety", value: safetyBriefing } : null,
     visaSection
       ? {
           label: "Visa",
@@ -34,7 +26,14 @@ export function ItineraryHighlights({
             : "Not required",
         }
       : null,
-  ].filter((card): card is { label: string; value: string } => card !== null);
+    safetySection
+      ? {
+          label: "Travel safety",
+          value: safetyBriefing ?? `${safetySection.advisory_level} advisory for ${safetySection.destination}`,
+          fullWidth: true,
+        }
+      : null,
+  ].filter((card): card is { label: string; value: string; fullWidth?: boolean } => card !== null);
 
   if (cards.length === 0) {
     return null;
@@ -45,12 +44,14 @@ export function ItineraryHighlights({
       {cards.map((card) => (
         <li
           key={card.label}
-          className="flex flex-col gap-1 rounded-md border border-border bg-surface p-3"
+          className={`flex flex-col gap-1 border-l-2 border-accent px-3 py-2 ${
+            card.fullWidth ? "col-span-2 sm:col-span-4" : ""
+          }`}
         >
-          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-faint">
+          <span className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-faint">
             {card.label}
           </span>
-          <span className="line-clamp-3 text-[0.82rem] text-fg">{card.value}</span>
+          <span className="text-[0.82rem] leading-relaxed text-fg">{card.value}</span>
         </li>
       ))}
     </ul>

@@ -419,10 +419,14 @@ class ItineraryCompilerService:
         nights_by_stop = Counter(day.stop_id for day in days)
 
         def _attach(day: TripDays) -> TripDays | None:
-            options = shortlist_by_stop.get(day.stop_id) or fallback_options
+            options = (
+                shortlist_by_stop.get(day.stop_id) if day.stop_id is not None else None
+            ) or fallback_options
             if not options:
                 return None
-            recommended = pick_by_stop.get(day.stop_id) or fallback_pick
+            recommended = (
+                pick_by_stop.get(day.stop_id) if day.stop_id is not None else None
+            ) or fallback_pick
             reference = recommended or options[0]
             return day.model_copy(
                 update={
@@ -536,7 +540,7 @@ class ItineraryCompilerService:
         summary = self.render_safety_briefing(safety_report)
 
         def _attach(day: TripDays) -> TripDays:
-            stop = stops_by_id.get(day.stop_id)
+            stop = stops_by_id.get(day.stop_id) if day.stop_id is not None else None
             altitude = (
                 (stop.altitude_meters if stop else None)
                 or day.altitude_meters

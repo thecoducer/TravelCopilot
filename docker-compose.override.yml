@@ -9,5 +9,25 @@ services:
       # MOCK_EXTERNAL_APIS intentionally not set here so the value from .env
       # (env_file) takes effect. Setting it here would always win over .env.
 
+  frontend:
+    # Use the dependency stage for local development so source and CSS changes
+    # are served directly from the bind mount without rebuilding the image.
+    build:
+      target: deps
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    command: npm run dev -- --hostname 0.0.0.0 --port 3000
+    ports:
+      - "3001:3000"
+
   # Skip langfuse in fast local dev by overriding its restart policy
   # Uncomment to disable: langfuse: { profiles: ["full"] }
+
+volumes:
+  frontend_node_modules:

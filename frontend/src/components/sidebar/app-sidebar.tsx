@@ -1,8 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { MessageSquarePlus, MoreHorizontal, Moon, Sun, Trash2, Pencil, User, LogOut } from "lucide-react";
+import {
+  LogOut,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Moon,
+  PanelLeftClose,
+  Pencil,
+  Search,
+  Sun,
+  Trash2,
+  User,
+  X,
+} from "lucide-react";
 import { deleteSession, renameSession } from "@/lib/api";
 import type { SessionSummary } from "@/lib/types";
 import { groupSessions } from "@/lib/session-grouping";
@@ -10,14 +22,16 @@ import { cn } from "@/lib/utils";
 import { useSessions } from "@/hooks/use-sessions";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/hooks/use-theme";
+import { TravelCopilotLogo } from "@/components/brand/travel-copilot-logo";
 
-export function AppSidebar() {
+export function AppSidebar({ onHide }: { onHide: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const { sessions, refresh } = useSessions();
   const { username, clearUsername } = useCurrentUser();
   const { theme, toggleTheme } = useTheme();
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const activeSessionId = pathname?.startsWith("/c/") ? pathname.slice(3) : null;
 
@@ -28,6 +42,17 @@ export function AppSidebar() {
   }, [sessions, query]);
 
   const groups = useMemo(() => groupSessions(filtered), [filtered]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setSearchOpen(false);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [searchOpen]);
 
   async function handleRename(session: SessionSummary) {
     const next = window.prompt("Rename chat", session.title);
@@ -45,49 +70,62 @@ export function AppSidebar() {
     await refresh();
   }
 
-  // The /c/{id} URL is set via window.history.replaceState (to keep the SSE
-  // stream alive), which desyncs the App Router — so router.push("/") no-ops.
-  // A full navigation is the only reliable way to start a clean chat.
   function startNewChat() {
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-    window.location.assign("/");
+    router.push("/");
   }
 
   function switchUser() {
     clearUsername();
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-    window.location.assign("/");
+    router.push("/");
+  }
+
+  function openSession(sessionId: string) {
+    setSearchOpen(false);
+    router.push(`/c/${sessionId}`);
   }
 
   return (
-    <aside className="flex h-dvh w-[280px] flex-col border-r border-border bg-surface">
-      <div className="flex flex-col gap-3 border-b border-border p-4">
-        <span className="font-display text-[1.05rem] font-bold tracking-tight text-fg">
-          Travel Copilot
-        </span>
+    <aside className="relative flex h-dvh w-[var(--sidebar-width)] flex-col border-r border-white/[0.08] bg-[#141719] text-white">
+      <div className="flex items-center justify-between px-4 pb-4 pt-5">
+        <TravelCopilotLogo className="[&>span]:text-white" />
+        <div className="flex items-center gap-1">
+          <button
+            className="inline-flex size-8 items-center justify-center rounded-md text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search chats"
+            title="Search chats"
+          >
+            <Search size={18} />
+          </button>
+          <button
+            className="inline-flex size-8 items-center justify-center rounded-md text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            onClick={onHide}
+            aria-label="Hide sidebar"
+            title="Hide sidebar"
+          >
+            <PanelLeftClose size={18} />
+          </button>
+        </div>
+      </div>
+      <div className="px-3 pb-4">
         <button
-          className="inline-flex items-center justify-center gap-2 rounded-md border border-border-strong bg-canvas px-3 py-2 text-sm font-semibold text-fg transition-colors hover:border-accent hover:bg-accent-soft"
+          className="group inline-flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/[0.13] px-3 py-2.5 text-left text-[0.85rem] font-semibold text-white shadow-sm transition-colors hover:bg-white/[0.19]"
           onClick={startNewChat}
         >
-          <MessageSquarePlus size={16} />
+          <span className="inline-flex size-6 items-center justify-center rounded-md bg-white text-black transition-transform group-hover:scale-105">
+            <MessageSquarePlus size={15} />
+          </span>
           New chat
         </button>
-        <input
-          className="rounded-md border border-border bg-canvas px-3 py-2 text-sm text-fg outline-none focus:border-accent"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search chats"
-          aria-label="Search chats"
-        />
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Chat history">
+      <nav className="flex-1 overflow-y-auto px-3 py-2" aria-label="Chat history">
         {groups.length === 0 ? (
-          <p className="p-4 text-center text-sm text-faint">No chats yet. Start planning a trip.</p>
+          <p className="p-4 text-center text-sm text-white/45">No chats yet. Start planning a trip.</p>
         ) : (
           groups.map((group) => (
             <div key={group.label} className="mb-4">
-              <h2 className="mb-1 px-2 text-[0.7rem] font-semibold uppercase tracking-wider text-faint">
+              <h2 className="mb-1 px-3 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-white/35">
                 {group.label}
               </h2>
               <ul className="flex flex-col gap-0.5">
@@ -107,26 +145,26 @@ export function AppSidebar() {
         )}
       </nav>
 
-      <div className="flex items-center gap-2 border-t border-border p-3">
+      <div className="flex items-center gap-2 border-t border-white/10 p-3">
         <button
-          className="flex flex-1 items-center gap-2 rounded-md p-2 hover:bg-canvas"
+          className="flex flex-1 items-center gap-2 rounded-lg p-2 text-left hover:bg-white/10"
           onClick={() => router.push("/profile")}
           aria-label="Open profile"
         >
-          <span className="inline-flex size-7 items-center justify-center rounded-full bg-accent text-[0.85rem] font-bold text-white">
+          <span className="inline-flex size-7 items-center justify-center rounded-full bg-[#9b59b6] text-[0.72rem] font-bold text-white">
             {username ? username.charAt(0).toUpperCase() : <User size={16} />}
           </span>
-          <span className="truncate text-[0.88rem] font-semibold text-fg">{username ?? "Guest"}</span>
+          <span className="min-w-0 truncate text-[0.84rem] font-semibold text-white">{username ?? "Guest"}</span>
         </button>
         <button
-          className="inline-flex size-[34px] items-center justify-center rounded-md border border-border text-muted hover:bg-canvas hover:text-fg"
+          className="inline-flex size-[32px] items-center justify-center rounded-md text-white/55 hover:bg-white/10 hover:text-white"
           onClick={toggleTheme}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
         <button
-          className="inline-flex size-[34px] items-center justify-center rounded-md border border-border text-muted hover:bg-canvas hover:text-fg"
+          className="inline-flex size-[32px] items-center justify-center rounded-md text-white/55 hover:bg-white/10 hover:text-white"
           onClick={switchUser}
           aria-label="Switch user"
           title="Switch user"
@@ -134,7 +172,79 @@ export function AppSidebar() {
           <LogOut size={16} />
         </button>
       </div>
+      {searchOpen ? (
+        <SearchDialog
+          query={query}
+          results={filtered}
+          onQueryChange={setQuery}
+          onClose={() => setSearchOpen(false)}
+          onOpen={openSession}
+        />
+      ) : null}
     </aside>
+  );
+}
+
+function SearchDialog({
+  query,
+  results,
+  onQueryChange,
+  onClose,
+  onOpen,
+}: {
+  query: string;
+  results: SessionSummary[];
+  onQueryChange: (query: string) => void;
+  onClose: () => void;
+  onOpen: (sessionId: string) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 px-4 pt-[12vh]" onMouseDown={onClose}>
+      <div
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-[#1e2226] shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search chats"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 border-b border-white/10 px-4">
+          <Search size={19} className="shrink-0 text-white/50" />
+          <input
+            autoFocus
+            className="h-14 min-w-0 flex-1 bg-transparent text-[0.95rem] text-white outline-none placeholder:text-white/40"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search chats"
+            aria-label="Search chats"
+          />
+          <button
+            className="inline-flex size-7 items-center justify-center rounded-md text-white/50 hover:bg-white/10 hover:text-white"
+            onClick={onClose}
+            aria-label="Close search"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div className="max-h-[min(55vh,420px)] overflow-y-auto p-2">
+          {results.length === 0 ? (
+            <p className="px-3 py-8 text-center text-sm text-white/45">No matching chats</p>
+          ) : (
+            results.slice(0, 12).map((session) => (
+              <button
+                key={session.session_id}
+                className="flex w-full items-center rounded-lg px-3 py-3 text-left text-sm text-white transition-colors hover:bg-white/10"
+                onClick={() => onOpen(session.session_id)}
+              >
+                <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                <span className="ml-4 shrink-0 text-xs text-white/35">
+                  {new Date(session.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -156,12 +266,12 @@ function SessionRow({
   return (
     <li
       className={cn(
-        "group relative flex items-center rounded-md hover:bg-canvas",
-        active && "bg-accent-soft",
+        "group relative flex items-center rounded-lg transition-colors hover:bg-white/10",
+        active && "bg-white/15 shadow-sm",
       )}
     >
       <button
-        className="min-w-0 flex-1 truncate px-3 py-2 text-left text-[0.88rem] text-fg"
+        className="min-w-0 flex-1 truncate px-3 py-2 text-left text-[0.82rem] text-white/90"
         onClick={onOpen}
         title={session.title}
       >
@@ -170,7 +280,7 @@ function SessionRow({
       <div className="relative">
         <button
           className={cn(
-            "mr-1 inline-flex items-center justify-center rounded-sm p-1 text-muted opacity-0 hover:bg-border group-hover:opacity-100",
+            "mr-1 inline-flex items-center justify-center rounded-sm p-1 text-white/60 opacity-0 hover:bg-white/10 group-hover:opacity-100",
             active && "opacity-100",
           )}
           onClick={() => setMenuOpen((open) => !open)}
@@ -182,12 +292,12 @@ function SessionRow({
           <>
             <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
             <div
-              className="absolute right-0 top-full z-[21] min-w-[140px] rounded-md border border-border-strong bg-surface p-1 shadow-md"
+              className="absolute right-0 top-full z-[21] min-w-[140px] rounded-md border border-white/10 bg-[#1e2226] p-1 shadow-md"
               role="menu"
             >
               <button
                 role="menuitem"
-                className="flex w-full items-center gap-2 rounded-sm p-2 text-left text-sm text-fg hover:bg-canvas"
+                className="flex w-full items-center gap-2 rounded-sm p-2 text-left text-sm text-white hover:bg-white/10"
                 onClick={() => {
                   setMenuOpen(false);
                   onRename();
@@ -198,7 +308,7 @@ function SessionRow({
               </button>
               <button
                 role="menuitem"
-                className="flex w-full items-center gap-2 rounded-sm p-2 text-left text-sm text-danger hover:bg-canvas"
+                className="flex w-full items-center gap-2 rounded-sm p-2 text-left text-sm text-red-300 hover:bg-white/10"
                 onClick={() => {
                   setMenuOpen(false);
                   onDelete();

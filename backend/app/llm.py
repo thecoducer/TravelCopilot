@@ -6,6 +6,7 @@ import asyncio
 import os
 import queue
 import threading
+from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from datetime import datetime
 from typing import Any
@@ -119,6 +120,69 @@ def _latency_ms(start_time: Any, end_time: Any) -> float:
     return 0.0
 
 
+def _read_value(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def extract_llm_usage(
+    response_obj: Any, kwargs: Mapping[str, Any] | None = None
+) -> dict[str, int | float]:
+    """Normalize token and cost fields from LiteLLM and LangChain response shapes."""
+    metadata = _read_value(response_obj, "response_metadata", {}) or {}
+    hidden_params = _read_value(response_obj, "_hidden_params", {}) or {}
+    callback_kwargs = kwargs or {}
+    usage_candidates = (
+        _read_value(response_obj, "usage"),
+        _read_value(response_obj, "usage_metadata"),
+        _read_value(metadata, "token_usage"),
+        _read_value(metadata, "usage"),
+    )
+    prompt_tokens = completion_tokens = total_tokens = 0
+    for candidate in usage_candidates:
+        if not candidate:
+            continue
+        prompt_tokens = int(
+            _read_value(candidate, "prompt_tokens", _read_value(candidate, "input_tokens", 0)) or 0
+        )
+        completion_tokens = int(
+            _read_value(candidate, "completion_tokens", _read_value(candidate, "output_tokens", 0))
+            or 0
+        )
+        total_tokens = int(
+            _read_value(candidate, "total_tokens", prompt_tokens + completion_tokens)
+            or prompt_tokens + completion_tokens
+        )
+        if prompt_tokens or completion_tokens or total_tokens:
+            break
+
+    cost = 0.0
+    for source in (hidden_params, metadata, callback_kwargs):
+        for key in ("response_cost", "cost_usd", "total_cost"):
+            value = _read_value(source, key)
+            if value is not None:
+                cost = float(value or 0.0)
+                break
+        if cost:
+            break
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "cost_usd": cost,
+    }
+
+
+async def flush_usage_events() -> None:
+    """Wait for callback events already queued by LiteLLM to reach Redis."""
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_usage_queue.join), timeout=2.0)
+    except TimeoutError:
+        logger.warning("usage_queue_flush_timeout")
+
+
 try:
     import litellm
 
@@ -135,26 +199,19 @@ try:
             metadata = kwargs.get("metadata") or {}
             agent_name = str(metadata.get("agent_name", "unknown"))
             session_id = _effective_session_id(metadata)
-            usage = getattr(response_obj, "usage", None)
-            if not usage or not session_id:
+            if not session_id:
                 return
-            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-            total_tokens = int(
-                getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
-            )
-            hidden_params = getattr(response_obj, "_hidden_params", {}) or {}
-            cost = float(hidden_params.get("response_cost", 0) or 0)
+            usage = extract_llm_usage(response_obj, kwargs)
             _ensure_usage_worker()
             _usage_queue.put(
                 (
                     agent_name,
                     session_id,
                     {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": total_tokens,
-                        "cost_usd": cost,
+                        "prompt_tokens": int(usage["prompt_tokens"]),
+                        "completion_tokens": int(usage["completion_tokens"]),
+                        "total_tokens": int(usage["total_tokens"]),
+                        "cost_usd": float(usage["cost_usd"]),
                         "latency_ms": _latency_ms(start_time, end_time),
                     },
                 )

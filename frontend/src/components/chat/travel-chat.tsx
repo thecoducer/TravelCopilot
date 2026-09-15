@@ -29,7 +29,7 @@ export function TravelChat({ initialSessionId }: { initialSessionId?: string }) 
     [initialSessionId, refresh],
   );
 
-  const { state, isBusy, submitPrompt, submitClarification, downloadPdf } = useTripPlanner({
+  const { state, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf } = useTripPlanner({
     username,
     initialSessionId,
     onSessionCreated,
@@ -38,36 +38,64 @@ export function TravelChat({ initialSessionId }: { initialSessionId?: string }) 
   const hasStarted = state.turns.length > 0;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto px-3 py-6 [scrollbar-gutter:stable] sm:px-6">
-        <div className="mx-auto flex min-h-full w-full max-w-[1120px] flex-col gap-4">
+    <div className="relative flex h-full flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-4 py-8 pb-32 [scrollbar-gutter:stable_both-edges] sm:px-8 sm:pb-36">
+        <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-6">
           {hasStarted ? (
-            state.turns.map((turn, index) => (
-              <TurnView
-                key={turn.id}
-                turn={turn}
-                isLatest={index === state.turns.length - 1}
-                isDownloading={state.isDownloading}
-                pdfError={state.pdfError}
-                onSubmitClarification={submitClarification}
-                onDownloadPdf={downloadPdf}
-              />
-            ))
+            <>
+              <ChatStartedAt timestamp={state.turns[0]?.startedAt} />
+              {state.turns.map((turn, index) => (
+                <TurnView
+                  key={turn.id}
+                  turn={turn}
+                  isLatest={index === state.turns.length - 1}
+                  isDownloading={state.isDownloading}
+                  pdfError={state.pdfError}
+                  onSubmitClarification={submitClarification}
+                  onDownloadPdf={downloadPdf}
+                />
+              ))}
+            </>
           ) : (
-            <EmptyState onExampleClick={submitPrompt} />
+            <EmptyState />
           )}
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-border bg-canvas p-4">
-        <div className="mx-auto max-w-[1120px]">
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-9 bg-gradient-to-t from-canvas/90 via-canvas/45 to-transparent sm:h-10"
+        aria-hidden="true"
+      />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-4 pb-4 sm:px-8 sm:pb-6">
+        <div className="pointer-events-auto mx-auto w-full max-w-[900px]">
           <ChatComposer
             onSend={submitPrompt}
+            onStop={cancelPlanning}
             disabled={isBusy}
+            isBusy={isBusy}
             placeholder={hasStarted ? "Ask for a change to your trip…" : undefined}
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function ChatStartedAt({ timestamp }: { timestamp?: string }) {
+  if (!timestamp) {
+    return null;
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return (
+    <div className="flex justify-center px-4 pb-4 pt-5 text-center">
+      <p className="text-xs font-medium tracking-wide text-faint">
+        {date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+      </p>
     </div>
   );
 }
@@ -90,7 +118,7 @@ function TurnView({
   const isPlanning = turn.status === "planning";
 
   return (
-    <div className="flex w-full flex-col gap-4">
+    <div className="flex w-full flex-col gap-8">
       {turn.prompt ? <MessageBubble role="user">{turn.prompt}</MessageBubble> : null}
       <MessageBubble role="assistant">
         <div className="flex w-full flex-col gap-4">
@@ -100,10 +128,9 @@ function TurnView({
 
           {isPlanning || turn.completedAgents.length > 0 ? (
             <PlanningActivity
-              status={isPlanning ? "planning" : "complete"}
+              status={turn.status}
               completedAgents={turn.completedAgents}
               planningStartedAt={turn.planningStartedAt}
-              usage={turn.usage}
             />
           ) : null}
 
@@ -116,7 +143,7 @@ function TurnView({
 
           {turn.itinerary ? (
             isLatest ? (
-              <>
+              <div className="mt-8 flex flex-col gap-6">
                 <ItineraryResponse
                   itinerary={turn.itinerary}
                   onDownloadPdf={() => turn.itineraryId && onDownloadPdf(turn.itineraryId)}
@@ -124,7 +151,7 @@ function TurnView({
                   pdfError={pdfError}
                 />
                 <MetricsPanel usage={turn.usage} />
-              </>
+              </div>
             ) : (
               <details className="overflow-hidden rounded-lg border border-border bg-surface">
                 <summary className="cursor-pointer list-none p-4 text-sm font-semibold text-muted [&::-webkit-details-marker]:hidden">

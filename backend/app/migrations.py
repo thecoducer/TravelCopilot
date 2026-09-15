@@ -29,6 +29,8 @@ async def run_migrations() -> None:
     async with engine.connect() as conn:
         raw_connection = await conn.get_raw_connection()
         driver_connection = raw_connection.driver_connection
+        if driver_connection is None:
+            raise RuntimeError("Database driver connection is unavailable")
         for sql_file in sql_files:
             sql = sql_file.read_text(encoding="utf-8")
             await driver_connection.execute(sql)

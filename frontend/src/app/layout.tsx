@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Instrument_Sans } from "next/font/google";
+import { Inter, Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/app/providers";
 import { AppShell } from "@/components/app/app-shell";
@@ -16,6 +16,12 @@ const instrumentSans = Instrument_Sans({
   display: "swap",
 });
 
+const jetBrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Travel Copilot",
   description: "AI-planned trips with transparent, step-by-step reasoning.",
@@ -27,7 +33,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${instrumentSans.variable}`}
+      className={`${inter.variable} ${instrumentSans.variable} ${jetBrainsMono.variable}`}
       suppressHydrationWarning
     >
       <body>

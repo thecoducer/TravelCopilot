@@ -1,8 +1,33 @@
 # TravelCopilot
 
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.138%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.2%2B-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+
 TravelCopilot is a chat-first, multi-agent AI trip planner. It turns a natural-language travel request into a route-aware itinerary with transport, stays, local experiences, food, safety, visa, and budget guidance.
 
 The repository contains a FastAPI/LangGraph backend and a Next.js frontend. Travel data providers and LLM providers are configured through environment variables.
+
+## Table of contents
+
+- [Example trip request](#example-trip-request)
+- [What runs locally](#what-runs-locally)
+- [Prerequisites](#prerequisites)
+- [Install the project](#install-the-project)
+- [Configure live travel APIs](#configure-live-travel-apis)
+- [Configure an LLM provider](#configure-an-llm-provider)
+- [Enable live services and run TravelCopilot](#enable-live-services-and-run-travelcopilot)
+- [Run the complete project](#run-the-complete-project)
+- [Tests, linting, and builds](#tests-linting-and-builds)
+- [Configuration and API modes](#configuration-and-api-modes)
+- [Repository layout](#repository-layout)
+- [Troubleshooting](#troubleshooting)
+- [Further reading](#further-reading)
 
 ## Example trip request
 

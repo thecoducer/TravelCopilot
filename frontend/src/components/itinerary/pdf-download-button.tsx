@@ -17,7 +17,12 @@ export function PdfDownloadButton({
 }: PdfDownloadButtonProps) {
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button variant="secondary" onClick={onDownload} disabled={disabled || isDownloading}>
+      <Button
+        variant="secondary"
+        className="shrink-0 whitespace-nowrap"
+        onClick={onDownload}
+        disabled={disabled || isDownloading}
+      >
         {isDownloading ? <Spinner label="Downloading PDF" /> : <Download size={16} aria-hidden="true" />}
         {isDownloading ? "Preparing PDF…" : "Download PDF"}
       </Button>

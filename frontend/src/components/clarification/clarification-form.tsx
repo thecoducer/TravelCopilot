@@ -27,7 +27,7 @@ export function ClarificationForm({ prompts, onSubmit, disabled }: Clarification
   }
 
   return (
-    <SectionCard title="A couple of quick questions" collapsible={false}>
+    <SectionCard collapsible={false}>
       <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
         {prompts.map((prompt) => (
           <label key={prompt.field} className="flex flex-col gap-1">
