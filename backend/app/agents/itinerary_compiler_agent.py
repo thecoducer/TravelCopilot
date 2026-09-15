@@ -298,10 +298,9 @@ class ItineraryCompilerAgent:
     def _enrich(
         self, days: list[TripDays], route: RoutePlan, state: dict[str, Any]
     ) -> tuple[Any, list[TripDays]]:
-        """Copy stays, transport, safety, budget and reviews from upstream state onto each day."""
+        """Copy stays, transport, budget and reviews from upstream state onto each day."""
         days = self._compiler.inject_stays(days, state)
         transport_section, days = self._compiler.inject_transport(days, state)
-        days = self._compiler.inject_safety(days, state.get("safety_report"), route.stops_by_id)
         days = self._compiler.inject_budget(days, state.get("budget_report"))
         days = self._compiler.inject_reviews(days, state.get("reviews_summary", {}))
         return transport_section, days

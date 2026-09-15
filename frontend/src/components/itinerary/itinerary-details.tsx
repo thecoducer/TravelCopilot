@@ -1,4 +1,9 @@
+"use client";
+
+import { useState } from "react";
 import { Accordion } from "@/components/ui/accordion";
+import { MoreExpander } from "@/components/ui/more-expander";
+import { TopScamsPanel } from "@/components/itinerary/top-scams-panel";
 import { cn } from "@/lib/utils";
 import type {
   BudgetReport,
@@ -112,12 +117,11 @@ function TransportPanel({ itinerary }: { itinerary: Itinerary }) {
 }
 
 function BudgetPanel({ budget }: { budget: BudgetReport }) {
-  const categories = Object.entries(budget.per_category_breakdown ?? {});
+  const categories = Object.entries(budget.per_category_breakdown ?? {}).filter(([, value]) => value > 0);
   const max = Math.max(1, ...categories.map(([, value]) => value));
-  const fxRates = Object.entries(budget.fx_rates_used ?? {});
 
   return (
-    <section className="flex flex-col gap-6 border-b border-border pb-8 pt-4">
+    <section className="flex flex-col gap-4 border-b border-border pb-8 pt-4">
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-faint">Trip cost</span>
@@ -130,6 +134,11 @@ function BudgetPanel({ budget }: { budget: BudgetReport }) {
             {money(budget.total_estimated_cost, budget.currency_code)}
           </strong>
           <span className="text-sm text-muted">{budget.vs_budget_verdict}</span>
+          {budget.per_person_cost ? (
+            <span className="font-mono text-sm tabular-nums text-muted">
+              Per person: {money(budget.per_person_cost, budget.currency_code)}
+            </span>
+          ) : null}
         </div>
       </header>
 
@@ -148,20 +157,9 @@ function BudgetPanel({ budget }: { budget: BudgetReport }) {
           </div>
         ) : null}
 
-        <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-border pt-4 text-sm text-muted">
-          {budget.per_person_cost ? <span>Per person: {money(budget.per_person_cost, budget.currency_code)}</span> : null}
+        <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted">
           {budget.permit_costs ? <span>Permits: {money(budget.permit_costs, budget.currency_code)}</span> : null}
         </div>
-
-        {fxRates.length > 0 ? (
-          <div>
-            <h5 className={miniHeading}>Exchange rates used</h5>
-            <p className="text-[0.82rem] text-muted">
-              {fxRates.map(([pair, entry]) => `${pair}: ${entry.rate}`).join(" · ")}
-            </p>
-            {budget.fx_disclaimer ? <small className={disclaimerClass}>{budget.fx_disclaimer}</small> : null}
-          </div>
-        ) : null}
 
         {budget.cost_saving_tips.length > 0 ? (
           <div>
@@ -271,33 +269,56 @@ function VisaPanel({ itinerary }: { itinerary: Itinerary }) {
 }
 
 function PracticalPanel({ itinerary }: { itinerary: Itinerary }) {
+  const [expanded, setExpanded] = useState(false);
   const facts = [
     itinerary.connectivity_summary ? { title: "Connectivity", value: itinerary.connectivity_summary } : null,
     itinerary.language_tips ? { title: "Language tips", value: itinerary.language_tips } : null,
     itinerary.currency_tips ? { title: "Money tips", value: itinerary.currency_tips } : null,
   ].filter((item): item is { title: string; value: string } => item !== null);
+  const womenSafetyNotes = itinerary.safety_section?.women_safety_notes;
+  const medicalFacilities = itinerary.safety_section?.medical_facilities;
+  type PracticalItem = { title: string; value?: string; checklist?: string[] };
+  const practicalItems: PracticalItem[] = [
+    ...facts,
+    ...(itinerary.safety_briefing
+      ? [{ title: "Safety briefing", value: itinerary.safety_briefing }]
+      : []),
+    ...(womenSafetyNotes ? [{ title: "Women's safety notes", value: womenSafetyNotes }] : []),
+    ...(medicalFacilities ? [{ title: "Medical facilities", value: medicalFacilities }] : []),
+    ...(itinerary.packing_tips.length > 0
+      ? [{ title: "Packing list", checklist: itinerary.packing_tips }]
+      : []),
+  ];
 
-  if (facts.length === 0 && itinerary.packing_tips.length === 0) return null;
+  if (practicalItems.length === 0) return null;
+  const visibleItems = expanded ? practicalItems : practicalItems.slice(0, 2);
 
   return (
-    <Accordion eyebrow="Before you go" title="Practical details">
+    <section className="flex flex-col gap-6 border-b border-border pb-8 pt-4">
+      <header>
+        <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-faint">Before you go</span>
+        <h3 className="mt-1 font-display text-[1.7rem] font-semibold tracking-tight text-fg sm:text-[1.9rem]">
+          Practical details
+        </h3>
+      </header>
       <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
-          {facts.map((fact) => (
-            <div key={fact.title}>
-              <h5 className={miniHeading}>{fact.title}</h5>
-              <p className="text-[0.88rem] text-fg">{fact.value}</p>
-            </div>
-          ))}
-        </div>
-        {itinerary.packing_tips.length > 0 ? (
-          <div>
-            <h5 className={miniHeading}>Packing list</h5>
-            <Checklist items={itinerary.packing_tips} />
+        {visibleItems.map((item) => (
+          <div key={item.title}>
+            <h5 className={miniHeading}>{item.title}</h5>
+            {item.checklist ? <Checklist items={item.checklist} /> : <p className="text-[0.88rem] leading-relaxed text-fg">{item.value}</p>}
+          </div>
+        ))}
+        {practicalItems.length > 2 ? (
+          <div className="flex justify-center pt-1">
+            <MoreExpander
+              expanded={expanded}
+              onClick={() => setExpanded((current) => !current)}
+              collapsedLabel="Read more"
+            />
           </div>
         ) : null}
       </div>
-    </Accordion>
+    </section>
   );
 }
 
@@ -307,6 +328,7 @@ export function ItineraryDetails({ itinerary }: ItineraryDetailsProps) {
       <TransportPanel itinerary={itinerary} />
       {itinerary.budget_breakdown ? <BudgetPanel budget={itinerary.budget_breakdown} /> : null}
       <VisaPanel itinerary={itinerary} />
+      <TopScamsPanel scams={itinerary.safety_section?.top_scams ?? []} />
       <PracticalPanel itinerary={itinerary} />
     </div>
   );

@@ -278,7 +278,6 @@ class Settings(BaseSettings):
     itinerary_max_title_length: int = 140
     itinerary_max_scams_in_briefing: int = 3
     # Above this elevation an arrival/travel day carries an acclimatization warning.
-    high_altitude_warning_meters: int = 3000
 
     @property
     def fallback_daily_activity_costs(self) -> dict[str, float]:

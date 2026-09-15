@@ -9,7 +9,6 @@ import { useElapsedTimer } from "@/hooks/use-elapsed-timer";
 import {
   activeAgentsFor,
   buildAgentTasks,
-  AGENT_PIPELINE,
   PLANNING_PHASES,
   type AgentTask,
 } from "@/lib/agent-catalog";
@@ -63,7 +62,7 @@ export function PlanningActivity({
       actions={
         <span className="inline-flex items-baseline text-[0.9rem] font-bold tabular-nums text-fg">
           {doneCount}
-          <span className="text-[0.78rem] font-semibold text-faint">/{AGENT_PIPELINE.length}</span>
+          <span className="text-[0.78rem] font-semibold text-faint">/{tasks.length}</span>
         </span>
       }
     >
@@ -109,7 +108,7 @@ function TaskRow({ task, rowRef }: { task: AgentTask; rowRef?: Ref<HTMLLIElement
       ref={rowRef}
       className={cn(
         "grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-1 py-2 last:border-0",
-        isActive && "-mx-2 rounded-md border-b-transparent bg-accent-soft px-2",
+        isActive && "-mx-2 rounded-md border-b-transparent px-2",
         isPending && "opacity-60",
       )}
     >

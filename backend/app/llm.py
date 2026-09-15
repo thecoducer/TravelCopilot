@@ -39,6 +39,16 @@ def _effective_session_id(metadata: dict[str, Any]) -> str:
     return _ACTIVE_SESSION_ID.get()
 
 
+def _callback_metadata(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Read metadata from LiteLLM's normalized callback payload."""
+    metadata = kwargs.get("metadata")
+    if isinstance(metadata, Mapping):
+        return dict(metadata)
+    litellm_params = kwargs.get("litellm_params")
+    metadata = _read_value(litellm_params, "metadata", {}) or {}
+    return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+
 def _sync_api_keys() -> None:
     key_map = {
         "OPENAI_API_KEY": settings.openai_api_key,
@@ -189,14 +199,14 @@ try:
     class UsageLogger(litellm.CustomLogger):  # type: ignore[name-defined, misc]
         """Aggregate provider usage by session and agent in Redis."""
 
-        def log_success_event(
+        def _record_success_event(
             self,
             kwargs: dict[str, Any],
             response_obj: Any,
             start_time: Any,
             end_time: Any,
         ) -> None:
-            metadata = kwargs.get("metadata") or {}
+            metadata = _callback_metadata(kwargs)
             agent_name = str(metadata.get("agent_name", "unknown"))
             session_id = _effective_session_id(metadata)
             if not session_id:
@@ -216,6 +226,24 @@ try:
                     },
                 )
             )
+
+        def log_success_event(
+            self,
+            kwargs: dict[str, Any],
+            response_obj: Any,
+            start_time: Any,
+            end_time: Any,
+        ) -> None:
+            self._record_success_event(kwargs, response_obj, start_time, end_time)
+
+        async def async_log_success_event(
+            self,
+            kwargs: dict[str, Any],
+            response_obj: Any,
+            start_time: Any,
+            end_time: Any,
+        ) -> None:
+            self._record_success_event(kwargs, response_obj, start_time, end_time)
 
     _usage_logger = UsageLogger()
 except ImportError:

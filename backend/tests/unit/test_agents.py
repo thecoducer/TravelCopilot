@@ -1531,8 +1531,6 @@ class TestItineraryCompilerContract:
             assert day.stay_options.options == [stay]
             assert day.stay_options.recommended is stay
             assert day.stay_options.check_in == "2:00 PM"
-            assert day.safety_briefing.advisory_level == "Exercise increased caution"
-            assert day.safety_briefing.top_scams == safety.top_scams
         assert itinerary.safety_section is safety
 
     @pytest.mark.asyncio

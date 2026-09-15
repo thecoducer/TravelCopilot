@@ -30,7 +30,6 @@ from app.models.itinerary import (
     MEAL_TYPES,
     SLOT_NAMES,
     ActivityOption,
-    DaySafetyBriefing,
     Experience,
     FoodOptions,
     FoodVenue,
@@ -528,60 +527,6 @@ class ItineraryCompilerService:
             )
         return by_day
 
-    def inject_safety(
-        self,
-        days: list[TripDays],
-        safety_report: SafetyReport | None,
-        stops_by_id: dict[str, TripStop],
-    ) -> list[TripDays]:
-        """Copy the safety report onto every day, with a per-day altitude warning."""
-        if not safety_report:
-            return days
-        summary = self.render_safety_briefing(safety_report)
-
-        def _attach(day: TripDays) -> TripDays:
-            stop = stops_by_id.get(day.stop_id) if day.stop_id is not None else None
-            altitude = (
-                (stop.altitude_meters if stop else None)
-                or day.altitude_meters
-                or safety_report.altitude_meters
-            )
-            warning = self._altitude_warning(altitude, day, safety_report)
-            return day.model_copy(
-                update={
-                    "safety_briefing": DaySafetyBriefing(
-                        summary=summary,
-                        advisory_level=safety_report.advisory_level,
-                        seasonal_weather_summary=safety_report.seasonal_weather_summary,
-                        crowd_level=safety_report.crowd_level,
-                        seasonal_risks=list(safety_report.seasonal_risks),
-                        altitude_meters=altitude,
-                        altitude_warning=warning,
-                        acclimatization_advice=safety_report.acclimatization_advice,
-                        top_scams=list(safety_report.top_scams),
-                        emergency_contacts=dict(safety_report.emergency_contacts),
-                        women_safety_notes=safety_report.women_safety_notes,
-                        medical_facilities=safety_report.medical_facilities,
-                    ),
-                    "altitude_meters": altitude,
-                    "altitude_warning": warning,
-                }
-            )
-
-        return _map_days(days, _attach)
-
-    def _altitude_warning(
-        self, altitude: int | None, day: TripDays, safety_report: SafetyReport
-    ) -> str | None:
-        if not altitude or altitude < settings.high_altitude_warning_meters:
-            return None
-        if not (day.is_checkin_day or day.is_travel_day):
-            return None
-        return (
-            safety_report.acclimatization_advice
-            or f"Arriving at {altitude} m — keep the first hours light and hydrate."
-        )
-
     def render_safety_briefing(self, report: SafetyReport) -> str:
         """Deterministic prose summary of a ``SafetyReport`` — never LLM-authored."""
         parts = [f"Advisory: {report.advisory_level}."]
@@ -594,8 +539,6 @@ class ItineraryCompilerService:
                 s.name for s in report.top_scams[: settings.itinerary_max_scams_in_briefing]
             )
             parts.append(f"Watch out for: {scam_names}.")
-        if report.acclimatization_advice:
-            parts.append(report.acclimatization_advice)
         return " ".join(parts)
 
     def inject_budget(
@@ -742,10 +685,6 @@ class ItineraryCompilerService:
         return Itinerary(
             title=title,
             source=state.get("source", ""),
-            destination=route.stops[-1].name
-            if route.is_multi_stop and route.stops
-            else destination,
-            destinations=destination_names,
             dates=state.get("dates"),
             travelers=state.get("travelers", 1),
             trip_days=days,

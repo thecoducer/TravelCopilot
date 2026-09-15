@@ -42,6 +42,15 @@ describe("buildAgentTasks", () => {
     expect(byAgent.get("visa")?.status).toBe("pending");
   });
 
+  it("keeps pending tasks visible while clarification pauses planning", () => {
+    const tasks = buildAgentTasks(completed, [], true);
+    const byAgent = new Map(tasks.map((task) => [task.agent, task]));
+
+    expect(byAgent.get("orchestrator")?.status).toBe("done");
+    expect(byAgent.get("stops_discovery")?.status).toBe("pending");
+    expect(byAgent.get("itinerary_compiler")?.status).toBe("pending");
+  });
+
   it("drops unreached pending tasks once planning stops", () => {
     const tasks = buildAgentTasks(completed, [], false);
     expect(tasks).toHaveLength(1);

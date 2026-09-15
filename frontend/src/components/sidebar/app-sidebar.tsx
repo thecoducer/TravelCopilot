@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
   LogOut,
+  History,
   MessageSquarePlus,
   MoreHorizontal,
   Moon,
   PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Search,
   Sun,
@@ -24,7 +26,15 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/hooks/use-theme";
 import { TravelCopilotLogo } from "@/components/brand/travel-copilot-logo";
 
-export function AppSidebar({ onHide }: { onHide: () => void }) {
+export function AppSidebar({
+  collapsed = false,
+  onHide,
+  onShow,
+}: {
+  collapsed?: boolean;
+  onHide: () => void;
+  onShow: () => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const { sessions, refresh } = useSessions();
@@ -84,8 +94,51 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
     router.push(`/c/${sessionId}`);
   }
 
+  if (collapsed) {
+    return (
+      <aside className="group relative flex h-dvh w-full flex-col items-center border-r border-white/[0.08] bg-black py-4 text-white">
+        <div className="relative mb-5 size-9">
+          <TravelCopilotLogo
+            showWordmark={false}
+            className="absolute inset-0 transition-[filter,opacity,transform] duration-300 ease-out group-hover:scale-95 group-hover:opacity-0 group-hover:blur-sm"
+          />
+          <RailButton
+            icon={<PanelLeftOpen size={18} />}
+            label="Expand sidebar"
+            onClick={onShow}
+            className="absolute inset-0 opacity-0 blur-sm transition-[filter,opacity,transform] duration-300 ease-out group-hover:scale-100 group-hover:opacity-100 group-hover:blur-0"
+          />
+        </div>
+        <div className="flex flex-col items-center gap-3">
+          <RailButton icon={<MessageSquarePlus size={18} />} label="New chat" onClick={startNewChat} />
+          <RailButton icon={<History size={18} />} label="Recent chats" onClick={onShow} />
+          <RailButton icon={<Search size={18} />} label="Search chats" onClick={() => setSearchOpen(true)} />
+        </div>
+        <div className="mt-auto flex flex-col items-center gap-3">
+          <button
+            className="inline-flex size-7 items-center justify-center rounded-full bg-[#9b59b6] text-[0.65rem] font-bold text-white transition-transform hover:scale-105"
+            onClick={() => router.push("/profile")}
+            aria-label="Open profile"
+            title="Open profile"
+          >
+            {username ? username.charAt(0).toUpperCase() : <User size={14} />}
+          </button>
+        </div>
+        {searchOpen ? (
+          <SearchDialog
+            query={query}
+            results={filtered}
+            onQueryChange={setQuery}
+            onClose={() => setSearchOpen(false)}
+            onOpen={openSession}
+          />
+        ) : null}
+      </aside>
+    );
+  }
+
   return (
-    <aside className="relative flex h-dvh w-[var(--sidebar-width)] flex-col border-r border-white/[0.08] bg-[#141719] text-white">
+    <aside className="relative flex h-dvh w-full flex-col border-r border-white/[0.08] bg-black text-white">
       <div className="flex items-center justify-between px-4 pb-4 pt-5">
         <TravelCopilotLogo className="[&>span]:text-white" />
         <div className="flex items-center gap-1">
@@ -107,9 +160,9 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
           </button>
         </div>
       </div>
-      <div className="px-3 pb-4">
+      <div className="px-3 pb-4 pt-3">
         <button
-          className="group inline-flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/[0.13] px-3 py-2.5 text-left text-[0.85rem] font-semibold text-white shadow-sm transition-colors hover:bg-white/[0.19]"
+          className="group inline-flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[0.85rem] font-semibold text-white transition-colors hover:bg-white/[0.1]"
           onClick={startNewChat}
         >
           <span className="inline-flex size-6 items-center justify-center rounded-md bg-white text-black transition-transform group-hover:scale-105">
@@ -185,6 +238,29 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
   );
 }
 
+function RailButton({
+  icon,
+  label,
+  onClick,
+  className,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      className={`inline-flex size-9 items-center justify-center rounded-lg text-white/75 transition-colors hover:bg-white/10 hover:text-white ${className ?? ""}`}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {icon}
+    </button>
+  );
+}
+
 function SearchDialog({
   query,
   results,
@@ -201,7 +277,7 @@ function SearchDialog({
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 px-4 pt-[12vh]" onMouseDown={onClose}>
       <div
-        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-[#1e2226] shadow-2xl"
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-label="Search chats"

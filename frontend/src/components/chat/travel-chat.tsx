@@ -12,24 +12,32 @@ import { ErrorBanner } from "@/components/ui/error-banner";
 import { useTripPlanner, type PlannerTurn } from "@/hooks/use-trip-planner";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useSessions } from "@/hooks/use-sessions";
+import type { SessionSummary } from "@/lib/types";
 
 export function TravelChat({ initialSessionId }: { initialSessionId?: string }) {
   const { username } = useCurrentUser();
-  const { refresh } = useSessions();
+  const { addSession, refresh } = useSessions();
 
   const onSessionCreated = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, title: string, createdAt: string) => {
       // Shallow URL update keeps the component mounted (and the stream alive)
       // while giving the new chat a shareable /c/{id} address.
       if (!initialSessionId && typeof window !== "undefined") {
         window.history.replaceState(null, "", `/c/${sessionId}`);
       }
+      const session: SessionSummary = {
+        session_id: sessionId,
+        title,
+        created_at: createdAt,
+        has_itinerary: false,
+      };
+      addSession(session);
       void refresh();
     },
-    [initialSessionId, refresh],
+    [addSession, initialSessionId, refresh],
   );
 
-  const { state, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf } = useTripPlanner({
+  const { state, isHydrating, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf } = useTripPlanner({
     username,
     initialSessionId,
     onSessionCreated,
@@ -41,7 +49,11 @@ export function TravelChat({ initialSessionId }: { initialSessionId?: string }) 
     <div className="relative flex h-full flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto px-4 py-8 pb-32 [scrollbar-gutter:stable_both-edges] sm:px-8 sm:pb-36">
         <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-6">
-          {hasStarted ? (
+          {isHydrating ? (
+            <div className="flex min-h-full items-center justify-center py-12 text-sm text-muted" aria-live="polite">
+              Loading trip…
+            </div>
+          ) : hasStarted ? (
             <>
               <ChatStartedAt timestamp={state.turns[0]?.startedAt} />
               {state.turns.map((turn, index) => (
@@ -126,7 +138,7 @@ function TurnView({
             <ErrorBanner message={turn.errorMessage} />
           ) : null}
 
-          {isPlanning || turn.completedAgents.length > 0 ? (
+          {isPlanning || turn.status === "awaiting_clarification" || turn.completedAgents.length > 0 ? (
             <PlanningActivity
               status={turn.status}
               completedAgents={turn.completedAgents}

@@ -240,21 +240,6 @@ export type ScamEntry = {
   how_to_avoid: string;
 };
 
-export type DaySafetyBriefing = {
-  summary: string;
-  advisory_level: string | null;
-  seasonal_weather_summary?: string | null;
-  crowd_level?: string | null;
-  seasonal_risks?: string[];
-  altitude_meters?: number | null;
-  altitude_warning?: string | null;
-  acclimatization_advice?: string | null;
-  top_scams?: ScamEntry[];
-  emergency_contacts?: Record<string, string>;
-  women_safety_notes?: string | null;
-  medical_facilities?: string | null;
-};
-
 export type ReviewSummary = {
   place_name: string;
   rating: number | null;
@@ -277,11 +262,9 @@ export type TripDays = {
   food_options: FoodOptions[];
   stay_options: StayOptions | null;
   transport_options: TransportOptions[];
-  safety_briefing: DaySafetyBriefing | null;
   review_highlights: ReviewSummary[];
   permits_required: string[];
   altitude_meters: number | null;
-  altitude_warning: string | null;
   connectivity: string | null;
   drive_notes: string | null;
   estimated_cost: number | null;
@@ -419,8 +402,6 @@ export type Itinerary = {
   id: string | null;
   title: string;
   source: string;
-  destination: string;
-  destinations: string[];
   dates: TripDates | null;
   travelers: number;
   trip_days: TripDays[];

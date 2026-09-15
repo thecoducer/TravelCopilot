@@ -1,9 +1,9 @@
 import type { TripDays } from "@/lib/types";
 import Image from "next/image";
+import { memo } from "react";
 
 type ItineraryDayCardProps = {
   day: TripDays;
-  dayNumbers?: number[];
   /** Multi-night stays repeat the same hotel each day; render it only once per stop. */
   showStay?: boolean;
 };
@@ -36,11 +36,14 @@ function OptionImage({ src, alt }: { src?: string; alt: string }) {
   if (!src) return null;
   return (
     <Image
-      className="h-[82px] w-24 shrink-0 object-cover"
+      className="h-[82px] w-24 shrink-0 rounded-md border border-border object-cover"
       src={src}
       alt={alt}
       width={96}
       height={82}
+      sizes="96px"
+      loading="lazy"
+      decoding="async"
       unoptimized
     />
   );
@@ -53,16 +56,12 @@ const reasonClass = "text-xs text-muted";
 const linkClass = "text-xs font-semibold text-chat-blue hover:text-chat-blue-hover hover:underline";
 
 /** Renders the route, activities, food, and stay recommendations for one day. */
-export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay = true }: ItineraryDayCardProps) {
-  const dayLabel = dayNumbers.length > 1
-    ? `Day ${dayNumbers.slice(0, -1).join(", ")} and ${dayNumbers.at(-1)}`
-    : `Day ${day.day_number}`;
-
+function ItineraryDayCardContent({ day, showStay = true }: ItineraryDayCardProps) {
   return (
     <article className="flex flex-col gap-7 pb-6 pt-6">
       <header className="flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
         <h5 className="font-display text-[clamp(1.35rem,2.5vw,1.85rem)] font-bold leading-tight tracking-tight text-fg">
-          {dayLabel} — {day.location}
+          Day {day.day_number} — {day.location}
         </h5>
         <time className="font-mono text-base font-medium tabular-nums text-fg sm:text-lg">
           {formatDate(day.date)}
@@ -84,8 +83,6 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
         ) : null}
       </div>
       {day.summary ? <p className="text-sm leading-relaxed text-muted">{day.summary}</p> : null}
-      {day.altitude_warning ? <p className="text-sm text-danger">{day.altitude_warning}</p> : null}
-
       {day.transport_options.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h6 className={sectionHeadingClass}>How you can get there</h6>
@@ -206,7 +203,9 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
                 <div className="min-w-0">
                   <strong className="text-sm text-fg">{stay.name}</strong>
                   <p className="text-xs text-muted">
-                    {stay.price_per_night?.toLocaleString()} {stay.currency_code}/night
+                    {stay.price_per_night
+                      ? `${stay.price_per_night.toLocaleString()} ${stay.currency_code ?? ""}/night`
+                      : "Price not found — check on web for price"}
                     {stay.rating ? ` · ★ ${stay.rating.toFixed(1)}` : ""}
                   </p>
                   <small className="block text-xs text-faint">{stay.address}</small>
@@ -226,6 +225,8 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
     </article>
   );
 }
+
+export const ItineraryDayCard = memo(ItineraryDayCardContent);
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (

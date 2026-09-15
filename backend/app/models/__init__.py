@@ -10,9 +10,6 @@ from app.models.itinerary import (
     ClarificationRequest as ClarificationRequest,
 )
 from app.models.itinerary import (
-    DaySafetyBriefing as DaySafetyBriefing,
-)
-from app.models.itinerary import (
     Experience as Experience,
 )
 from app.models.itinerary import (

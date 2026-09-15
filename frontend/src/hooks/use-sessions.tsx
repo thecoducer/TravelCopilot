@@ -17,6 +17,7 @@ type SessionsContextValue = {
   sessions: SessionSummary[];
   loading: boolean;
   refresh: () => Promise<void>;
+  addSession: (session: SessionSummary) => void;
 };
 
 const SessionsContext = createContext<SessionsContextValue | null>(null);
@@ -25,6 +26,15 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
   const { username, mounted } = useCurrentUser();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const addSession = useCallback((session: SessionSummary) => {
+    setSessions((current) => {
+      if (current.some((existing) => existing.session_id === session.session_id)) {
+        return current;
+      }
+      return [session, ...current];
+    });
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!username) {
@@ -62,8 +72,8 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
   }, [mounted, username]);
 
   const value = useMemo(
-    () => ({ sessions, loading, refresh }),
-    [sessions, loading, refresh],
+    () => ({ sessions, loading, refresh, addSession }),
+    [sessions, loading, refresh, addSession],
   );
 
   return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>;

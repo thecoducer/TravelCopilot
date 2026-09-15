@@ -196,6 +196,7 @@ class TestPromeTemplates:
         assert text == service.render_safety_briefing(report)
         assert "Taxi scam" in text
         assert "Exercise normal caution" in text
+        assert "acclimatization" not in text.lower()
 
     def test_build_reality_banner_combines_safety_and_budget(
         self, service: ItineraryCompilerService

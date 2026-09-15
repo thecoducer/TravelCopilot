@@ -10,7 +10,6 @@ from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import (
     ActivityOption,
     ClarificationRequest,
-    DaySafetyBriefing,
     Experience,
     FoodOptions,
     FoodVenue,
@@ -550,19 +549,7 @@ class TestTripDays:
         assert d.food_options == []
         assert d.transport_options == []
         assert d.stay_options is None
-        assert d.safety_briefing is None
         assert d.location == "Leh"
-        assert d.altitude_warning is None
-
-    def test_altitude_warning_on_day_one(self):
-        d = TripDays(
-            date=date(2026, 9, 1),
-            day_number=1,
-            location="Leh",
-            altitude_meters=3524,
-            altitude_warning="Acclimatization day — avoid strenuous activity. Leh sits at 3,524 m.",
-        )
-        assert "3,524" in d.altitude_warning
 
     def test_day_carries_stay_food_and_permits(self):
         d = TripDays(
@@ -603,20 +590,14 @@ class TestTripDays:
         assert d.transport_options[0].origin == "Leh"
         assert d.transport_options[0].leg_id == d.leg_id
 
-    def test_day_carries_safety_briefing_and_cost(self):
+    def test_day_carries_cost(self):
         d = TripDays(
             date=date(2026, 9, 1),
             day_number=1,
             location="Leh",
-            safety_briefing=DaySafetyBriefing(
-                summary="Advisory: Exercise normal caution.",
-                advisory_level="Exercise normal caution",
-                altitude_meters=3524,
-            ),
             estimated_cost=7400.0,
             currency_code="INR",
         )
-        assert d.safety_briefing.advisory_level == "Exercise normal caution"
         assert d.estimated_cost == 7400.0
         assert d.currency_code == "INR"
 
@@ -654,7 +635,7 @@ class TestClarificationRequest:
 
 class TestItinerary:
     def test_basic(self):
-        it = Itinerary(title="5 Days Ladakh", source="Delhi", destination="Ladakh", travelers=2)
+        it = Itinerary(title="5 Days Ladakh", source="Delhi", travelers=2)
         assert it.travelers == 2
         assert it.trip_days == []
         assert it.clarifications_needed == []
@@ -666,7 +647,6 @@ class TestItinerary:
         it = Itinerary(
             title="5 Days Ladakh",
             source="Delhi",
-            destination="Ladakh",
             trip_days=[
                 TripDays(
                     date=date(2026, 9, day),
@@ -674,7 +654,6 @@ class TestItinerary:
                     location="Leh",
                     stay_options=StayOptions(location="Leh", options=[]),
                     food_options=[FoodOptions(meal_type="breakfast", options=[])],
-                    safety_briefing=DaySafetyBriefing(summary="Advisory: normal caution."),
                 )
                 for day in range(1, 6)
             ],
@@ -683,14 +662,11 @@ class TestItinerary:
         assert [d.day_number for d in it.trip_days] == [1, 2, 3, 4, 5]
         assert all(d.stay_options is not None for d in it.trip_days)
         assert all(d.food_options for d in it.trip_days)
-        assert all(d.safety_briefing is not None for d in it.trip_days)
 
     def test_multi_stop_days_stay_flat_and_ordered(self):
         it = Itinerary(
             title="Ladakh Circuit",
             source="Delhi",
-            destination="Hanle",
-            destinations=["Leh", "Nubra Valley", "Hanle"],
             trip_days=[
                 TripDays(date=date(2026, 9, 1), day_number=1, location="Leh", stop_id="stop-leh-1"),
                 TripDays(
@@ -716,7 +692,6 @@ class TestItinerary:
         it = Itinerary(
             title="Ladakh Circuit",
             source="Delhi",
-            destination="Ladakh",
             source_query="5 days ladakh from delhi solo trekker",
             packing_tips=["Sunscreen SPF 50+", "Warm layers", "Altitude sickness tablets"],
             connectivity_summary=(
@@ -728,21 +703,28 @@ class TestItinerary:
         assert "Leh" in it.connectivity_summary
         assert "solo" in it.source_query
 
-    def test_multi_stop_destinations(self):
+    def test_multi_stop_day_locations(self):
         it = Itinerary(
             title="Ladakh Circuit",
             source="Delhi",
-            destination="Ladakh",
-            destinations=["Leh", "Nubra Valley", "Pangong", "Hanle"],
+            trip_days=[
+                TripDays(date=date(2026, 9, 1), day_number=1, location="Leh"),
+                TripDays(date=date(2026, 9, 2), day_number=2, location="Nubra Valley"),
+                TripDays(date=date(2026, 9, 3), day_number=3, location="Pangong"),
+                TripDays(date=date(2026, 9, 4), day_number=4, location="Hanle"),
+            ],
         )
-        assert len(it.destinations) == 4
-        assert "Hanle" in it.destinations
+        assert [day.location for day in it.trip_days] == [
+            "Leh",
+            "Nubra Valley",
+            "Pangong",
+            "Hanle",
+        ]
 
     def test_clarifications_attached(self):
         it = Itinerary(
             title="Draft — needs input",
             source="Mumbai",
-            destination="Spiti",
             clarifications_needed=[
                 ClarificationRequest(
                     field="dates",
@@ -755,7 +737,7 @@ class TestItinerary:
         assert it.clarifications_needed[0].field == "dates"
 
     def test_versioning_defaults(self):
-        it = Itinerary(title="X", source="Delhi", destination="Ladakh")
+        it = Itinerary(title="X", source="Delhi")
         assert it.version == 1
         assert it.updated_at is None
         assert it.language_tips is None
@@ -765,7 +747,6 @@ class TestItinerary:
         it = Itinerary(
             title="Ladakh Pocket Guide",
             source="Delhi",
-            destination="Leh",
             language_tips="Basic Hindi useful; English widely spoken in Leh tourist areas",
             currency_tips="Carry cash — ATMs rare beyond Leh. Exchange INR before departure.",
         )

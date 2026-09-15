@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   clarifyTrip,
   cancelTripPlanning,
   downloadItineraryPdf,
   getSessionItinerary,
   getSessionTurns,
+  getTripUsage,
   planTrip,
 } from "@/lib/api";
 import { parseSseStream, toTripStreamEvent } from "@/lib/sse";
@@ -238,6 +239,7 @@ async function consumeTripStream(
 function buildHydratedTurns(
   storedTurns: { role: string; content: string; trip_id: string | null; created_at: string }[],
   itinerary: Itinerary | null,
+  usage: UsageSummaryEvent | null,
 ): PlannerTurn[] {
   const userTurns = storedTurns.filter((turn) => turn.role === "user");
   if (userTurns.length === 0) {
@@ -251,6 +253,7 @@ function buildHydratedTurns(
         planningStartedAt: null,
         itinerary,
         itineraryId: itinerary.id,
+        usage,
       },
     ];
   }
@@ -264,6 +267,7 @@ function buildHydratedTurns(
       planningStartedAt: null,
       itinerary: isLast ? itinerary : null,
       itineraryId: isLast ? (itinerary?.id ?? null) : null,
+      usage: isLast ? usage : null,
     };
   });
 }
@@ -271,12 +275,13 @@ function buildHydratedTurns(
 type UseTripPlannerOptions = {
   username?: string | null;
   initialSessionId?: string;
-  onSessionCreated?: (sessionId: string) => void;
+  onSessionCreated?: (sessionId: string, title: string, createdAt: string) => void;
 };
 
 export function useTripPlanner(options: UseTripPlannerOptions = {}) {
   const { username, initialSessionId, onSessionCreated } = options;
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [isHydrating, setIsHydrating] = useState(Boolean(initialSessionId));
   const abortRef = useRef<AbortController | null>(null);
   const notifiedSessionRef = useRef<string | null>(null);
 
@@ -288,28 +293,39 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
   useEffect(() => {
     if (state.sessionId && notifiedSessionRef.current !== state.sessionId) {
       notifiedSessionRef.current = state.sessionId;
-      onSessionCreated?.(state.sessionId);
+      const firstTurn = state.turns[0];
+      const prompt = firstTurn?.prompt.trim() ?? "";
+      const title = prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt || "New trip";
+      onSessionCreated?.(state.sessionId, title, firstTurn?.startedAt ?? new Date().toISOString());
     }
   }, [state.sessionId, onSessionCreated]);
 
   // Hydrate a saved session when navigating directly to /c/[sessionId].
   useEffect(() => {
+    setIsHydrating(Boolean(initialSessionId));
     if (!initialSessionId) {
       return;
     }
     notifiedSessionRef.current = initialSessionId;
     let cancelled = false;
     void (async () => {
-      const [itinerary, storedTurns] = await Promise.all([
-        getSessionItinerary(initialSessionId).catch(() => null),
-        getSessionTurns(initialSessionId).catch(() => []),
-      ]);
-      if (!cancelled) {
-        dispatch({
-          type: "hydrated",
-          sessionId: initialSessionId,
-          turns: buildHydratedTurns(storedTurns, itinerary),
-        });
+      try {
+        const [itinerary, storedTurns] = await Promise.all([
+          getSessionItinerary(initialSessionId).catch(() => null),
+          getSessionTurns(initialSessionId).catch(() => []),
+        ]);
+        const usage = itinerary?.id ? await getTripUsage(itinerary.id).catch(() => null) : null;
+        if (!cancelled) {
+          dispatch({
+            type: "hydrated",
+            sessionId: initialSessionId,
+            turns: buildHydratedTurns(storedTurns, itinerary, usage),
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setIsHydrating(false);
+        }
       }
     })();
     return () => {
@@ -416,7 +432,7 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
     }
   }, []);
 
-  return { state, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf };
+  return { state, isHydrating, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf };
 }
 
 function triggerBrowserDownload(blob: Blob, filename: string): void {
