@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useSessions } from "@/hooks/use-sessions";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/hooks/use-theme";
+import { TravelCopilotLogo } from "@/components/brand/travel-copilot-logo";
 
 export function AppSidebar() {
   const router = useRouter();
@@ -62,9 +63,7 @@ export function AppSidebar() {
   return (
     <aside className="flex h-dvh w-[280px] flex-col border-r border-border bg-surface">
       <div className="flex flex-col gap-3 border-b border-border p-4">
-        <span className="font-display text-[1.05rem] font-bold tracking-tight text-fg">
-          Travel Copilot
-        </span>
+        <TravelCopilotLogo />
         <button
           className="inline-flex items-center justify-center gap-2 rounded-md border border-border-strong bg-canvas px-3 py-2 text-sm font-semibold text-fg transition-colors hover:border-accent hover:bg-accent-soft"
           onClick={startNewChat}
