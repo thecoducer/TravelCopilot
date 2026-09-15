@@ -7,10 +7,55 @@
 export type PlanRequest = {
   query: string;
   session_id?: string;
+  username?: string;
+  mode?: "new" | "followup";
 };
 
 export type ClarifyRequest = {
   answers: Record<string, string>;
+};
+
+// ── User identity, profile, and sessions ─────────────────────────────────────
+
+export type SessionSummary = {
+  session_id: string;
+  title: string;
+  created_at: string;
+  has_itinerary: boolean;
+};
+
+export type ChatTurn = {
+  turn_index: number;
+  role: "user" | "assistant";
+  content: string;
+  trip_id: string | null;
+  intent: string | null;
+  created_at: string;
+};
+
+export type UserProfileData = {
+  user_id: string;
+  username?: string | null;
+  display_name?: string | null;
+  home_city?: string | null;
+  nationality?: string | null;
+  passport_country?: string | null;
+  preferred_currency?: string;
+  total_budget?: number | null;
+  per_day_budget?: number | null;
+  budget_currency?: string;
+  dietary_restrictions?: string[];
+  preferred_cuisines?: string[];
+  food_preferences_configured?: boolean;
+  accessibility_needs?: string[];
+  interests?: string[];
+  preferred_airlines?: string[];
+  preferred_hotel_chains?: string[];
+  hotel_style?: string | null;
+  budget_tier?: string;
+  travel_style?: string | null;
+  fitness_level?: string | null;
+  altitude_experience?: boolean | null;
 };
 
 // ── SSE event payloads ───────────────────────────────────────────────────────
@@ -141,62 +186,150 @@ export type FoodOptions = {
   notes: string | null;
 };
 
-export type Day = {
-  date: string;
-  day_number: number;
-  location: string;
-  morning: TimeSlotOptions;
-  afternoon: TimeSlotOptions;
-  evening: TimeSlotOptions;
-  food: FoodOptions[];
-  altitude_warning: string | null;
-  is_travel_day: boolean;
-  is_checkin_day?: boolean;
-  is_checkout_day?: boolean;
-};
-
 export type StayOption = {
   name?: string;
   price_per_night?: number;
+  currency_code?: string;
   rating?: number;
+  review_count?: number;
   address?: string;
+  city?: string;
   description?: string;
   photos?: string[];
   booking_url?: string;
+  google_maps_url?: string | null;
   amenities?: string[];
-  [key: string]: unknown;
+  hotel_style?: string | null;
+  price_tier?: string | null;
+  personalization_reason?: string | null;
+  price_disclaimer?: string | null;
+  check_in?: string | null;
+  check_out?: string | null;
+  free_cancellation_until?: string | null;
 };
 
 export type StayOptions = {
   location: string;
   options: StayOption[];
+  recommended: StayOption | null;
   notes: string | null;
-};
-
-export type TripSegment = {
-  location: string;
-  days: Day[];
-  stay_options: StayOptions | null;
-  permits_required: string[];
-  connectivity: string | null;
-  drive_notes?: string | null;
-  altitude_meters?: number | null;
   stop_id?: string | null;
-  arrival_date?: string | null;
-  departure_date?: string | null;
+  nights_at_location?: number;
+  is_checkin_day?: boolean;
+  is_checkout_day?: boolean;
   check_in?: string | null;
   check_out?: string | null;
+};
+
+export type TransportOptions = {
+  origin: string;
+  destination: string;
+  leg_id?: string | null;
+  leg_type?: string | null;
+  departure_date?: string | null;
+  recommended: TransportRecommendation | null;
+  alternatives: TransportRecommendation[];
+  notes?: string | null;
+  mode_downgraded?: boolean;
+  no_result?: boolean;
+};
+
+export type ScamEntry = {
+  name: string;
+  description: string;
+  how_to_avoid: string;
+};
+
+export type DaySafetyBriefing = {
+  summary: string;
+  advisory_level: string | null;
+  seasonal_weather_summary?: string | null;
+  crowd_level?: string | null;
+  seasonal_risks?: string[];
+  altitude_meters?: number | null;
+  altitude_warning?: string | null;
+  acclimatization_advice?: string | null;
+  top_scams?: ScamEntry[];
+  emergency_contacts?: Record<string, string>;
+  women_safety_notes?: string | null;
+  medical_facilities?: string | null;
+};
+
+export type ReviewSummary = {
+  place_name: string;
+  rating: number | null;
+  review_count: number | null;
+  pros: string[];
+  cons: string[];
+  sentiment: string | null;
+  google_maps_url?: string | null;
+};
+
+/** One calendar day — self-describing, mirrors backend ``TripDays``. */
+export type TripDays = {
+  day_number: number;
+  date: string;
+  location: string;
+  summary: string | null;
+  morning: TimeSlotOptions;
+  afternoon: TimeSlotOptions;
+  evening: TimeSlotOptions;
+  food_options: FoodOptions[];
+  stay_options: StayOptions | null;
+  transport_options: TransportOptions[];
+  safety_briefing: DaySafetyBriefing | null;
+  review_highlights: ReviewSummary[];
+  permits_required: string[];
+  altitude_meters: number | null;
+  altitude_warning: string | null;
+  connectivity: string | null;
+  drive_notes: string | null;
+  estimated_cost: number | null;
+  currency_code: string | null;
+  stop_id?: string | null;
+  leg_id?: string | null;
+  is_travel_day: boolean;
+  is_checkin_day?: boolean;
+  is_checkout_day?: boolean;
 };
 
 export type TransportRecommendation = {
   rationale?: string;
   mode?: string;
+  recommended_legs?: RouteLeg[];
+  total_cost?: number | null;
+  total_duration_minutes?: number | null;
+  currency_code?: string | null;
+  personalization_reason?: string | null;
+  non_obvious_insight?: string | null;
+  route_label?: string | null;
   [key: string]: unknown;
+};
+
+export type RouteLeg = {
+  mode?: string;
+  operator?: string | null;
+  origin?: string;
+  destination?: string;
+  departure_time?: string | null;
+  arrival_time?: string | null;
+  duration_minutes?: number | null;
+  cost?: number | null;
+  currency_code?: string | null;
+  booking_url?: string | null;
+  seat_class?: string | null;
+  flight_number?: string | null;
+  stops?: number | null;
+  layover_at?: string | null;
+  baggage_allowance?: string | null;
+  cancellation_policy?: string | null;
+  price_disclaimer?: string | null;
 };
 
 export type TransportSection = {
   recommended: TransportRecommendation | null;
   alternatives: TransportRecommendation[];
+  by_leg?: Record<string, TransportRecommendation>;
 };
 
 export type ApplicationCentre = {
@@ -205,6 +338,13 @@ export type ApplicationCentre = {
   phone: string | null;
   opening_hours: string | null;
   booking_url: string | null;
+  google_maps_url?: string | null;
+};
+
+export type VisaSource = {
+  title: string;
+  url: string;
+  published_or_fetched_date?: string | null;
 };
 
 export type VisaReport = {
@@ -212,20 +352,38 @@ export type VisaReport = {
   destination_country: string;
   visa_required: boolean;
   visa_type: string | null;
+  application_process?: string[];
+  documents_required?: string[];
   processing_timeline: string | null;
   fees: string | null;
+  dos_and_donts?: string[];
+  nearest_embassy?: ApplicationCentre | null;
   application_centre: ApplicationCentre | null;
+  apply_online_url?: string | null;
+  validity_notes?: string | null;
+  sources?: VisaSource[];
+  last_verified_at?: string | null;
+  confidence?: string | null;
   disclaimer: string;
+};
+
+export type FxRateEntry = {
+  rate: number;
+  fetched_at?: string | null;
 };
 
 export type BudgetReport = {
   currency_code: string;
   total_estimated_cost: number;
   total_in_source_currency: number | null;
+  fx_rates_used?: Record<string, FxRateEntry>;
+  fx_disclaimer?: string | null;
   per_category_breakdown: Record<string, number>;
+  per_day_breakdown?: number[];
   vs_budget_verdict: string;
   cost_saving_tips: string[];
   per_person_cost: number | null;
+  permit_costs?: number | null;
 };
 
 export type ClarificationRequest = {
@@ -240,6 +398,23 @@ export type TripDates = {
   [key: string]: unknown;
 };
 
+export type SafetyReport = {
+  destination: string;
+  advisory_level: string;
+  season_label?: string | null;
+  crowd_level?: string | null;
+  seasonal_weather_summary?: string | null;
+  seasonal_risks?: string[];
+  altitude_meters?: number | null;
+  acclimatization_advice?: string | null;
+  top_scams?: ScamEntry[];
+  safe_areas?: string[];
+  emergency_contacts?: Record<string, string>;
+  women_safety_notes?: string | null;
+  medical_facilities?: string | null;
+  insurance_recommendation?: string | null;
+};
+
 export type Itinerary = {
   id: string | null;
   title: string;
@@ -248,18 +423,21 @@ export type Itinerary = {
   destinations: string[];
   dates: TripDates | null;
   travelers: number;
-  reality_banner: string | null;
-  segments: TripSegment[];
+  trip_days: TripDays[];
   transport_section: TransportSection | null;
+  safety_section: SafetyReport | null;
   safety_briefing: string | null;
-  packing_tips: string[];
-  connectivity_summary: string | null;
   visa_section: VisaReport | null;
   self_drive_section?: Record<string, unknown> | null;
   budget_breakdown: BudgetReport | null;
-  clarifications_needed: ClarificationRequest[];
+  reality_banner: string | null;
+  packing_tips: string[];
+  permits_required: string[];
+  connectivity_summary: string | null;
   language_tips: string | null;
   currency_tips: string | null;
+  clarifications_needed: ClarificationRequest[];
+  version?: number;
 };
 
 // ── Planner UI state ─────────────────────────────────────────────────────────

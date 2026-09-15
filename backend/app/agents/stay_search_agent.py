@@ -81,6 +81,25 @@ def _list_of_str(value: object) -> list[str]:
     return []
 
 
+def _hotel_photo_urls(value: object) -> list[str]:
+    """Extract renderable image URLs from SerpApi Google Hotels ``images``.
+
+    Each item is normally ``{"thumbnail": url, "original_image": url}``; older
+    responses may be plain URL strings.
+    """
+    if not isinstance(value, list):
+        return _list_of_str(value)
+    urls: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            url = item.get("original_image") or item.get("thumbnail")
+            if isinstance(url, str) and url.strip():
+                urls.append(url.strip())
+        elif isinstance(item, str) and item.strip():
+            urls.append(item.strip())
+    return urls
+
+
 def _extract_rate_lowest(prop: dict[str, Any]) -> object:
     rate = prop.get("rate_per_night", {})
     if isinstance(rate, dict):
@@ -243,7 +262,7 @@ class StaySearchAgent:
                         rating=rating,
                         review_count=review_count,
                         amenities=_list_of_str(prop.get("amenities", [])),
-                        photos=_list_of_str(prop.get("images", [])),
+                        photos=_hotel_photo_urls(prop.get("images", [])),
                         google_maps_url=_extract_maps_url(prop, lat, lng),
                         booking_url=(str(prop.get("link")).strip() if prop.get("link") else None),
                         hotel_style=user_profile.hotel_style if user_profile else None,

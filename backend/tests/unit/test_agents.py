@@ -29,7 +29,9 @@ from app.agents.transport_search_agent import TransportSearchAgent
 from app.agents.visa_agent import VisaAgent
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
+from app.models.itinerary import Experience
 from app.models.reports import (
+    BudgetReport,
     SafetyReport,
     ScamEntry,
     VisaReport,
@@ -210,6 +212,39 @@ class TestOrchestratorAgent:
         assert "prompts" in payload
         fields = [p["field"] for p in payload["prompts"]]
         assert "destination" in fields
+
+    @pytest.mark.asyncio
+    async def test_clarification_triggered_when_trip_days_unstated(self) -> None:
+        """A query with no stated or implied duration must be clarified, never defaulted to 3."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+
+        mock_response = _ParsedQuery(
+            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=_FieldConfidence(value="Goa", confidence=0.95),
+            departure_date="2026-11-01",
+            trip_days=None,
+            trip_days_confidence=0.0,
+            travelers=_FieldConfidence(value="2", confidence=1.0),
+            budget_tier="mid",
+            is_international=False,
+            self_drive_intent=False,
+            dates_confidence=0.9,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(mock_response))
+
+        call_args: list[dict] = []
+
+        def mock_interrupt(val: dict) -> dict:
+            call_args.append(val)
+            return {"trip_days": "4"}
+
+        with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
+            result = await agent({"query": "trip to Goa from Kolkata", "session_id": "s_days"})
+
+        assert len(call_args) >= 1, "interrupt() was not called"
+        fields = [p["field"] for p in call_args[0]["prompts"]]
+        assert "trip_days" in fields
+        assert result["dates"].trip_days == 4
 
     @pytest.mark.asyncio
     async def test_fully_specified_query_no_clarification(self) -> None:
@@ -1357,3 +1392,213 @@ class TestBudgetPlannerAgent:
         assert report.per_category_breakdown["food"] == 12000.0
         # 1500 per person/day * 3 days * 2 travelers = 9000.0
         assert report.per_category_breakdown["activities"] == 9000.0
+
+
+# ── Itinerary compiler: synthesize, never invent ─────────────────────────────
+
+
+def _compiler_experience(name: str, lat: float = 34.16, lng: float = 77.58) -> Experience:
+    return Experience(
+        name=name,
+        type="monastery",
+        description=f"{name} description.",
+        duration_hours=2.0,
+        price_range="Free",
+        lat=lat,
+        lng=lng,
+        address=f"{name}, Leh",
+        rating=4.6,
+        review_count=900,
+        source="google_places",
+    )
+
+
+def _compiler_tool_factory() -> _StaticToolFactory:
+    return _StaticToolFactory(
+        {
+            "cluster_by_proximity": {"clusters": []},
+            "enforce_opening_hours": {"conflicts": []},
+            "validate_day_duration": {"flags": []},
+        }
+    )
+
+
+def _compiler_state(base_state: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    return {**base_state, **overrides}
+
+
+class TestItineraryCompilerContract:
+    """The compiler absorbs upstream findings verbatim and never invents new ones."""
+
+    @staticmethod
+    def _agent(day_plan: Any) -> Any:
+        from app.agents.itinerary_compiler_agent import ItineraryCompilerAgent
+        from app.models.itinerary_compilation import DayPlan, TripNarrative
+
+        def _dispatch(schema: Any) -> MagicMock:
+            chain = MagicMock()
+            if schema is DayPlan:
+                chain.ainvoke = AsyncMock(return_value=day_plan)
+            elif schema is TripNarrative:
+                chain.ainvoke = AsyncMock(return_value=TripNarrative(title="Three Days in Leh"))
+            else:
+                chain.ainvoke = AsyncMock(return_value=MagicMock())
+            return chain
+
+        llm = MagicMock()
+        llm.with_structured_output = MagicMock(side_effect=_dispatch)
+        return ItineraryCompilerAgent(tool_factory=_compiler_tool_factory(), llm=llm)
+
+    @pytest.mark.asyncio
+    async def test_five_day_trip_yields_five_days(self, base_state: dict[str, Any]) -> None:
+        from app.models.itinerary_compilation import DayPlan
+
+        state = _compiler_state(
+            base_state,
+            dates=TripDates(departure=date(2026, 7, 15), return_date=date(2026, 7, 19)),
+        )
+        result = await self._agent(DayPlan())(state)
+
+        itinerary = result["itinerary"]
+        assert len(itinerary.trip_days) == 5
+        assert [d.day_number for d in itinerary.trip_days] == [1, 2, 3, 4, 5]
+
+    @pytest.mark.asyncio
+    async def test_unknown_llm_picks_are_dropped(self, base_state: dict[str, Any]) -> None:
+        from app.models.itinerary_compilation import ActivityPick, DayPlan
+
+        plan = DayPlan(
+            activities=[
+                ActivityPick(
+                    day_number=1,
+                    slot="morning",
+                    experience_name="Totally Invented Monastery",
+                    recommendation_reason="Sounds nice.",
+                )
+            ]
+        )
+        state = _compiler_state(base_state, experiences_raw=[_compiler_experience("Thiksey")])
+        result = await self._agent(plan)(state)
+
+        scheduled = [
+            opt.place.name
+            for day in result["itinerary"].trip_days
+            for slot in (day.morning, day.afternoon, day.evening)
+            for opt in slot.options
+        ]
+        assert "Totally Invented Monastery" not in scheduled
+
+    @pytest.mark.asyncio
+    async def test_stay_and_safety_are_copied_verbatim_onto_every_day(
+        self, base_state: dict[str, Any]
+    ) -> None:
+        from app.models.itinerary_compilation import DayPlan
+
+        stay = StayOption(
+            name="Grand Dragon",
+            address="Old Road, Leh",
+            city="Leh",
+            price_per_night=8200.0,
+            currency_code="INR",
+            rating=4.4,
+            review_count=310,
+            check_in="2:00 PM",
+            check_out="11:00 AM",
+        )
+        safety = SafetyReport(
+            destination="Leh",
+            advisory_level="Exercise increased caution",
+            crowd_level="High",
+            seasonal_weather_summary="Dry and cold at night.",
+            altitude_meters=3524,
+            acclimatization_advice="Rest for the first 24 hours.",
+            top_scams=[
+                ScamEntry(
+                    name="Taxi overcharging",
+                    description="Inflated fixed fares",
+                    how_to_avoid="Use the union rate card",
+                )
+            ],
+        )
+        state = _compiler_state(
+            base_state, stays_shortlist=[stay], stays_pick=stay, safety_report=safety
+        )
+        result = await self._agent(DayPlan())(state)
+        itinerary = result["itinerary"]
+
+        for day in itinerary.trip_days:
+            assert day.stay_options is not None
+            assert day.stay_options.options == [stay]
+            assert day.stay_options.recommended is stay
+            assert day.stay_options.check_in == "2:00 PM"
+            assert day.safety_briefing.advisory_level == "Exercise increased caution"
+            assert day.safety_briefing.top_scams == safety.top_scams
+        assert itinerary.safety_section is safety
+
+    @pytest.mark.asyncio
+    async def test_trip_level_prose_is_templated_not_generated(
+        self, base_state: dict[str, Any]
+    ) -> None:
+        from app.models.itinerary_compilation import DayPlan
+        from app.services.itinerary_compiler_service import ItineraryCompilerService
+
+        service = ItineraryCompilerService()
+        safety = SafetyReport(
+            destination="Leh",
+            advisory_level="Exercise normal caution",
+            season_label="Shoulder",
+            crowd_level="Moderate",
+            seasonal_weather_summary="Clear days, freezing nights.",
+        )
+        budget = BudgetReport(
+            currency_code="INR",
+            total_estimated_cost=42000.0,
+            per_day_breakdown=[14000.0, 14000.0, 14000.0],
+            vs_budget_verdict="on-budget",
+        )
+        state = _compiler_state(base_state, safety_report=safety, budget_report=budget)
+        itinerary = (await self._agent(DayPlan())(state))["itinerary"]
+
+        assert itinerary.safety_briefing == service.render_safety_briefing(safety)
+        assert itinerary.reality_banner == service.build_reality_banner(safety, budget)
+        assert itinerary.budget_breakdown is budget
+        assert [d.estimated_cost for d in itinerary.trip_days] == [14000.0, 14000.0, 14000.0]
+
+    @pytest.mark.asyncio
+    async def test_nothing_upstream_is_dropped(self, base_state: dict[str, Any]) -> None:
+        from app.models.itinerary_compilation import DayPlan
+        from app.services.itinerary_compiler_service import ItineraryCompilerService
+
+        stay = StayOption(
+            name="Grand Dragon",
+            address="Old Road, Leh",
+            city="Leh",
+            price_per_night=8200.0,
+            currency_code="INR",
+            rating=4.4,
+            review_count=310,
+        )
+        state = _compiler_state(
+            base_state,
+            stays_shortlist=[stay],
+            safety_report=SafetyReport(destination="Leh", advisory_level="Normal"),
+            budget_report=BudgetReport(
+                currency_code="INR", total_estimated_cost=1.0, vs_budget_verdict="under"
+            ),
+        )
+        itinerary = (await self._agent(DayPlan())(state))["itinerary"]
+
+        assert ItineraryCompilerService().assert_upstream_absorbed(itinerary, state) == []
+
+    @pytest.mark.asyncio
+    async def test_missing_trip_dates_errors_instead_of_guessing_a_default(
+        self, base_state: dict[str, Any]
+    ) -> None:
+        """The compiler must never invent a trip length — it errors instead of guessing."""
+        from app.models.itinerary_compilation import DayPlan
+
+        state = {k: v for k, v in base_state.items() if k != "dates"}
+        result = await self._agent(DayPlan())(state)
+
+        assert "error" in result
+        assert "itinerary" not in result

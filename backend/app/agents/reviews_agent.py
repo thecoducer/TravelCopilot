@@ -55,6 +55,15 @@ def _fallback_place_key(name: str, lat: float | None, lng: float | None) -> str:
     return slug
 
 
+def _photo_urls(value: object) -> list[str]:
+    """Keep only renderable http(s) URLs; drop Google Places photo resource dicts."""
+    if not isinstance(value, list):
+        return []
+    return [
+        item.strip() for item in value if isinstance(item, str) and item.strip().startswith("http")
+    ]
+
+
 def _review_key(route_version: int, target: _ReviewTarget) -> str:
     """``{route_version}:{stop_id}:{place_id}`` — see Core concepts, downstream contracts."""
     place_key = target.place_id or _fallback_place_key(target.name, target.lat, target.lng)
@@ -163,7 +172,7 @@ class ReviewsAgent:
             f"- {r.get('author', 'Guest')} ({r.get('rating', '?')}★): {r.get('text', '')}"
             for r in details.get("reviews", [])[:5]
         )
-        photos = details.get("photos", [])
+        photos = _photo_urls(details.get("photos", []))
         maps_url = details.get("google_maps_url")
         rating = details.get("rating")
         review_count = details.get("review_count")

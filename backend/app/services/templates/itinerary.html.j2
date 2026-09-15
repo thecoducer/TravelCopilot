@@ -57,27 +57,32 @@
 </table>
 {% endif %}
 
-<!-- ── Accommodation ── -->
-{% if segments %}
-{% for seg in segments %}
-{% if seg.stay_options and seg.stay_options.options %}
-<h2>🏨 Where to Stay — {{ seg.location }}</h2>
-{% for opt in seg.stay_options.options[:3] %}
-<p><strong>{{ opt.name }}</strong> · {{ opt.rating }}★ · {{ opt.price_per_night }} {{ opt.currency_code }}/night
-{% if opt.personalization_reason %}<br/><em>{{ opt.personalization_reason }}</em>{% endif %}
-</p>
-{% endfor %}
-{% if seg.stay_options.notes %}<p>{{ seg.stay_options.notes }}</p>{% endif %}
-{% endif %}
-{% endfor %}
-{% endif %}
-
 <!-- ── Day Plans ── -->
 <h2>📅 Day-by-Day Itinerary</h2>
-{% for seg in segments %}
-{% for day in seg.days %}
-<div class="day-header">Day {{ day.day_number }} · {{ day.date }} · {{ day.location }}</div>
+{% for day in trip_days %}
+<div class="day-header">Day {{ day.day_number }} · {{ day.date }} · {{ day.location }}
+{% if day.is_travel_day %} · travel day{% endif %}
+{% if day.estimated_cost %} · ~{{ "%.0f" | format(day.estimated_cost) }} {{ day.currency_code }}{% endif %}
+</div>
+{% if day.summary %}<p>{{ day.summary }}</p>{% endif %}
 {% if day.altitude_warning %}<div class="warning">⚠️ {{ day.altitude_warning }}</div>{% endif %}
+
+{% for transfer in day.transport_options %}
+<div class="slot"><span class="slot-label">Transport</span>
+<div class="place">• {{ transfer.origin }} → {{ transfer.destination }}
+{% if transfer.recommended %}
+{% for leg in transfer.recommended.recommended_legs %}
+<br/>&nbsp;&nbsp;&nbsp;{{ leg.mode | capitalize }} · {{ leg.operator }}
+· {{ (leg.duration_minutes // 60) }}h {{ (leg.duration_minutes % 60) }}m
+· {{ leg.cost }} {{ leg.currency_code }}
+{% endfor %}
+{% elif transfer.no_result %}
+<br/>&nbsp;&nbsp;&nbsp;No bookable option found — arrange locally.
+{% endif %}
+</div>
+</div>
+{% endfor %}
+
 {% for slot in [day.morning, day.afternoon, day.evening] %}
 {% if slot.options %}
 <div class="slot">
@@ -94,9 +99,10 @@
 </div>
 {% endif %}
 {% endfor %}
-{% if day.food %}
+
+{% if day.food_options %}
 <div class="slot"><span class="slot-label">Meals</span>
-{% for food_opt in day.food %}
+{% for food_opt in day.food_options %}
 {% if food_opt.options %}
 <div class="place">{{ food_opt.meal_type | capitalize }}:
 {% for v in food_opt.options[:1] %}{{ v.name }} ({{ v.cuisine }}){% endfor %}
@@ -105,7 +111,34 @@
 {% endfor %}
 </div>
 {% endif %}
+
+{% if day.stay_options and day.stay_options.options %}
+<div class="slot"><span class="slot-label">Stay
+{%- if day.stay_options.is_checkin_day %} · check-in{% endif %}
+{%- if day.stay_options.is_checkout_day %} · check-out{% endif %}</span>
+{% for opt in day.stay_options.options[:3] %}
+<div class="place">• <strong>{{ opt.name }}</strong> · {{ opt.rating }}★
+· {{ opt.price_per_night }} {{ opt.currency_code }}/night
+{% if opt.personalization_reason %}<br/>&nbsp;&nbsp;&nbsp;<em>{{ opt.personalization_reason }}</em>{% endif %}
+</div>
 {% endfor %}
+{% if day.stay_options.notes %}<div class="place">{{ day.stay_options.notes }}</div>{% endif %}
+</div>
+{% endif %}
+
+{% if day.safety_briefing %}
+<div class="slot"><span class="slot-label">Safety</span>
+<div class="place">{{ day.safety_briefing.summary }}</div>
+</div>
+{% endif %}
+
+{% if day.permits_required or day.connectivity or day.drive_notes %}
+<div class="slot"><span class="slot-label">Good to know</span>
+{% if day.permits_required %}<div class="place">Permits: {{ day.permits_required | join(', ') }}</div>{% endif %}
+{% if day.connectivity %}<div class="place">Connectivity: {{ day.connectivity }}</div>{% endif %}
+{% if day.drive_notes %}<div class="place">{{ day.drive_notes }}</div>{% endif %}
+</div>
+{% endif %}
 {% endfor %}
 
 <!-- ── Budget ── -->
@@ -147,9 +180,28 @@
 {% endif %}
 
 <!-- ── Safety ── -->
-{% if safety_briefing %}
+{% if safety_briefing or safety_section %}
 <h2>⚠️ Safety Briefing</h2>
-<p>{{ safety_briefing }}</p>
+{% if safety_briefing %}<p>{{ safety_briefing }}</p>{% endif %}
+{% if safety_section %}
+{% if safety_section.top_scams %}
+<h3>Common scams</h3>
+<table>
+<tr><th>Scam</th><th>How to avoid</th></tr>
+{% for scam in safety_section.top_scams %}
+<tr><td>{{ scam.name }}</td><td>{{ scam.how_to_avoid }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% if safety_section.emergency_contacts %}
+<p><strong>Emergency contacts:</strong>
+{% for label, number in safety_section.emergency_contacts.items() %}{{ label }} {{ number }}{% if not loop.last %} · {% endif %}{% endfor %}
+</p>
+{% endif %}
+{% if safety_section.medical_facilities %}<p><strong>Medical:</strong> {{ safety_section.medical_facilities }}</p>{% endif %}
+{% if safety_section.women_safety_notes %}<p><strong>Women travellers:</strong> {{ safety_section.women_safety_notes }}</p>{% endif %}
+{% if safety_section.insurance_recommendation %}<p><strong>Insurance:</strong> {{ safety_section.insurance_recommendation }}</p>{% endif %}
+{% endif %}
 {% endif %}
 
 <!-- ── Self-drive ── -->

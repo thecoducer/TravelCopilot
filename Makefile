@@ -54,6 +54,7 @@ check-deps: ## Verify lockfile and sync all backend dependencies
 migrate: ## Run database migrations against local postgres
 	$(call banner,Applying database migrations)
 	docker compose exec -T postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/001_initial.sql
+	docker compose exec -T postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/002_user_identity_and_turns.sql
 
 evals: ## Run Langfuse evals (requires LANGFUSE_* env vars)
 	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m "not golden"

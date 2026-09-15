@@ -1,5 +1,9 @@
-import styles from "./spinner.module.css";
-
 export function Spinner({ label = "Loading" }: { label?: string }) {
-  return <span className={styles.spinner} role="status" aria-label={label} />;
+  return (
+    <span
+      role="status"
+      aria-label={label}
+      className="inline-block size-4 animate-spin rounded-full border-2 border-border-strong border-t-accent"
+    />
+  );
 }

@@ -97,7 +97,7 @@
           "trip"
         ],
         "summary": "Update Itinerary",
-        "description": "Persist drag-drop segment reorders from the frontend.",
+        "description": "Persist drag-drop day reorders from the frontend.",
         "operationId": "update_itinerary_api_trip__trip_id__itinerary_put",
         "parameters": [
           {
@@ -518,13 +518,13 @@
       },
       "ItineraryUpdateRequest": {
         "properties": {
-          "segments": {
+          "trip_days": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
-            "title": "Segments"
+            "title": "Trip Days"
           }
         },
         "type": "object",

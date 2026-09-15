@@ -51,6 +51,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if missing_credentials:
         logger.warning("real_provider_credentials_missing", providers=missing_credentials)
 
+    # Apply idempotent SQL migrations so the schema is ready before serving traffic.
+    try:
+        from app.migrations import run_migrations
+
+        await run_migrations()
+    except Exception as exc:
+        logger.warning("migrations_failed", error=str(exc))
+
     # Initialise LangGraph checkpointer (creates checkpoint tables if needed)
     try:
         from app.checkpointer import get_checkpointer

@@ -2,7 +2,8 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+# npm install (not ci) so a stale/absent lockfile still resolves new deps like Tailwind.
+RUN npm install
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder

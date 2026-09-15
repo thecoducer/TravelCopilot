@@ -43,11 +43,16 @@ class BudgetPreference(BaseModel):
 
 class UserProfile(BaseModel):
     user_id: str
+    username: str | None = None  # auth-free identity; keys the profile across sessions
     display_name: str | None = None
     home_city: str | None = None
     nationality: str | None = None
     passport_country: str | None = None
     preferred_currency: str = "INR"
+    # Concrete budget amounts (BudgetPreference is graph-only and has no endpoint).
+    total_budget: float | None = Field(default=None, ge=0)
+    per_day_budget: float | None = Field(default=None, ge=0)
+    budget_currency: str = "INR"
     dietary_restrictions: list[str] = Field(default_factory=list)
     preferred_cuisines: list[str] = Field(default_factory=list)
     # Distinguishes an explicit "no dietary restrictions" answer from unset preferences.

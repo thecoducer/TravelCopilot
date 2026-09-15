@@ -10,7 +10,7 @@ from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import (
     ActivityOption,
     ClarificationRequest,
-    Day,
+    DaySafetyBriefing,
     Experience,
     FoodOptions,
     FoodVenue,
@@ -18,7 +18,8 @@ from app.models.itinerary import (
     Place,
     StayOptions,
     TimeSlotOptions,
-    TripSegment,
+    TransportOptions,
+    TripDays,
 )
 from app.models.reports import (
     AgentTokenUsage,
@@ -514,6 +515,8 @@ class TestStayOptions:
         so = StayOptions(location="Nubra Valley", options=[])
         assert so.location == "Nubra Valley"
         assert so.options == []
+        assert so.recommended is None
+        assert so.nights_at_location == 1
 
     def test_booking_note(self):
         so = StayOptions(
@@ -523,49 +526,109 @@ class TestStayOptions:
         )
         assert "book" in so.notes.lower()
 
-
-class TestTripSegment:
-    def test_multi_day_segment(self):
-        days = [
-            Day(date=date(2026, 9, 1), day_number=1, location="Leh"),
-            Day(date=date(2026, 9, 2), day_number=2, location="Leh"),
-        ]
-        seg = TripSegment(
+    def test_multi_night_stay_carries_checkin_boundaries(self):
+        so = StayOptions(
             location="Leh",
-            days=days,
-            stay_options=StayOptions(location="Leh", options=[]),
-            drive_notes=None,
+            options=[],
+            stop_id="stop-leh-1",
+            nights_at_location=3,
+            is_checkin_day=True,
+            check_in="2:00 PM",
+            check_out="11:00 AM",
         )
-        assert len(seg.days) == 2
-        assert seg.location == "Leh"
-        assert seg.permits_required == []
-        assert seg.altitude_meters is None
+        assert so.nights_at_location == 3
+        assert so.is_checkin_day is True
+        assert so.is_checkout_day is False
 
-    def test_drive_notes_for_remote_segment(self):
-        seg = TripSegment(
-            location="Nubra Valley",
-            days=[Day(date=date(2026, 9, 3), day_number=3, location="Nubra Valley")],
-            drive_notes="Drive via Khardung La (5,359m) — approx 2.5h from Leh.",
+
+class TestTripDays:
+    def test_default_slots(self):
+        d = TripDays(date=date(2026, 10, 1), day_number=1, location="Leh")
+        assert d.morning.slot == "morning"
+        assert d.afternoon.slot == "afternoon"
+        assert d.evening.slot == "evening"
+        assert d.food_options == []
+        assert d.transport_options == []
+        assert d.stay_options is None
+        assert d.safety_briefing is None
+        assert d.location == "Leh"
+        assert d.altitude_warning is None
+
+    def test_altitude_warning_on_day_one(self):
+        d = TripDays(
+            date=date(2026, 9, 1),
+            day_number=1,
+            location="Leh",
+            altitude_meters=3524,
+            altitude_warning="Acclimatization day — avoid strenuous activity. Leh sits at 3,524 m.",
         )
-        assert "Khardung" in seg.drive_notes
+        assert "3,524" in d.altitude_warning
 
-    def test_permits_required_structured(self):
-        seg = TripSegment(
+    def test_day_carries_stay_food_and_permits(self):
+        d = TripDays(
+            date=date(2026, 9, 4),
+            day_number=4,
             location="Pangong",
-            days=[Day(date=date(2026, 9, 4), day_number=4, location="Pangong")],
+            stay_options=StayOptions(location="Pangong", options=[], nights_at_location=1),
+            food_options=[FoodOptions(meal_type="dinner", options=[])],
             permits_required=["Inner Line Permit", "Protected Area Permit"],
             altitude_meters=4350,
-        )
-        assert "Inner Line Permit" in seg.permits_required
-        assert seg.altitude_meters == 4350
-
-    def test_connectivity_note(self):
-        seg = TripSegment(
-            location="Pangong",
-            days=[Day(date=date(2026, 9, 4), day_number=4, location="Pangong")],
             connectivity="No mobile signal at Pangong. Download offline maps before leaving Leh.",
+            drive_notes="Drive via Chang La (5,360m) — approx 5h from Leh.",
         )
-        assert "offline" in seg.connectivity.lower()
+        assert d.stay_options.location == "Pangong"
+        assert d.food_options[0].meal_type == "dinner"
+        assert "Inner Line Permit" in d.permits_required
+        assert d.altitude_meters == 4350
+        assert "offline" in d.connectivity.lower()
+        assert "Chang La" in d.drive_notes
+
+    def test_travel_day_carries_transport_options(self):
+        d = TripDays(
+            date=date(2026, 9, 3),
+            day_number=3,
+            location="Nubra Valley",
+            is_travel_day=True,
+            leg_id="leg-leh-nubra",
+            transport_options=[
+                TransportOptions(
+                    origin="Leh",
+                    destination="Nubra Valley",
+                    leg_id="leg-leh-nubra",
+                    departure_date=date(2026, 9, 3),
+                )
+            ],
+        )
+        assert d.is_travel_day is True
+        assert d.transport_options[0].origin == "Leh"
+        assert d.transport_options[0].leg_id == d.leg_id
+
+    def test_day_carries_safety_briefing_and_cost(self):
+        d = TripDays(
+            date=date(2026, 9, 1),
+            day_number=1,
+            location="Leh",
+            safety_briefing=DaySafetyBriefing(
+                summary="Advisory: Exercise normal caution.",
+                advisory_level="Exercise normal caution",
+                altitude_meters=3524,
+            ),
+            estimated_cost=7400.0,
+            currency_code="INR",
+        )
+        assert d.safety_briefing.advisory_level == "Exercise normal caution"
+        assert d.estimated_cost == 7400.0
+        assert d.currency_code == "INR"
+
+    def test_stop_id_distinguishes_repeated_locations(self):
+        first = TripDays(
+            date=date(2026, 9, 2), day_number=2, location="Dirang", stop_id="stop-dirang-1"
+        )
+        second = TripDays(
+            date=date(2026, 9, 6), day_number=6, location="Dirang", stop_id="stop-dirang-2"
+        )
+        assert first.location == second.location
+        assert first.stop_id != second.stop_id
 
 
 class TestClarificationRequest:
@@ -589,35 +652,65 @@ class TestClarificationRequest:
         assert cr.required is False
 
 
-class TestDay:
-    def test_default_slots(self):
-        d = Day(date=date(2026, 10, 1), day_number=1, location="Leh")
-        assert d.morning.slot == "morning"
-        assert d.afternoon.slot == "afternoon"
-        assert d.evening.slot == "evening"
-        assert d.food == []
-        assert d.location == "Leh"
-        assert d.altitude_warning is None
-
-    def test_altitude_warning_on_day_one(self):
-        d = Day(
-            date=date(2026, 9, 1),
-            day_number=1,
-            location="Leh",
-            altitude_warning="Acclimatization day — avoid strenuous activity. Leh sits at 3,524 m.",
-        )
-        assert "3,524" in d.altitude_warning
-
-
 class TestItinerary:
     def test_basic(self):
         it = Itinerary(title="5 Days Ladakh", source="Delhi", destination="Ladakh", travelers=2)
         assert it.travelers == 2
-        assert it.segments == []
+        assert it.trip_days == []
         assert it.clarifications_needed == []
         assert it.packing_tips == []
         assert it.source_query is None
         assert it.connectivity_summary is None
+
+    def test_five_day_trip_has_five_days(self):
+        it = Itinerary(
+            title="5 Days Ladakh",
+            source="Delhi",
+            destination="Ladakh",
+            trip_days=[
+                TripDays(
+                    date=date(2026, 9, day),
+                    day_number=day,
+                    location="Leh",
+                    stay_options=StayOptions(location="Leh", options=[]),
+                    food_options=[FoodOptions(meal_type="breakfast", options=[])],
+                    safety_briefing=DaySafetyBriefing(summary="Advisory: normal caution."),
+                )
+                for day in range(1, 6)
+            ],
+        )
+        assert len(it.trip_days) == 5
+        assert [d.day_number for d in it.trip_days] == [1, 2, 3, 4, 5]
+        assert all(d.stay_options is not None for d in it.trip_days)
+        assert all(d.food_options for d in it.trip_days)
+        assert all(d.safety_briefing is not None for d in it.trip_days)
+
+    def test_multi_stop_days_stay_flat_and_ordered(self):
+        it = Itinerary(
+            title="Ladakh Circuit",
+            source="Delhi",
+            destination="Hanle",
+            destinations=["Leh", "Nubra Valley", "Hanle"],
+            trip_days=[
+                TripDays(date=date(2026, 9, 1), day_number=1, location="Leh", stop_id="stop-leh-1"),
+                TripDays(
+                    date=date(2026, 9, 2),
+                    day_number=2,
+                    location="Nubra Valley",
+                    stop_id="stop-nubra-1",
+                    is_travel_day=True,
+                ),
+                TripDays(
+                    date=date(2026, 9, 3), day_number=3, location="Hanle", stop_id="stop-hanle-1"
+                ),
+            ],
+        )
+        assert [d.stop_id for d in it.trip_days] == [
+            "stop-leh-1",
+            "stop-nubra-1",
+            "stop-hanle-1",
+        ]
+        assert it.trip_days[1].is_travel_day is True
 
     def test_ladakh_itinerary_practical_info(self):
         it = Itinerary(

@@ -27,15 +27,13 @@ from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.itinerary import (
     ActivityOption,
-    Day,
     Experience,
     ExperiencesOutput,
-    Itinerary,
     Place,
     TimeSlotOptions,
-    TransportSection,
-    TripSegment,
+    TripDays,
 )
+from app.models.itinerary_compilation import ActivityPick, DayPlan, DaySummary, TripNarrative
 from app.models.reports import (
     BudgetReport,
     SafetyReport,
@@ -114,62 +112,38 @@ def _stub_stay() -> StayOption:
     )
 
 
-def _stub_itinerary(destination: str = "Osaka", trip_days: int = 3) -> Itinerary:
-    days = [
-        Day(
-            date=date(2026, 10, 14) + __import__("datetime").timedelta(days=i),
-            day_number=i + 1,
-            location=destination,
-            morning=TimeSlotOptions(
-                slot="morning",
-                options=[
-                    ActivityOption(
-                        place=_stub_place(f"Morning Place {i + 1}"),
-                        rank=1,
-                        recommendation_reason="Great for photography lovers.",
-                        best_for=["photography", "history"],
-                        estimated_duration_minutes=120,
-                    )
-                ],
-            ),
-            afternoon=TimeSlotOptions(
-                slot="afternoon",
-                options=[
-                    ActivityOption(
-                        place=_stub_place(f"Afternoon Place {i + 1}", lat=34.70, lng=135.51),
-                        rank=1,
-                        recommendation_reason="Matches your interest in food.",
-                        best_for=["food"],
-                        estimated_duration_minutes=90,
-                    )
-                ],
-            ),
-            evening=TimeSlotOptions(
-                slot="evening",
-                options=[
-                    ActivityOption(
-                        place=_stub_place(f"Evening Place {i + 1}", lat=34.71, lng=135.52),
-                        rank=1,
-                        recommendation_reason="Great nightlife spot.",
-                        best_for=["nightlife"],
-                        estimated_duration_minutes=60,
-                    )
-                ],
-            ),
-        )
-        for i in range(trip_days)
-    ]
-    return Itinerary(
-        title=f"{trip_days} Days in {destination}",
-        source="Kolkata",
-        destination=destination,
-        destinations=[destination],
-        travelers=2,
-        reality_banner="Moderate crowds, pleasant weather.",
-        segments=[TripSegment(location=destination, days=days)],
-        transport_section=TransportSection(recommended=_stub_transport_rec(), alternatives=[]),
-        safety_briefing="Exercise normal caution. Beware of overcharging taxis.",
-        budget_breakdown=None,
+def _stub_day_plan(destination: str, max_days: int = 8) -> DayPlan:
+    """Pick the two mock experiences for every plausible day number.
+
+    The compiler discards picks whose ``day_number`` is outside the resolved route,
+    so one fixed plan serves trips of any length.
+    """
+    return DayPlan(
+        activities=[
+            ActivityPick(
+                day_number=day_number,
+                slot=slot,
+                experience_name=name,
+                recommendation_reason="Matches your interest in history and nature.",
+                best_for=["history", "nature"],
+            )
+            for day_number in range(1, max_days + 1)
+            for slot, name in (
+                ("morning", f"Historic Temple in {destination}"),
+                ("afternoon", f"Scenic Park in {destination}"),
+            )
+        ]
+    )
+
+
+def _stub_narrative(destination: str, max_days: int = 8) -> TripNarrative:
+    return TripNarrative(
+        title=f"Days in {destination}",
+        day_summaries=[
+            DaySummary(day_number=day_number, summary=f"Exploring {destination}.")
+            for day_number in range(1, max_days + 1)
+        ],
+        packing_tips=["Comfortable walking shoes"],
     )
 
 
@@ -191,6 +165,7 @@ def _make_fake_llm(
             departure_date="2026-10-14",
             return_date="2026-10-16",
             trip_days=3,
+            trip_days_confidence=0.9,
             travelers=_FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             interests=["food", "history"],
@@ -269,7 +244,8 @@ def _make_fake_llm(
             recommended=_stub_transport_rec(),
             alternatives=[],
         ),
-        Itinerary: _stub_itinerary(destination=destination),
+        DayPlan: _stub_day_plan(destination),
+        TripNarrative: _stub_narrative(destination),
         BudgetReport: BudgetReport(
             currency_code="INR",
             total_estimated_cost=45000.0,
@@ -415,8 +391,8 @@ class TestFullGraph:
         )
         itinerary = result.get("itinerary")
         assert itinerary is not None, "Itinerary must be compiled"
-        assert len(itinerary.segments) >= 1
-        assert len(itinerary.segments[0].days) == 3
+        assert len(itinerary.trip_days) == 3
+        assert [d.day_number for d in itinerary.trip_days] == [1, 2, 3]
 
         # Accommodation shortlist may be empty when the replay archive lacks this request.
         stays = result.get("stays_shortlist", [])
@@ -498,13 +474,12 @@ class TestFullGraph:
             return  # no itinerary due to clarification — skip
 
         slot_limit_hours = 10.0
-        for seg in itinerary.segments:
-            for day in seg.days:
-                for slot in [day.morning, day.afternoon, day.evening]:
-                    total = sum(o.estimated_duration_minutes for o in slot.options) / 60.0
-                    assert total <= slot_limit_hours, (
-                        f"Day {day.day_number} {slot.slot} total {total:.1f}h > {slot_limit_hours}h"
-                    )
+        for day in itinerary.trip_days:
+            for slot in [day.morning, day.afternoon, day.evening]:
+                total = sum(o.estimated_duration_minutes for o in slot.options) / 60.0
+                assert total <= slot_limit_hours, (
+                    f"Day {day.day_number} {slot.slot} total {total:.1f}h > {slot_limit_hours}h"
+                )
 
     # Case 7: clarification gate — vague query triggers interrupt()
     def test_vague_query_triggers_clarification(self) -> None:
@@ -647,14 +622,14 @@ class TestMultiStopRoute:
 
         itinerary = result.get("itinerary")
         assert itinerary is not None
-        # One segment per overnight stop occurrence — two Dirang segments, never merged.
-        assert len(itinerary.segments) == len(overnight_ids)
-        segment_stop_ids = [seg.stop_id for seg in itinerary.segments]
-        assert len(segment_stop_ids) == len(set(segment_stop_ids)), (
-            "Each segment must carry a distinct stop_id"
+        # Every overnight stop occurrence appears — two Dirang visits, never merged.
+        day_stop_ids = [day.stop_id for day in itinerary.trip_days]
+        assert set(day_stop_ids) == set(overnight_ids)
+        assert day_stop_ids == sorted(day_stop_ids, key=lambda sid: stops[sid].sequence), (
+            "Days must follow route order"
         )
-        dirang_segments = [seg for seg in itinerary.segments if seg.location == "Dirang"]
-        assert len(dirang_segments) == 2
+        dirang_stop_ids = {day.stop_id for day in itinerary.trip_days if day.location == "Dirang"}
+        assert len(dirang_stop_ids) == 2
 
     def test_ladakh_5_day_trip_continuous_day_numbers_and_source(self) -> None:
         """A 5-day multi-stop Ladakh trip must generate 5 days sequentially numbered from 1 to 5."""
@@ -713,10 +688,9 @@ class TestMultiStopRoute:
         assert itinerary.source == "Kolkata"
         assert itinerary.dates is not None
         assert itinerary.dates.trip_days == 5
-        assert len(itinerary.segments) == 2
+        assert len(itinerary.stops) == 2
 
-        # Collect all days across segments
-        all_days = [day for seg in itinerary.segments for day in seg.days]
+        all_days = itinerary.trip_days
         assert len(all_days) == 5, f"Expected 5 days total, got {len(all_days)}"
 
         # Assert sequential continuous day numbers: 1, 2, 3, 4, 5
@@ -724,6 +698,7 @@ class TestMultiStopRoute:
         assert day_numbers == [1, 2, 3, 4, 5], (
             f"Day numbers should be sequential [1, 2, 3, 4, 5], got {day_numbers}"
         )
+        assert {day.location for day in all_days} == {"Leh", "Nubra Valley"}
 
     def test_discovery_failed_pauses_for_clarification(self) -> None:
         from langgraph.checkpoint.memory import MemorySaver
@@ -738,6 +713,7 @@ class TestMultiStopRoute:
                         departure_date="2026-10-14",
                         return_date="2026-10-17",
                         trip_days=3,
+                        trip_days_confidence=0.9,
                         travelers=_FieldConfidence(value="2", confidence=1.0),
                         dates_confidence=0.9,
                     )
@@ -851,8 +827,7 @@ class TestDeterministicGates:
 
     def test_itinerary_with_closed_venue_resolved(self) -> None:
         """Inject a closed venue and verify the deterministic gate removes it."""
-        from app.agents.itinerary_compiler_agent import _resolve_conflicts
-        from app.models.itinerary import ActivityOption, Day, Place, TimeSlotOptions, TripSegment
+        from app.services.itinerary_compiler_service import ItineraryCompilerService
 
         place_closed = Place(
             name="ClosedMuseum",
@@ -888,7 +863,7 @@ class TestDeterministicGates:
             best_for=["nature"],
             estimated_duration_minutes=90,
         )
-        day = Day(
+        day = TripDays(
             date=date(2026, 10, 14),
             day_number=1,
             location="Osaka",
@@ -896,19 +871,11 @@ class TestDeterministicGates:
             afternoon=TimeSlotOptions(slot="afternoon"),
             evening=TimeSlotOptions(slot="evening"),
         )
-        seg = TripSegment(location="Osaka", days=[day])
-        itinerary = Itinerary(
-            title="Test",
-            source="KOL",
-            destination="Osaka",
-            destinations=["Osaka"],
-            travelers=1,
-            segments=[seg],
+
+        resolved = ItineraryCompilerService().resolve_conflicts(
+            [day], conflict_names={"ClosedMuseum"}, duration_flags=[]
         )
 
-        resolved = _resolve_conflicts(itinerary, conflict_names={"ClosedMuseum"}, duration_flags=[])
-
-        morning_opts = resolved.segments[0].days[0].morning.options
-        names = [o.place.name for o in morning_opts]
+        names = [o.place.name for o in resolved[0].morning.options]
         assert "ClosedMuseum" not in names
         assert "OpenPark" in names

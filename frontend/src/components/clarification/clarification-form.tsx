@@ -2,9 +2,9 @@
 
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/ui/section-card";
 import type { ClarificationPrompt } from "@/lib/types";
-import styles from "./clarification-form.module.css";
 
 type ClarificationFormProps = {
   prompts: ClarificationPrompt[];
@@ -28,11 +28,11 @@ export function ClarificationForm({ prompts, onSubmit, disabled }: Clarification
 
   return (
     <SectionCard title="A couple of quick questions" collapsible={false}>
-      <form className={styles.form} onSubmit={handleSubmit}>
+      <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
         {prompts.map((prompt) => (
-          <label key={prompt.field} className={styles.field}>
-            <span className={styles.question}>{prompt.question}</span>
-            <span className={styles.reason}>{prompt.reason}</span>
+          <label key={prompt.field} className="flex flex-col gap-1">
+            <span className="text-sm font-semibold text-fg">{prompt.question}</span>
+            <span className="text-xs text-muted">{prompt.reason}</span>
             <ClarificationInput
               prompt={prompt}
               value={values[prompt.field] ?? ""}
@@ -40,7 +40,7 @@ export function ClarificationForm({ prompts, onSubmit, disabled }: Clarification
             />
           </label>
         ))}
-        <Button type="submit" disabled={disabled}>
+        <Button type="submit" disabled={disabled} className="self-start">
           Continue planning
         </Button>
       </form>
@@ -58,7 +58,7 @@ function ClarificationInput({
   onChange: (value: string) => void;
 }) {
   const commonProps = {
-    className: styles.input,
+    className: "mt-1",
     value,
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       onChange(event.target.value),
@@ -67,12 +67,15 @@ function ClarificationInput({
 
   switch (prompt.input_type) {
     case "date":
-      return <input type="date" {...commonProps} />;
+      return <Input type="date" {...commonProps} />;
     case "number":
-      return <input type="number" {...commonProps} />;
+      return <Input type="number" {...commonProps} />;
     case "select":
       return (
-        <select {...commonProps}>
+        <select
+          {...commonProps}
+          className="mt-1 w-full rounded-md border border-border-strong bg-canvas px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+        >
           <option value="" disabled>
             Select an option
           </option>
@@ -84,6 +87,6 @@ function ClarificationInput({
         </select>
       );
     default:
-      return <input type="text" {...commonProps} />;
+      return <Input type="text" {...commonProps} />;
   }
 }

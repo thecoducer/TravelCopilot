@@ -244,10 +244,12 @@ class Settings(BaseSettings):
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate
-    clarification_required_fields: str = "source,destination,dates,travelers"
+    clarification_required_fields: str = "source,destination,dates,trip_days,travelers"
     # Per-field confidence thresholds (comma-separated field:threshold pairs).
     # Falls back to parse_confidence_threshold for fields not listed.
-    clarification_field_thresholds: str = "source:0.3,destination:0.7,dates:0.6,travelers:0.4"
+    clarification_field_thresholds: str = (
+        "source:0.3,destination:0.7,dates:0.6,trip_days:0.7,travelers:0.4"
+    )
     parse_confidence_threshold: float = 0.6
     # Maximum clarification rounds before proceeding with best-effort defaults
     max_clarification_rounds: int = 3
@@ -268,6 +270,15 @@ class Settings(BaseSettings):
     fallback_daily_activity_cost_mid: float = 1500.0
     fallback_daily_activity_cost_luxury: float = 4000.0
     fallback_daily_food_ratio: float = 0.35
+
+    # ItineraryCompilerAgent — quality-gate limits and narrative constraints
+    itinerary_max_gate_iterations: int = 3
+    itinerary_max_activities_per_slot: int = 2
+    itinerary_max_activities_per_day: int = 3
+    itinerary_max_title_length: int = 140
+    itinerary_max_scams_in_briefing: int = 3
+    # Above this elevation an arrival/travel day carries an acclimatization warning.
+    high_altitude_warning_meters: int = 3000
 
     @property
     def fallback_daily_activity_costs(self) -> dict[str, float]:

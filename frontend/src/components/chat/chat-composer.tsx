@@ -3,7 +3,6 @@
 import { useRef, type KeyboardEvent } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import styles from "./chat-composer.module.css";
 
 type ChatComposerProps = {
   onSend: (message: string) => void;
@@ -43,10 +42,10 @@ export function ChatComposer({ onSend, disabled, placeholder }: ChatComposerProp
   }
 
   return (
-    <div className={styles.composer}>
+    <div className="flex items-end gap-2 rounded-lg border border-border-strong bg-surface p-2 shadow-sm focus-within:border-accent">
       <textarea
         ref={textareaRef}
-        className={styles.textarea}
+        className="max-h-[200px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-fg outline-none placeholder:text-faint disabled:opacity-60"
         rows={1}
         placeholder={placeholder ?? "Where would you like to go?"}
         disabled={disabled}
@@ -56,10 +55,10 @@ export function ChatComposer({ onSend, disabled, placeholder }: ChatComposerProp
       />
       <Button
         type="button"
+        size="icon"
         aria-label="Send message"
         disabled={disabled}
         onClick={submit}
-        className={styles.sendButton}
       >
         <ArrowUp size={16} aria-hidden="true" />
       </Button>

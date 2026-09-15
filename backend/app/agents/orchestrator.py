@@ -142,6 +142,12 @@ _FIELD_META: dict[str, dict[str, Any]] = {
         "generic": "How many people are travelling? (including yourself)",
         "contextual": "How many people are travelling? (including yourself)",
     },
+    "trip_days": {
+        "input_type": "number",
+        "options": [],
+        "generic": "How many days is your trip?",
+        "contextual": "You mentioned '{value}' days — is that the total length of your trip?",
+    },
     "source": {
         "input_type": "text",
         "options": [],
@@ -175,11 +181,14 @@ class _ParsedQuery(BaseModel):
         default=None, description="ISO-8601 departure date, null if not mentioned"
     )
     return_date: str | None = None
-    trip_days: int = Field(
-        default=3,
+    # None means the query did not state or imply a duration — the compiler must
+    # never guess this, so it is a first-class clarification field like ``dates``.
+    trip_days: int | None = Field(
+        default=None,
         ge=1,
         description="Total duration of the trip in days (e.g. 6 for 'for 6 days', 7 for '1 week')",
     )
+    trip_days_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     travelers: _FieldConfidence = Field(
         default_factory=lambda: _FieldConfidence(value="1", confidence=0.8)
     )
@@ -197,12 +206,12 @@ For each field that has ambiguity, set a lower confidence score.
 Rules:
 - If the departure date is relative (e.g. "next month"), resolve to ISO-8601 assuming today is {today}.
 - If no date is mentioned at all, set departure_date=null and dates_confidence=0.0.
-- trip_days: extract the duration of the trip in days (e.g. "6 days" -> 6, "10-day trip" -> 10, "1 week" -> 7, "weekend" -> 2). Default to 3 only if no duration is mentioned or implied.
+- trip_days: extract the duration of the trip in days (e.g. "6 days" -> 6, "10-day trip" -> 10, "1 week" -> 7, "weekend" -> 2). If no duration is mentioned or implied at all, set trip_days=null and trip_days_confidence=0.0 — never guess a number.
 - Set is_international=true only when source and destination are clearly in different countries.
 - Set self_drive_intent=true when the user explicitly mentions renting a vehicle or driving.
 - budget_tier: "budget" for hostel/cheapest/backpacker; "luxury" for five-star/premium; else "mid".
 - For interests, extract: food, nightlife, history, adventure, photography, wellness, nature, art.
-- Confidence rules: 1.0 = explicitly stated; 0.7 = strongly implied; 0.5 = inferred; 0.0 = absent.
+- Confidence rules (dates_confidence, trip_days_confidence): 1.0 = explicitly stated; 0.7 = strongly implied; 0.5 = inferred; 0.0 = absent.
 - For travelers: confidence=1.0 if explicitly stated, 0.8 if implied solo (no mention), 0.5 if ambiguous.
 """  # noqa: E501
 
@@ -257,12 +266,14 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
         "source": parsed.source_city.value,
         "travelers": parsed.travelers.value,
         "dates": parsed.departure_date,
+        "trip_days": str(parsed.trip_days) if parsed.trip_days is not None else None,
     }
     field_confidences: dict[str, float] = {
         "destination": parsed.destination.confidence,
         "source": parsed.source_city.confidence,
         "travelers": parsed.travelers.confidence,
         "dates": parsed.dates_confidence,
+        "trip_days": parsed.trip_days_confidence,
     }
     thresholds = settings.field_thresholds
     fallback = settings.parse_confidence_threshold
@@ -318,6 +329,12 @@ def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
             parsed.travelers = _FieldConfidence(value=travelers_str, confidence=1.0)
         except ValueError:
             pass
+    if trip_days_str := answers.get("trip_days", "").strip():
+        try:
+            parsed.trip_days = max(1, int(trip_days_str))
+            parsed.trip_days_confidence = 1.0
+        except ValueError:
+            pass
     if dates_str := answers.get("dates", "").strip():
         dep_iso, ret_iso, conf = _parse_date_answer(dates_str)
         if dep_iso:
@@ -331,6 +348,9 @@ def _apply_defaults(parsed: _ParsedQuery) -> None:
     """Fallback: set reasonable defaults for still-missing fields after max rounds."""
     if _is_blank(parsed.destination.value):
         parsed.destination = _FieldConfidence(value="unknown destination", confidence=0.5)
+    if parsed.trip_days is None:
+        parsed.trip_days = settings.default_trip_days
+        parsed.trip_days_confidence = 0.5
     if not parsed.departure_date:
         dep = date.today() + timedelta(days=30)
         parsed.departure_date = dep.isoformat()
@@ -425,6 +445,7 @@ class OrchestratorAgent:
             extracted_days = quick_extract_days(query)
             if extracted_days is not None and parsed is not None:
                 parsed.trip_days = extracted_days
+                parsed.trip_days_confidence = 1.0
 
             # ── UserProfile pre-fill (idempotent) ────────────────────────────
             _apply_profile_prefill(parsed, user_profile)
@@ -468,7 +489,12 @@ class OrchestratorAgent:
             "source": parsed.source_city.confidence,
             "travelers": parsed.travelers.confidence,
             "dates": parsed.dates_confidence,
+            "trip_days": parsed.trip_days_confidence,
         }
+
+        # ``trip_days`` is resolved by now via LLM/override/answer/defaults above;
+        # this is a defensive fallback only, never the primary source of a default.
+        trip_days = parsed.trip_days if parsed.trip_days is not None else settings.default_trip_days
 
         # ── Build TripDates ───────────────────────────────────────────────────
         trip_dates: TripDates | None = None
@@ -478,20 +504,20 @@ class OrchestratorAgent:
                 ret = (
                     date.fromisoformat(parsed.return_date)
                     if parsed.return_date
-                    else dep + timedelta(days=max(0, parsed.trip_days - 1))
+                    else dep + timedelta(days=max(0, trip_days - 1))
                 )
                 trip_dates = TripDates(departure=dep, return_date=ret)
             except ValueError:
                 dep = date.today() + timedelta(days=30)
                 trip_dates = TripDates(
                     departure=dep,
-                    return_date=dep + timedelta(days=max(0, parsed.trip_days - 1)),
+                    return_date=dep + timedelta(days=max(0, trip_days - 1)),
                 )
         else:
             dep = date.today() + timedelta(days=30)
             trip_dates = TripDates(
                 departure=dep,
-                return_date=dep + timedelta(days=max(0, parsed.trip_days - 1)),
+                return_date=dep + timedelta(days=max(0, trip_days - 1)),
             )
 
         tier = (

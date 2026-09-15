@@ -136,3 +136,73 @@ export function activeAgentsFor(completedAgents: ReadonlySet<string>): string[] 
   }
   return [];
 }
+
+/** Canonical execution order of every agent shown in the task timeline. */
+export const AGENT_PIPELINE: string[] = PLANNING_PHASES.flatMap((phase) => phase.agents);
+
+export type AgentTaskStatus = "done" | "active" | "pending";
+
+export type AgentTask = {
+  agent: string;
+  label: string;
+  description: string;
+  status: AgentTaskStatus;
+  preview: string | null;
+  elapsedMs: number | null;
+};
+
+type CompletedAgentSummary = {
+  agent: string;
+  preview: string;
+  elapsedMs: number;
+};
+
+/**
+ * Builds the ordered todo-style task list for the timeline: every pipeline
+ * agent plus any that completed off-pipeline, tagged done / active / pending.
+ * Once planning stops, unreached pipeline agents are dropped so the list shows
+ * only what actually ran.
+ */
+export function buildAgentTasks(
+  completed: readonly CompletedAgentSummary[],
+  activeAgents: readonly string[],
+  isPlanning: boolean,
+): AgentTask[] {
+  const completedByAgent = new Map(completed.map((entry) => [entry.agent, entry]));
+  const activeSet = new Set(activeAgents);
+  const ordered = [
+    ...AGENT_PIPELINE,
+    ...completed.map((entry) => entry.agent).filter((agent) => !AGENT_PIPELINE.includes(agent)),
+  ];
+
+  const tasks: AgentTask[] = [];
+  const seen = new Set<string>();
+  for (const agent of ordered) {
+    if (seen.has(agent)) {
+      continue;
+    }
+    seen.add(agent);
+
+    const done = completedByAgent.get(agent);
+    const status: AgentTaskStatus = done
+      ? "done"
+      : activeSet.has(agent)
+        ? "active"
+        : "pending";
+
+    if (status === "pending" && !isPlanning) {
+      continue;
+    }
+
+    const info = agentInfo(agent);
+    tasks.push({
+      agent,
+      label: info.label,
+      description: info.description,
+      status,
+      preview: done?.preview ?? null,
+      elapsedMs: done?.elapsedMs ?? null,
+    });
+  }
+  return tasks;
+}

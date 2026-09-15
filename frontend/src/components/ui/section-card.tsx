@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import styles from "./section-card.module.css";
 
 type SectionCardProps = {
   title: string;
@@ -9,6 +8,11 @@ type SectionCardProps = {
   defaultOpen?: boolean;
   collapsible?: boolean;
 };
+
+const cardClass = "rounded-lg border border-border bg-surface shadow-sm";
+const headerClass = "flex items-start justify-between gap-3 p-4";
+const titleClass = "text-[0.95rem] font-semibold text-fg";
+const subtitleClass = "mt-1 text-sm text-muted";
 
 /** Bordered, optionally-collapsible section used for activity, metrics, and debug panels. */
 export function SectionCard({
@@ -21,29 +25,29 @@ export function SectionCard({
 }: SectionCardProps) {
   if (!collapsible) {
     return (
-      <section className={styles.card}>
-        <header className={styles.header}>
+      <section className={cardClass}>
+        <header className={headerClass}>
           <div>
-            <h3 className={styles.title}>{title}</h3>
-            {subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null}
+            <h3 className={titleClass}>{title}</h3>
+            {subtitle ? <p className={subtitleClass}>{subtitle}</p> : null}
           </div>
           {actions}
         </header>
-        <div className={styles.body}>{children}</div>
+        <div className="px-4 pb-4">{children}</div>
       </section>
     );
   }
 
   return (
-    <details className={styles.card} open={defaultOpen}>
-      <summary className={styles.summary}>
+    <details className={cardClass} open={defaultOpen}>
+      <summary className={`${headerClass} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}>
         <div>
-          <span className={styles.title}>{title}</span>
-          {subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null}
+          <span className={titleClass}>{title}</span>
+          {subtitle ? <p className={subtitleClass}>{subtitle}</p> : null}
         </div>
         {actions}
       </summary>
-      <div className={styles.body}>{children}</div>
+      <div className="px-4 pb-4">{children}</div>
     </details>
   );
 }

@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import styles from "./message-bubble.module.css";
 
 type MessageBubbleProps = {
   role: "user" | "assistant";
@@ -7,9 +6,18 @@ type MessageBubbleProps = {
 };
 
 export function MessageBubble({ role, children }: MessageBubbleProps) {
+  const isUser = role === "user";
   return (
-    <div className={[styles.row, styles[role]].join(" ")}>
-      <div className={styles.bubble}>{children}</div>
+    <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={
+          isUser
+            ? "max-w-[min(640px,100%)] rounded-lg bg-accent px-4 py-3 text-white"
+            : "w-full max-w-[1120px] text-fg"
+        }
+      >
+        {children}
+      </div>
     </div>
   );
 }

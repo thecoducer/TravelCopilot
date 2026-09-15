@@ -1,6 +1,5 @@
 import type { BudgetReport, TransportSection, VisaReport } from "@/lib/types";
 import { formatUsd } from "@/lib/format";
-import styles from "./itinerary-highlights.module.css";
 
 type ItineraryHighlightsProps = {
   transportSection: TransportSection | null;
@@ -42,11 +41,16 @@ export function ItineraryHighlights({
   }
 
   return (
-    <ul className={styles.list}>
+    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {cards.map((card) => (
-        <li key={card.label} className={styles.item}>
-          <span className={styles.label}>{card.label}</span>
-          <span className={styles.value}>{card.value}</span>
+        <li
+          key={card.label}
+          className="flex flex-col gap-1 rounded-md border border-border bg-surface p-3"
+        >
+          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-faint">
+            {card.label}
+          </span>
+          <span className="line-clamp-3 text-[0.82rem] text-fg">{card.value}</span>
         </li>
       ))}
     </ul>

@@ -32,7 +32,9 @@ def _parse_food_venue(item: dict[str, Any]) -> FoodVenue | None:
             lat=float(location.get("latitude", 0)),
             lng=float(location.get("longitude", 0)),
             google_maps_url=item.get("googleMapsUri"),
-            photos=[p.get("name", "") for p in item.get("photos", [])[:2]],
+            # Places photo objects are resource names, not URLs — omit until a
+            # renderable-URL source is wired up (avoids broken <img> tags).
+            photos=[],
             meal_types=["breakfast", "lunch", "dinner"],
             neighbourhood=item.get("neighbourhood"),
             review_count=item.get("userRatingCount"),

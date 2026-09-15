@@ -1,22 +1,51 @@
-"""Itinerary and experience models — the core output of the planning graph.
+"""Itinerary models — the core output of the planning graph.
 
-Design principle: every user-facing choice (activity, food, stay) is presented as
-2-3 ranked *options* rather than a single fixed pick.  The AI explains why each option
-aligns with the traveller's stated preferences via ``recommendation_reason`` and
-``best_for`` tags.  When the AI lacks enough context to make a confident suggestion it
-emits a ``ClarificationRequest`` instead of guessing.
+Design principles
+-----------------
+1. **Day-wise.** A trip is a flat ``list[TripDays]`` — one entry per calendar day.
+   A 5-day trip has exactly 5 entries. There is no location-grouping layer: each
+   day independently carries its own stay, transport, safety, food and activity
+   options, so it can be rendered standalone. Multi-night stays repeat the full
+   objects on every day they cover.
 
-Multi-stop trips (e.g. Leh → Nubra → Pangong → Hanle) are modelled as a list of
-``TripSegment`` objects — one per location — each carrying its own days and
-``StayOptions``.
+2. **Options, not verdicts.** Every user-facing choice is presented as 2-3 ranked
+   *options*. ``recommendation_reason`` and ``best_for`` explain the alignment with
+   the traveller's stated preferences. When the planner lacks context it emits a
+   ``ClarificationRequest`` instead of guessing.
+
+3. **Synthesis, never invention.** The compiler absorbs upstream agent output
+   verbatim. Factual fields here are copies of ``SafetyReport``, ``VisaReport``,
+   ``BudgetReport``, ``StayOption``, ``TransportRecommendation`` and ``Experience``
+   objects produced by earlier agents — the LLM only selects, orders and explains.
+
+Multi-stop routes (e.g. Leh → Nubra → Pangong → Hanle) are expressed through each
+day's ``stop_id`` / ``leg_id``, resolved against ``Itinerary.stops`` and
+``Itinerary.route_legs``. A revisited place yields distinct ``stop_id`` values.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
+
+from app.models.reports import (
+    BudgetReport,
+    ReviewSummary,
+    SafetyReport,
+    ScamEntry,
+    SelfDriveReport,
+    VisaReport,
+)
+from app.models.stops import LegType, RouteLegPlan, TripStop
+from app.models.transport import StayOption, TransportRecommendation
+from app.models.user_profile import TripDates
+
+# ── Domain vocabulary ─────────────────────────────────────────────────────────
+# The legal values of TimeSlotOptions.slot and FoodOptions.meal_type, shared by
+# every layer that schedules a day (compiler, service, quality-gate tools).
+SLOT_NAMES: tuple[str, str, str] = ("morning", "afternoon", "evening")
+MEAL_TYPES: tuple[str, str, str] = ("breakfast", "lunch", "dinner")
 
 # ── Base place / venue models ─────────────────────────────────────────────────
 
@@ -133,7 +162,7 @@ class ExperiencesOutput(BaseModel):
     )
 
 
-# ── Options containers ────────────────────────────────────────────────────────
+# ── Day-scoped option containers ──────────────────────────────────────────────
 
 
 class ActivityOption(BaseModel):
@@ -147,6 +176,9 @@ class ActivityOption(BaseModel):
     best_time: str | None = None  # e.g. "Sunrise" or "After 4 pm when crowds thin"
     crowd_warning: str | None = None  # e.g. "Very crowded at sunrise — arrive 45 min early"
     booking_url: str | None = None  # pre-booking link if required or strongly recommended
+    # Provenance carried through from ``Experience.source`` so unverified
+    # (LLM-sourced) suggestions can be flagged in the UI.
+    source: str = "llm"
 
 
 class TimeSlotOptions(BaseModel):
@@ -159,7 +191,7 @@ class TimeSlotOptions(BaseModel):
 
 
 class FoodOptions(BaseModel):
-    """2-3 food venue options for a specific meal type at a location."""
+    """2-3 food venue options for a specific meal on a specific day."""
 
     meal_type: str  # "breakfast" | "lunch" | "dinner" | "snack"
     options: list[FoodVenue] = Field(default_factory=list)
@@ -167,57 +199,101 @@ class FoodOptions(BaseModel):
 
 
 class StayOptions(BaseModel):
-    """2-3 ranked accommodation options for a trip segment / location."""
+    """Ranked accommodation options covering one night of the trip.
 
-    location: str
-    options: list[Any] = Field(default_factory=list)  # list[StayOption], ranked best-first
-    notes: str | None = None  # e.g. "Book early for Jul–Aug; tented camps fill quickly"
-
-
-# ── Day + segment structure ───────────────────────────────────────────────────
-
-
-class Day(BaseModel):
-    date: date
-    day_number: int = Field(ge=1)
-    location: str  # e.g. "Leh" | "Nubra Valley" | "Pangong" | "Hanle"
-    morning: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="morning"))
-    afternoon: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="afternoon"))
-    evening: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="evening"))
-    food: list[FoodOptions] = Field(default_factory=list)  # one FoodOptions entry per meal type
-    altitude_warning: str | None = None  # e.g. "Acclimatization day — avoid strenuous activity"
-    # Route metadata — unset for single_destination trips; populated from stops_by_day
-    # for multi-stop routes (see specs/stops-discovery-agent-spec.md).
-    stop_id: str | None = None
-    is_travel_day: bool = False
-    is_checkin_day: bool = False
-    is_checkout_day: bool = False
-
-
-class TripSegment(BaseModel):
-    """Consecutive days at one location.
-
-    Groups related days together and carries the shared accommodation options for
-    that location (you pick once per segment, not once per day).
+    Repeated in full on every day of a multi-night stay so each day renders
+    standalone; ``is_checkin_day`` / ``is_checkout_day`` mark the boundaries.
     """
 
     location: str
-    days: list[Day] = Field(default_factory=list)
-    stay_options: StayOptions | None = None
-    drive_notes: str | None = None  # road conditions, approx drive duration
-    # e.g. ["Inner Line Permit", "Protected Area Permit"]
-    permits_required: list[str] = Field(default_factory=list)
-    altitude_meters: int | None = None  # elevation of this location in metres
-    # e.g. "No BSNL signal beyond Diskit. Download offline maps."
-    connectivity: str | None = None
-    # Route metadata — unset for single_destination trips. One segment per
-    # overnight stop *occurrence*; a revisited place gets two distinct segments.
+    options: list[StayOption] = Field(default_factory=list)  # ranked best-first
+    recommended: StayOption | None = None  # the stay analyst's pick for this stop
+    notes: str | None = None  # e.g. "Book early for Jul–Aug; tented camps fill quickly"
     stop_id: str | None = None
-    leg_id: str | None = None  # inbound route leg that reaches this stop, if any
-    arrival_date: date | None = None
+    nights_at_location: int = Field(default=1, ge=0)
+    is_checkin_day: bool = False
+    is_checkout_day: bool = False
+    check_in: str | None = None  # e.g. "2:00 PM"
+    check_out: str | None = None  # e.g. "11:00 AM"
+
+
+class TransportOptions(BaseModel):
+    """One transfer taking place on a given day, with its ranked options.
+
+    A day may have zero (in-place day), one, or several transfers.
+    """
+
+    origin: str
+    destination: str
+    leg_id: str | None = None
+    leg_type: LegType | None = None
     departure_date: date | None = None
-    check_in: str | None = None
-    check_out: str | None = None
+    recommended: TransportRecommendation | None = None
+    alternatives: list[TransportRecommendation] = Field(default_factory=list)
+    notes: str | None = None
+    mode_downgraded: bool = False  # a preferred mode was unavailable on this leg
+    no_result: bool = False  # search returned nothing bookable
+
+
+class DaySafetyBriefing(BaseModel):
+    """Day-scoped safety context, copied verbatim from ``SafetyReport``."""
+
+    summary: str
+    advisory_level: str | None = None
+    seasonal_weather_summary: str | None = None
+    crowd_level: str | None = None
+    seasonal_risks: list[str] = Field(default_factory=list)
+    altitude_meters: int | None = None
+    altitude_warning: str | None = None  # e.g. "Acclimatization day — avoid exertion"
+    acclimatization_advice: str | None = None
+    top_scams: list[ScamEntry] = Field(default_factory=list)
+    emergency_contacts: dict[str, str] = Field(default_factory=dict)
+    women_safety_notes: str | None = None
+    medical_facilities: str | None = None
+
+
+# ── The day ───────────────────────────────────────────────────────────────────
+
+
+class TripDays(BaseModel):
+    """One calendar day of the trip, complete and self-describing.
+
+    Carries everything the upstream agents found for this date: what to do, where
+    to eat, where to sleep, how to travel, what to watch out for, and what it costs.
+    """
+
+    day_number: int = Field(ge=1)  # 1-based, continuous across the whole trip
+    date: date
+    location: str  # e.g. "Leh" | "Nubra Valley" | "Pangong" | "Hanle"
+    summary: str | None = None  # one-line headline for the day
+
+    morning: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="morning"))
+    afternoon: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="afternoon"))
+    evening: TimeSlotOptions = Field(default_factory=lambda: TimeSlotOptions(slot="evening"))
+
+    food_options: list[FoodOptions] = Field(default_factory=list)  # one entry per meal type
+    stay_options: StayOptions | None = None
+    transport_options: list[TransportOptions] = Field(default_factory=list)
+    safety_briefing: DaySafetyBriefing | None = None
+    review_highlights: list[ReviewSummary] = Field(default_factory=list)
+
+    permits_required: list[str] = Field(default_factory=list)  # e.g. ["Inner Line Permit"]
+    altitude_meters: int | None = None
+    altitude_warning: str | None = None  # e.g. "Acclimatization day — avoid exertion"
+    connectivity: str | None = None  # e.g. "No BSNL signal beyond Diskit"
+    drive_notes: str | None = None  # road conditions, approx drive duration
+
+    estimated_cost: float | None = Field(default=None, ge=0)  # BudgetReport.per_day_breakdown
+    currency_code: str | None = None
+
+    # Route metadata — unset for single_destination trips; populated from stops_by_day
+    # for multi-stop routes (see specs/stops-discovery-agent-spec.md).
+    stop_id: str | None = None
+    leg_id: str | None = None  # inbound route leg reaching this day's location, if any
+    route_version: int | None = None
+    is_travel_day: bool = False
+    is_checkin_day: bool = False
+    is_checkout_day: bool = False
 
 
 # ── AI clarification ──────────────────────────────────────────────────────────
@@ -242,36 +318,59 @@ class ClarificationRequest(BaseModel):
 
 
 class TransportSection(BaseModel):
-    recommended: Any | None = None  # TransportRecommendation
-    alternatives: list[Any] = Field(default_factory=list)
+    """Trip-level transport view: the headline route plus every resolved leg."""
+
+    recommended: TransportRecommendation | None = None
+    alternatives: list[TransportRecommendation] = Field(default_factory=list)
+    by_leg: dict[str, TransportRecommendation] = Field(default_factory=dict)  # keyed by leg_id
 
 
 class Itinerary(BaseModel):
+    """The complete trip plan — a flat run of days plus trip-wide context."""
+
     id: str | None = None
     title: str
     source: str = Field(description="Origin or departure city for the trip")
     destination: str  # primary / final destination label
     destinations: list[str] = Field(default_factory=list)  # all stops in visit order
-    dates: Any | None = None  # TripDates
+    dates: TripDates | None = None
     travelers: int = Field(default=1, ge=1)
-    reality_banner: str | None = None
-    segments: list[TripSegment] = Field(default_factory=list)  # one per location stop
+
+    # The trip itself — one entry per calendar day, in order.
+    trip_days: list[TripDays] = Field(default_factory=list)
+
+    # Route contract from StopsDiscoveryAgent; empty for single_destination trips.
+    stops: list[TripStop] = Field(default_factory=list)  # in visit order
+    route_legs: list[RouteLegPlan] = Field(default_factory=list)  # in travel order
+    route_version: int | None = None
+    route_discovery_status: str | None = None
+
+    # Trip-wide sections, copied from the agents that produced them.
     transport_section: TransportSection | None = None
-    safety_briefing: str | None = None
+    safety_section: SafetyReport | None = None
+    safety_briefing: str | None = None  # deterministic prose render of safety_section
+    visa_section: VisaReport | None = None
+    self_drive_section: SelfDriveReport | None = None
+    budget_breakdown: BudgetReport | None = None
+
+    reality_banner: str | None = None
     # generated by agents; especially relevant for high-altitude / adventure trips
     packing_tips: list[str] = Field(default_factory=list)
+    permits_required: list[str] = Field(default_factory=list)  # union across all days
     # e.g. "No mobile signal beyond Diskit. Download offline maps."
     connectivity_summary: str | None = None
-    # original natural-language query that triggered this itinerary
-    source_query: str | None = None
-    visa_section: Any | None = None  # VisaReport
-    self_drive_section: Any | None = None  # SelfDriveReport
-    budget_breakdown: Any | None = None  # BudgetReport
-    clarifications_needed: list[ClarificationRequest] = Field(default_factory=list)
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    version: int = 1  # incremented on each user-driven refinement
     # e.g. "Basic Hindi useful; English widely spoken in Leh tourist areas"
     language_tips: str | None = None
     # e.g. "Carry cash — ATMs rare beyond Leh. Exchange before departure."
     currency_tips: str | None = None
+
+    clarifications_needed: list[ClarificationRequest] = Field(default_factory=list)
+
+    # original natural-language query that triggered this itinerary
+    source_query: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    version: int = 1  # incremented on each user-driven refinement
+
+
+Itinerary.model_rebuild()
