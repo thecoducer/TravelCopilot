@@ -91,3 +91,9 @@ infra/.terraform/
 infra/*.tfstate
 infra/*.tfstate.*
 infra/.terraform.lock.hcl
+
+# Cachebro DIR
+.cachebro
+
+# Local tool response recordings
+backend/tool_responses/

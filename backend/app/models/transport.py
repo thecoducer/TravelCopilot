@@ -45,6 +45,12 @@ class TransportRecommendation(BaseModel):
     non_obvious_insight: str | None = None
     route_waypoints: list[RouteWaypoint] = Field(default_factory=list)
     route_label: str | None = None  # e.g. "Via DEL (1 stop)" — shown in alternatives list
+    # Route metadata — set when this recommendation answers one route_legs entry
+    # for a multi-stop route; unset for the single_destination/aggregate recommendation.
+    leg_id: str | None = None
+    route_version: int | None = None
+    mode_downgraded: bool = False
+    no_result: bool = False
 
 
 class StayOption(BaseModel):
@@ -70,3 +76,6 @@ class StayOption(BaseModel):
     free_cancellation_until: str | None = None  # ISO date string, if applicable
     # INR-normalised price for cross-currency budget comparison
     price_per_night_inr: float | None = None
+    # Owning stop occurrence for multi-stop routes; unset for single_destination trips.
+    stop_id: str | None = None
+    route_version: int | None = None

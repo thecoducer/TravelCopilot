@@ -2,9 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Unbuffered stdout/stderr so structured logs stream immediately, not on buffer flush.
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies (libpq5 required by psycopg pure-Python impl at runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv

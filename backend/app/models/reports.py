@@ -32,35 +32,25 @@ class ApplicationCentre(BaseModel):
 # ── Layer 1 reports ─────────────────────────────────────────────────────────
 
 
-class DestinationContextReport(BaseModel):
-    """Output of DestinationContextAgent — seasonality, crowd, cost, risks."""
-
-    destination: str
-    travel_month: str  # e.g. "October"
-    is_peak_season: bool
-    season_label: str  # e.g. "Shoulder season"
-    season_reason: str  # e.g. "Cherry blossom season ends; fewer crowds"
-    crowd_level: str  # "Low" | "Moderate" | "High" | "Extreme"
-    crowd_notes: str
-    real_daily_cost: float = Field(ge=0)
-    currency_code: str  # ISO 4217
-    cost_warnings: list[str] = Field(default_factory=list)
-    seasonal_weather_summary: str
-    seasonal_risks: list[str] = Field(default_factory=list)
-    # elevation of destination; triggers acclimatization advice when set
-    altitude_meters: int | None = None
-    acclimatization_advice: str | None = None  # e.g. "Rest on Day 1; avoid alcohol"
-
-
 class ScamEntry(BaseModel):
     name: str
     description: str
     how_to_avoid: str
 
 
-class ScamSafetyReport(BaseModel):
+class SafetyReport(BaseModel):
     destination: str
     advisory_level: str  # e.g. "Exercise normal caution"
+    travel_month: str | None = None
+    is_peak_season: bool | None = None
+    season_label: str | None = None
+    season_reason: str | None = None
+    crowd_level: str | None = None
+    crowd_notes: str | None = None
+    seasonal_weather_summary: str | None = None
+    seasonal_risks: list[str] = Field(default_factory=list)
+    altitude_meters: int | None = None
+    acclimatization_advice: str | None = None
     top_scams: list[ScamEntry] = Field(default_factory=list)
     safe_areas: list[str] = Field(default_factory=list)
     emergency_contacts: dict[str, str] = Field(default_factory=dict)
@@ -139,6 +129,11 @@ class BudgetReport(BaseModel):
     cost_saving_tips: list[str] = Field(default_factory=list)
     per_person_cost: float | None = None  # total_estimated_cost / number of travelers
     permit_costs: float | None = None  # ILP, PAP, park fees etc. broken out separately
+    # Accommodation cost per stop_id (nights × stop's chosen stay × travelers) for
+    # multi-stop routes; unset for single_destination trips. See
+    # specs/stops-discovery-agent-spec.md — budget aggregation must never multiply
+    # one stay's price by the whole trip's day count.
+    per_stop_accommodation_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class ReviewSummary(BaseModel):
@@ -150,6 +145,14 @@ class ReviewSummary(BaseModel):
     sentiment: str | None = None  # "positive" | "mixed" | "negative"
     photos: list[str] = Field(default_factory=list)
     google_maps_url: str | None = None
+    # Multi-stop identity — unset for single_destination trips. ``review_key`` is
+    # the dict key used in ``reviews_summary`` for multi-stop routes, formatted
+    # ``{route_version}:{stop_id}:{place_id_or_fallback}`` so identical venue
+    # names at different stop occurrences never overwrite one another.
+    stop_id: str | None = None
+    place_id: str | None = None
+    review_key: str | None = None
+    route_version: int | None = None
 
 
 # ── Observability ────────────────────────────────────────────────────────────
@@ -161,3 +164,4 @@ class AgentTokenUsage(BaseModel):
     completion_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float = 0.0
+    latency_ms: float = 0.0

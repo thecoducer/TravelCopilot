@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* Explicit source globs: a package-lock.json above the repo root confuses
+   Tailwind's automatic content-root detection, so scan our tree directly. */
+@source "../**/*.{js,ts,jsx,tsx}";
+
+/* Dark mode is driven by a data attribute set by the theme provider. */
+@custom-variant dark (&:where([data-theme="dark"] *));
+
+/* Raw token values — flipped by [data-theme]; surfaced to Tailwind via @theme inline. */
+:root {
+  --canvas: #faf9f7;
+  --surface: #ffffff;
+  --border: #e5e2dd;
+  --border-strong: #d4d0c9;
+  --fg: #262420;
+  --muted: #6b6862;
+  --faint: #928e86;
+  --accent: #2f6fed;
+  --accent-hover: #2559c7;
+  --accent-soft: #eaf0fe;
+  --danger: #c4432b;
+  --danger-soft: #fbeae6;
+  --success: #1f7a4d;
+  --success-soft: #e6f4ec;
+
+  /* Legacy aliases for any component still on CSS Modules during migration. */
+  --color-text: var(--fg);
+  --color-text-muted: var(--muted);
+  --color-text-faint: var(--faint);
+  --radius-full: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --shadow-sm: 0 1px 2px rgba(38, 36, 32, 0.06);
+  --shadow-md: 0 4px 16px rgba(38, 36, 32, 0.08);
+  --sidebar-width: 280px;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --canvas: #17161a;
+  --surface: #201f25;
+  --border: #322f38;
+  --border-strong: #45414c;
+  --fg: #ededf0;
+  --muted: #a8a4b0;
+  --faint: #78747f;
+  --accent: #6f9bff;
+  --accent-hover: #89adff;
+  --accent-soft: #22283b;
+  --danger: #ff7a63;
+  --danger-soft: #3a221e;
+  --success: #4fbd85;
+  --success-soft: #1d2c25;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-instrument), var(--font-inter), -apple-system, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+@layer base {
+  body {
+    background: var(--color-canvas);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

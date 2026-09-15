@@ -7,7 +7,7 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class BaseTool(Protocol):
-    """Minimal contract every tool (mock or real) must satisfy."""
+    """Minimal contract every replay or real tool must satisfy."""
 
     name: str
     description: str
