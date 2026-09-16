@@ -15,6 +15,7 @@ from app.logging import get_agent_logger
 from app.models.stops import TripStop
 from app.models.transport import StayOption
 from app.models.user_profile import budget_from_state
+from app.services.cache_service import TTL_HOTELS, cache_service
 from app.tools.factory import ToolFactory
 
 _CURRENCY_SYMBOL_TO_CODE = {
@@ -169,13 +170,17 @@ class StaySearchAgent(AgentClarificationMixin):
         checkin = dates.departure.isoformat() if dates else ""
         checkout = dates.return_date.isoformat() if dates and dates.return_date else ""
 
-        result = await self._hotel_tool.run(
-            location=destination,
-            check_in=checkin,
-            check_out=checkout,
-            adults=travelers,
-            hotel_style=user_profile.hotel_style if user_profile else None,
-            budget_tier=budget.tier if budget else "mid",
+        result = await cache_service.get_or_set(
+            cache_service.hotels_key(destination, checkin, checkout),
+            TTL_HOTELS,
+            lambda: self._hotel_tool.run(
+                location=destination,
+                check_in=checkin,
+                check_out=checkout,
+                adults=travelers,
+                hotel_style=user_profile.hotel_style if user_profile else None,
+                budget_tier=budget.tier if budget else "mid",
+            ),
         )
 
         raw_properties: list[dict[str, Any]] = result.get("properties", [])
@@ -204,13 +209,17 @@ class StaySearchAgent(AgentClarificationMixin):
         async def _search_one(stop: TripStop) -> list[StayOption]:
             checkin = stop.arrival_date.isoformat() if stop.arrival_date else ""
             checkout = stop.departure_date.isoformat() if stop.departure_date else ""
-            result = await self._hotel_tool.run(
-                location=stop.name,
-                check_in=checkin,
-                check_out=checkout,
-                adults=travelers,
-                hotel_style=user_profile.hotel_style if user_profile else None,
-                budget_tier=budget.tier if budget else "mid",
+            result = await cache_service.get_or_set(
+                cache_service.hotels_key(stop.name, checkin, checkout),
+                TTL_HOTELS,
+                lambda: self._hotel_tool.run(
+                    location=stop.name,
+                    check_in=checkin,
+                    check_out=checkout,
+                    adults=travelers,
+                    hotel_style=user_profile.hotel_style if user_profile else None,
+                    budget_tier=budget.tier if budget else "mid",
+                ),
             )
             stays = self._parse_stays(
                 result.get("properties", []), stop.name, user_profile, budget, log

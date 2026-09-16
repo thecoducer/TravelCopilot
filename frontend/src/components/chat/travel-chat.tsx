@@ -154,7 +154,9 @@ function TurnView({
             <PlanningActivity
               status={turn.status}
               completedAgents={turn.completedAgents}
-              planningStartedAt={turn.planningStartedAt}
+              activeAgents={turn.activeAgents}
+              activeElapsedMs={turn.activeElapsedMs}
+              runningSince={turn.runningSince}
               isDismissed={Boolean(turn.itinerary)}
             />
           ) : null}

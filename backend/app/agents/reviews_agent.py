@@ -17,6 +17,7 @@ from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.reports import ReviewSummary
+from app.services.cache_service import TTL_PLACES, cache_service
 from app.tools.factory import ToolFactory
 
 # Keep review synthesis bounded so one slow provider call cannot stall the full graph.
@@ -110,10 +111,29 @@ class ReviewsAgent(AgentClarificationMixin):
         if not targets:
             return {"reviews_summary": {}}
 
+        # Two targets can be the same physical place (e.g. a landmark revisited on a
+        # later stop) — fetch/summarise each unique place once and reuse the result
+        # for every occurrence instead of duplicating the place_details + LLM calls.
+        physical_keys = {
+            id(target): target.place_id or _fallback_place_key(target.name, target.lat, target.lng)
+            for target in targets
+        }
+        place_tasks: dict[str, asyncio.Task[Any]] = {}
+        for target in targets:
+            physical_key = physical_keys[id(target)]
+            if physical_key not in place_tasks:
+                place_tasks[physical_key] = asyncio.create_task(
+                    self._fetch_and_summarise_place(target, log)
+                )
+
         results = await asyncio.gather(
             *[
-                self._fetch_and_summarise(t, route_version if multi_stop else None, log)
-                for t in targets
+                self._build_review_summary(
+                    target,
+                    place_tasks[physical_keys[id(target)]],
+                    route_version if multi_stop else None,
+                )
+                for target in targets
             ],
             return_exceptions=True,
         )
@@ -164,35 +184,22 @@ class ReviewsAgent(AgentClarificationMixin):
             ]
         return targets
 
-    async def _fetch_and_summarise(
-        self, target: _ReviewTarget, route_version: int | None, log: Any
-    ) -> tuple[str, ReviewSummary]:
-        details = await self._place_details.run(place_id=target.place_id, name=target.name)
-
+    async def _fetch_and_summarise_place(
+        self, target: _ReviewTarget, log: Any
+    ) -> tuple[dict[str, Any], _PlaceSummary]:
+        """Network + LLM work for one physical place, independent of how many stops visit it."""
+        physical_key = target.place_id or _fallback_place_key(target.name, target.lat, target.lng)
+        details = await cache_service.get_or_set(
+            cache_service.place_key(physical_key),
+            TTL_PLACES,
+            lambda: self._place_details.run(place_id=target.place_id, name=target.name),
+        )
         reviews_text = "\n".join(
             f"- {r.get('author', 'Guest')} ({r.get('rating', '?')}★): {r.get('text', '')}"
             for r in details.get("reviews", [])[:5]
         )
-        photos = _photo_urls(details.get("photos", []))
-        maps_url = details.get("google_maps_url")
-        rating = details.get("rating")
-        review_count = details.get("review_count")
-
-        key = _review_key(route_version, target) if route_version is not None else target.name
-        stop_id = target.stop_id if route_version is not None else None
-
         if not reviews_text:
-            return key, ReviewSummary(
-                place_name=target.name,
-                rating=rating,
-                review_count=review_count,
-                photos=photos,
-                google_maps_url=maps_url,
-                sentiment="positive",
-                stop_id=stop_id,
-                review_key=key if route_version is not None else None,
-                route_version=route_version,
-            )
+            return details, _PlaceSummary(pros=[], cons=[], sentiment="positive")
 
         chain = self._llm.with_structured_output(_PlaceSummary)
         try:
@@ -203,7 +210,8 @@ class ReviewsAgent(AgentClarificationMixin):
                         HumanMessage(
                             content=(
                                 f"Place: {target.name}\n"
-                                f"Rating: {rating}/5 ({review_count} reviews)\n\n"
+                                f"Rating: {details.get('rating')}/5"
+                                f" ({details.get('review_count')} reviews)\n\n"
                                 f"Reviews:\n{reviews_text}"
                             )
                         ),
@@ -219,16 +227,28 @@ class ReviewsAgent(AgentClarificationMixin):
         except Exception as exc:
             log.warning("llm_failed", place=target.name, error=str(exc))
             summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")
+        return details, summary
 
+    async def _build_review_summary(
+        self,
+        target: _ReviewTarget,
+        place_task: asyncio.Task[Any],
+        route_version: int | None,
+    ) -> tuple[str, ReviewSummary]:
+        """Assemble this target's (per-stop) keyed summary from the shared place fetch."""
+        details, summary = await place_task
+        photos = _photo_urls(details.get("photos", []))
+        key = _review_key(route_version, target) if route_version is not None else target.name
+        stop_id = target.stop_id if route_version is not None else None
         return key, ReviewSummary(
             place_name=target.name,
-            rating=rating,
-            review_count=review_count,
+            rating=details.get("rating"),
+            review_count=details.get("review_count"),
             pros=summary.pros,
             cons=summary.cons,
             sentiment=summary.sentiment,
             photos=photos,
-            google_maps_url=maps_url,
+            google_maps_url=details.get("google_maps_url"),
             stop_id=stop_id,
             review_key=key if route_version is not None else None,
             route_version=route_version,

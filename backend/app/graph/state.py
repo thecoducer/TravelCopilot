@@ -112,7 +112,10 @@ class TripState(TypedDict, total=False):
     itinerary: Itinerary | None
     token_usage: Annotated[dict[str, AgentTokenUsage], operator.or_]
     messages: Annotated[list[BaseMessage], add_messages]
-    error: str | None
+    # Concurrent Layer 1/2 nodes can independently set this in the same superstep;
+    # a reducer (keep the first error) avoids InvalidUpdateError from the unguarded
+    # last-value-wins default while keeping the value a plain string.
+    error: Annotated[str | None, lambda left, right: left or right]
 
 
 class TripStateModel(BaseModel):

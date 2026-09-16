@@ -192,7 +192,7 @@ def _make_fake_llm(
             ],
         ),
         VisaReport: VisaReport(
-            passport_country="India",
+                nationality="India",
             destination_country=destination,
             visa_required=is_intl,
             visa_type="tourist" if is_intl else None,
@@ -351,6 +351,8 @@ class TestFullGraph:
         from langgraph.checkpoint.memory import MemorySaver
         from langgraph.types import Command
 
+        from app.config import settings
+
         async def _run() -> tuple[dict[str, Any], Any]:
             session_id = "food-preferences-test"
             compiled = build_graph(
@@ -362,27 +364,30 @@ class TestFullGraph:
             state = initial_state(query="3 days in Osaka from Kolkata", session_id=session_id)
             state["user_profile"] = UserProfile(user_id="u1")
 
-            await compiled.ainvoke(state, config=config)
-            snapshot = await compiled.aget_state(config)
-            interrupts = snapshot.tasks[0].interrupts
-            payload = interrupts[0].value
-            fields = [prompt["field"] for prompt in payload["prompts"]]
-            assert fields == ["preferred_cuisines", "dietary_restrictions"]
+            # Isolate the food prompts from the optional-preference catalogue, both of
+            # which are now asked together in a single optional_clarification round.
+            with patch.object(settings, "enable_optional_clarification", False):
+                await compiled.ainvoke(state, config=config)
+                snapshot = await compiled.aget_state(config)
+                interrupts = snapshot.tasks[0].interrupts
+                payload = interrupts[0].value
+                fields = [prompt["field"] for prompt in payload["prompts"]]
+                assert fields == ["preferred_cuisines", "dietary_restrictions"]
 
-            with patch("app.graph.graph.upsert_user_profile", new=AsyncMock()):
-                result = await compiled.ainvoke(
-                    Command(
-                        resume={
-                            "preferred_cuisines": "Japanese, Korean",
-                            "dietary_restrictions": "No dietary restrictions",
-                        }
-                    ),
-                    config=config,
-                )
+                with patch("app.agents.orchestrator.upsert_user_profile", new=AsyncMock()):
+                    result = await compiled.ainvoke(
+                        Command(
+                            resume={
+                                "preferred_cuisines": "Japanese, Korean",
+                                "dietary_restrictions": "No dietary restrictions",
+                            }
+                        ),
+                        config=config,
+                    )
             return result, snapshot
 
         result, snapshot = asyncio.run(_run())
-        assert "food_clarification" in snapshot.next
+        assert "optional_clarification" in snapshot.next
         profile = result["user_profile"]
         assert profile.preferred_cuisines == ["Japanese", "Korean"]
         assert profile.dietary_restrictions == []
@@ -421,7 +426,7 @@ class TestFullGraph:
             extra_state={
                 "is_international": True,
                 "visa_application_city": "Mumbai",
-                "user_profile": UserProfile(user_id="u1", passport_country="India"),
+                "user_profile": UserProfile(user_id="u1", nationality="India"),
             },
         )
         visa = result.get("visa_report")
@@ -563,7 +568,7 @@ class TestFullGraph:
             extra_state={
                 "is_international": True,
                 "visa_application_city": "Mumbai",
-                "user_profile": UserProfile(user_id="u2", passport_country="India"),
+                "user_profile": UserProfile(user_id="u2", nationality="India"),
             },
         )
         visa = result.get("visa_report")
@@ -742,6 +747,11 @@ class TestMultiStopRoute:
             checkpointer = MemorySaver()
             compiled = build_graph(tool_factory=factory, llm=mock_llm, checkpointer=checkpointer)
             state = initial_state(query="plan a trip to Nowhereland", session_id="failed-route")
+            # Pre-configure food preferences so this test observes only the
+            # route_clarification interrupt, not the (now-merged) food preference round.
+            state["user_profile"] = UserProfile(
+                user_id="failed-route", food_preferences_configured=True
+            )
             config = {"configurable": {"thread_id": "failed-route"}}
             result = await compiled.ainvoke(state, config=config)
             snapshot = compiled.get_state(config)

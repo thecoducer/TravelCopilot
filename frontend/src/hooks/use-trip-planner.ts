@@ -27,7 +27,13 @@ export type PlannerTurn = {
   startedAt: string;
   status: TurnStatus;
   completedAgents: CompletedAgentActivity[];
+  /** Agents the backend has reported as started but not yet finished. */
+  activeAgents: string[];
   planningStartedAt: number | null;
+  /** Elapsed ms accumulated across running windows, excluding paused time. */
+  activeElapsedMs: number;
+  /** Timestamp the current running window began; null while paused/stopped. */
+  runningSince: number | null;
   itinerary: Itinerary | null;
   itineraryId: string | null;
   usage: UsageSummaryEvent | null;
@@ -45,7 +51,7 @@ export type TripPlannerState = {
   pdfError: string | null;
 };
 
-const initialState: TripPlannerState = {
+export const initialState: TripPlannerState = {
   sessionId: null,
   turns: [],
   isDownloading: false,
@@ -59,7 +65,10 @@ function newTurn(prompt: string): PlannerTurn {
     startedAt: new Date().toISOString(),
     status: "planning",
     completedAgents: [],
+    activeAgents: [],
     planningStartedAt: Date.now(),
+    activeElapsedMs: 0,
+    runningSince: Date.now(),
     itinerary: null,
     itineraryId: null,
     usage: null,
@@ -68,6 +77,17 @@ function newTurn(prompt: string): PlannerTurn {
     clarificationRound: 0,
     agentStartedAt: {},
     errorMessage: null,
+  };
+}
+
+/** Folds a turn's running window into `activeElapsedMs` and stops the clock. */
+function pauseTiming(turn: PlannerTurn): Pick<PlannerTurn, "activeElapsedMs" | "runningSince"> {
+  if (turn.runningSince === null) {
+    return { activeElapsedMs: turn.activeElapsedMs, runningSince: null };
+  }
+  return {
+    activeElapsedMs: turn.activeElapsedMs + (Date.now() - turn.runningSince),
+    runningSince: null,
   };
 }
 
@@ -95,7 +115,7 @@ function patchLastTurn(
   return { ...state, turns };
 }
 
-function reducer(state: TripPlannerState, action: Action): TripPlannerState {
+export function reducer(state: TripPlannerState, action: Action): TripPlannerState {
   switch (action.type) {
     case "turn_started":
       return {
@@ -109,6 +129,7 @@ function reducer(state: TripPlannerState, action: Action): TripPlannerState {
       return patchLastTurn(state, (turn) => ({
         ...turn,
         status: "planning",
+        runningSince: Date.now(),
         clarificationPrompts: [],
         clarificationRequestId: null,
       }));
@@ -116,7 +137,7 @@ function reducer(state: TripPlannerState, action: Action): TripPlannerState {
     case "planning_cancelled":
       return patchLastTurn(state, (turn) =>
         (turn.status === "planning" || turn.status === "awaiting_clarification")
-          ? { ...turn, status: "error", errorMessage: "Planning stopped." }
+          ? { ...turn, ...pauseTiming(turn), status: "error", errorMessage: "Planning stopped." }
           : turn,
       );
 
@@ -129,7 +150,12 @@ function reducer(state: TripPlannerState, action: Action): TripPlannerState {
     case "stream_ended_unexpectedly":
       return patchLastTurn(state, (turn) =>
         turn.status === "planning"
-          ? { ...turn, status: "error", errorMessage: "Connection closed unexpectedly." }
+          ? {
+              ...turn,
+              ...pauseTiming(turn),
+              status: "error",
+              errorMessage: "Connection closed unexpectedly.",
+            }
           : turn,
       );
 
@@ -156,6 +182,9 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
           ...turn,
           planningStartedAt: turn.planningStartedAt ?? Date.now(),
           agentStartedAt: { ...turn.agentStartedAt, [event.data.agent]: Date.now() },
+          activeAgents: turn.activeAgents.includes(event.data.agent)
+            ? turn.activeAgents
+            : [...turn.activeAgents, event.data.agent],
         }),
       );
 
@@ -170,7 +199,11 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
           layer: event.data.layer,
           elapsedMs: Date.now() - startedAt,
         };
-        return { ...turn, completedAgents: [...turn.completedAgents, entry] };
+        return {
+          ...turn,
+          completedAgents: [...turn.completedAgents, entry],
+          activeAgents: turn.activeAgents.filter((agent) => agent !== event.data.agent),
+        };
       });
     }
 
@@ -179,6 +212,7 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
         { ...state, sessionId: event.data.session_id },
         (turn) => ({
           ...turn,
+          ...pauseTiming(turn),
           status: "awaiting_clarification",
           clarificationPrompts: event.data.prompts,
           clarificationRequestId: event.data.request_id,
@@ -191,6 +225,7 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
         { ...state, sessionId: event.data.session_id },
         (turn) => ({
           ...turn,
+          ...pauseTiming(turn),
           status: "complete",
           itinerary: event.data.itinerary,
           itineraryId: event.data.itinerary_id,
@@ -203,6 +238,7 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
     case "error":
       return patchLastTurn(state, (turn) => ({
         ...turn,
+        ...pauseTiming(turn),
         status: "error",
         errorMessage: event.data.message,
       }));
@@ -260,6 +296,8 @@ function buildHydratedTurns(
         ...newTurn(""),
         status: "complete",
         planningStartedAt: null,
+        activeElapsedMs: 0,
+        runningSince: null,
         itinerary,
         itineraryId: itinerary.id,
         usage,
@@ -274,6 +312,8 @@ function buildHydratedTurns(
       startedAt: turn.created_at,
       status: "complete",
       planningStartedAt: null,
+      activeElapsedMs: 0,
+      runningSince: null,
       itinerary: isLast ? itinerary : null,
       itineraryId: isLast ? (itinerary?.id ?? null) : null,
       usage: isLast ? usage : null,

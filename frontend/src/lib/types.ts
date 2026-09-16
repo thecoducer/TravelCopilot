@@ -39,7 +39,6 @@ export type UserProfileData = {
   username?: string | null;
   display_name?: string | null;
   nationality?: string | null;
-  passport_country?: string | null;
   preferred_currency?: string;
   dietary_restrictions?: string[];
   preferred_cuisines?: string[];

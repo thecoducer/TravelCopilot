@@ -26,6 +26,7 @@ from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.stops import RouteLegPlan, stop_display_name
+from app.services.cache_service import TTL_FLIGHTS, TTL_TRANSIT, cache_service
 from app.tools.factory import ToolFactory
 
 # Generic TransportSearchPolicy.allowed_modes value -> which fetch helper handles it.
@@ -169,21 +170,29 @@ class TransportSearchAgent(AgentClarificationMixin):
         raise ValueError(f"Unsupported transport mode: {mode}")
 
     async def _fetch_flight(self, origin: str, destination: str, departure_date: str) -> list[Any]:
-        result = await self._flight_tool.run(
-            origin=origin,
-            destination=destination,
-            departure_date=departure_date,
+        result = await cache_service.get_or_set(
+            cache_service.flights_key(origin, destination, departure_date),
+            TTL_FLIGHTS,
+            lambda: self._flight_tool.run(
+                origin=origin,
+                destination=destination,
+                departure_date=departure_date,
+            ),
         )
         return list(result.get("best_flights", [])) + list(result.get("other_flights", []))
 
     async def _fetch_transit(
         self, origin: str, destination: str, mode: str, departure_date: str
     ) -> list[Any]:
-        result = await self._transit_tool.run(
-            origin=origin,
-            destination=destination,
-            mode=mode,
-            departure_date=departure_date,
+        result = await cache_service.get_or_set(
+            cache_service.transit_key(origin, destination, mode, departure_date),
+            TTL_TRANSIT,
+            lambda: self._transit_tool.run(
+                origin=origin,
+                destination=destination,
+                mode=mode,
+                departure_date=departure_date,
+            ),
         )
         return list(result.get("options", []))
 

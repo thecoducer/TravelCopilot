@@ -606,17 +606,6 @@
             ],
             "title": "Nationality"
           },
-          "passport_country": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passport Country"
-          },
           "preferred_currency": {
             "type": "string",
             "title": "Preferred Currency",

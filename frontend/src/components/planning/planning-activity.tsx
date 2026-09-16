@@ -6,12 +6,7 @@ import { Check, Pause } from "lucide-react";
 import { SectionCard } from "@/components/ui/section-card";
 import { Spinner } from "@/components/ui/spinner";
 import { useElapsedTimer } from "@/hooks/use-elapsed-timer";
-import {
-  activeAgentsFor,
-  AGENT_PIPELINE,
-  buildAgentTasks,
-  type AgentTask,
-} from "@/lib/agent-catalog";
+import { buildAgentTasks, type AgentTask } from "@/lib/agent-catalog";
 import { formatElapsed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { CompletedAgentActivity, PlannerStatus } from "@/lib/types";
@@ -22,28 +17,29 @@ const VISIBLE_TASKS = 5;
 type PlanningActivityProps = {
   status: PlannerStatus;
   completedAgents: CompletedAgentActivity[];
-  planningStartedAt: number | null;
+  /** Agents the backend has reported as started but not yet finished. */
+  activeAgents: string[];
+  activeElapsedMs: number;
+  runningSince: number | null;
   isDismissed?: boolean;
 };
 
 export function PlanningActivity({
   status,
   completedAgents,
-  planningStartedAt,
+  activeAgents,
+  activeElapsedMs,
+  runningSince,
   isDismissed = false,
 }: PlanningActivityProps) {
   const isPlanning = status === "planning";
-  const isAwaitingClarification = status === "awaiting_clarification";
-  const elapsedMs = useElapsedTimer(planningStartedAt, isPlanning);
-  const completedIds = new Set(completedAgents.map((entry) => entry.agent));
-  const currentAgents = activeAgentsFor(completedIds);
-  const activeAgents = isPlanning ? currentAgents : [];
+  const elapsedMs = useElapsedTimer(activeElapsedMs, runningSince);
 
+  // Only agents the backend actually started are ever shown — agents skipped
+  // by graph routing (e.g. visa, self_drive_search) never appear here.
   const tasks = buildAgentTasks(
     completedAgents,
-    activeAgents,
-    isPlanning || isAwaitingClarification,
-    isAwaitingClarification ? currentAgents : [],
+    isPlanning ? activeAgents : [],
   ).sort((left, right) => {
     const statusOrder = { done: 0, active: 1, paused: 1, pending: 2 };
     return statusOrder[left.status] - statusOrder[right.status];
@@ -64,7 +60,7 @@ export function PlanningActivity({
         headerContent={
           <div className="flex w-full items-center justify-between gap-4">
             <span className="font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-muted">
-              {doneCount}/{AGENT_PIPELINE.length} complete
+              {doneCount}/{tasks.length} complete
             </span>
             <span className="text-[0.78rem] text-muted">{elapsedLabel}</span>
           </div>

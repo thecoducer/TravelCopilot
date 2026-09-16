@@ -43,6 +43,7 @@ from app.models.user_profile import (
     budget_to_state,
 )
 from app.services.clarification_manager import ClarificationManager
+from app.services.user_profile_service import upsert_user_profile
 
 # ── Security: prompt injection patterns ──────────────────────────────────────
 _INJECTION_PATTERNS = re.compile(
@@ -127,6 +128,32 @@ _OPTIONAL_CLARIFICATION_PROMPTS: tuple[ClarificationPrompt, ...] = (
         optional=True,
     ),
 )
+
+# Folded into the same clarification round as the optional catalogue (rather than a
+# separate food_clarification graph node) so route discovery and supply search never
+# stall waiting on a second human round-trip.
+_FOOD_CLARIFICATION_PROMPTS: tuple[ClarificationPrompt, ...] = (
+    ClarificationPrompt(
+        field="preferred_cuisines",
+        question="Which cuisines would you most like to eat on this trip?",
+        reason="Personalize restaurant discovery",
+        input_type="text",
+        optional=True,
+    ),
+    ClarificationPrompt(
+        field="dietary_restrictions",
+        question="Do you have dietary restrictions or requirements?",
+        reason="Avoid unsuitable restaurant recommendations",
+        input_type="text",
+        options=["No dietary restrictions"],
+        optional=True,
+    ),
+)
+
+
+def _split_food_preference(value: str) -> list[str]:
+    """Convert a comma-separated clarification answer to normalized values."""
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 # ── Structured LLM output ─────────────────────────────────────────────────────
@@ -586,23 +613,66 @@ async def orchestrator_clarification_node(state: dict[str, Any]) -> dict[str, An
 
 
 async def optional_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Ask the fixed catalogue of skippable preference questions when enabled."""
-    if not settings.enable_optional_clarification:
+    """Ask skippable trip-style questions and durable food preferences in one round.
+
+    Food preferences are folded in here (rather than a separate later graph node)
+    so route discovery and supply search never stall on a second human round-trip.
+    """
+    session_id = state.get("session_id", "")
+    log = get_agent_logger("orchestrator", session_id)
+
+    prompts: list[ClarificationPrompt] = []
+    if settings.enable_optional_clarification:
+        prompts.extend(prompt.model_copy() for prompt in _OPTIONAL_CLARIFICATION_PROMPTS)
+
+    profile: UserProfile | None = state.get("user_profile")
+    ask_food = not (profile and profile.food_preferences_configured)
+    if ask_food:
+        prompts.extend(prompt.model_copy() for prompt in _FOOD_CLARIFICATION_PROMPTS)
+
+    if not prompts:
         return {}
 
-    log = get_agent_logger("orchestrator", state.get("session_id", ""))
-    prompts = [prompt.model_copy() for prompt in _OPTIONAL_CLARIFICATION_PROMPTS]
     log.info("optional_clarification_requested", fields=[prompt.field for prompt in prompts])
     answers = ClarificationManager.request_optional(
         prompts, requester="orchestrator", round_number=state.get("clarification_round", 0)
     )
-    return {
+
+    food_fields = {"preferred_cuisines", "dietary_restrictions"}
+    updates: dict[str, Any] = {
         "optional_clarification_answers": {
             field: value
             for field, value in answers.items()
-            if value.strip() and value.strip() != "__skip__"
+            if field not in food_fields and value.strip() and value.strip() != "__skip__"
         }
     }
+
+    if ask_food:
+        dietary_answer = answers.get("dietary_restrictions", "").strip()
+        dietary = (
+            []
+            if dietary_answer.lower() in ("", "__skip__", "no dietary restrictions")
+            else _split_food_preference(dietary_answer)
+        )
+        cuisines_answer = answers.get("preferred_cuisines", "").strip()
+        cuisines = (
+            [] if cuisines_answer in ("", "__skip__") else _split_food_preference(cuisines_answer)
+        )
+        updated_profile = (profile or UserProfile(user_id=session_id or "anon")).model_copy(
+            update={
+                "preferred_cuisines": cuisines,
+                "dietary_restrictions": dietary,
+                "food_preferences_configured": True,
+            }
+        )
+        if session_id:
+            try:
+                await upsert_user_profile(session_id, updated_profile)
+            except Exception as exc:
+                log.warning("profile_persist_failed", error=str(exc))
+        updates["user_profile"] = updated_profile
+
+    return updates
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────

@@ -115,7 +115,7 @@ class TestUserProfile:
         up = UserProfile(
             user_id="u2",
             home_city="Mumbai",
-            passport_country="India",
+            nationality="India",
             interests=["food", "history"],
             hotel_style=HotelStyle.boutique,
             travel_style="cultural",

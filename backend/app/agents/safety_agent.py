@@ -12,6 +12,7 @@ Inputs consumed from state:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -20,6 +21,7 @@ from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.reports import SafetyReport
+from app.services.cache_service import TTL_TAVILY, cache_service
 from app.tools.factory import ToolFactory
 
 _SYSTEM_PROMPT = """\
@@ -71,15 +73,15 @@ class SafetyAgent(AgentClarificationMixin):
 
         import asyncio
 
+        # Two broad queries instead of five narrow ones: the LLM extracts each
+        # sub-topic (scams, crowds, altitude, seasonal) from the combined results.
         queries = [
-            f"tourist scams {destination} 2026 how to avoid",
-            f"safety tips {destination} travel advisory",
-            f"{destination} crowded {month} {year} tourist season",
-            f"{destination} altitude elevation risks acclimatization",
-            f"{destination} seasonal risks weather {month} travel advisory",
+            f"tourist scams and safety tips {destination} travel advisory 2026",
+            f"{destination} {month} {year} crowd levels altitude elevation risks"
+            " seasonal weather travel advisory",
         ]
         results = await asyncio.gather(
-            *[self._tavily.run(query=q, destination=destination) for q in queries],
+            *[self._cached_tavily_search(q, destination, month) for q in queries],
             return_exceptions=True,
         )
 
@@ -141,3 +143,11 @@ class SafetyAgent(AgentClarificationMixin):
 
         log.info("agent_done", scams_found=len(report.top_scams))
         return {"safety_report": report}
+
+    async def _cached_tavily_search(self, query: str, destination: str, month: str) -> Any:
+        """Tavily results rarely change within a day — cache by destination/month/query."""
+        query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
+        key = cache_service.tavily_key(destination, month, query_hash)
+        return await cache_service.get_or_set(
+            key, TTL_TAVILY, lambda: self._tavily.run(query=query, destination=destination)
+        )

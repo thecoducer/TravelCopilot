@@ -23,6 +23,7 @@ logger = structlog.get_logger(__name__)
 
 AGENT_LAYERS: dict[str, int] = {
     "orchestrator": 0,
+    "stops_discovery": 1,
     "safety": 4,
     "visa": 1,
     "transport_search": 2,
@@ -85,6 +86,11 @@ def agent_preview(agent_name: str, output: dict[str, Any]) -> str:
     try:
         m: dict[str, Any] = {
             "orchestrator": _route_preview,
+            "stops_discovery": lambda o: (
+                f"{len(o.get('stops', {}) or {})} stops planned"
+                if o.get("stops")
+                else "Single destination"
+            ),
             "safety": lambda o: (
                 f"{len(_field(o.get('safety_report'), 'top_scams', []))} scams found"
             ),

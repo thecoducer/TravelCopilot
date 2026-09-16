@@ -43,33 +43,37 @@ def test_orchestrator_preview_hides_arrow_until_both_route_endpoints_exist() -> 
     assert agent_preview("orchestrator", {"source": "Kolkata"}) == "Kolkata"
     assert agent_preview("orchestrator", {"destination": "Goa"}) == "Goa"
     assert agent_preview("orchestrator", {}) == "Extracting trip details"
-    assert agent_preview(
-        "orchestrator", {"source": "Kolkata", "destination": "Goa"}
-    ) == "Kolkata → Goa"
+    assert (
+        agent_preview("orchestrator", {"source": "Kolkata", "destination": "Goa"})
+        == "Kolkata → Goa"
+    )
 
 
 def test_agent_preview_covers_report_and_summary_outputs() -> None:
-    assert agent_preview(
-        "safety", {"safety_report": {"top_scams": [{"name": "Taxi scam"}]}}
-    ) == "1 scams found"
-    assert agent_preview(
-        "visa", {"visa_report": {"visa_required": False}}
-    ) == "Visa required: False"
-    assert agent_preview(
-        "self_drive_search",
-        {"self_drive_report": {"rental_options": [{"name": "Car"}, {"name": "Bike"}]}},
-    ) == "Found 2 rental options"
-    assert agent_preview(
-        "reviews", {"reviews_summary": {"stay-1": {}, "stay-2": {}}}
-    ) == "Found 2 review summaries"
+    assert (
+        agent_preview("safety", {"safety_report": {"top_scams": [{"name": "Taxi scam"}]}})
+        == "1 scams found"
+    )
+    assert (
+        agent_preview("visa", {"visa_report": {"visa_required": False}}) == "Visa required: False"
+    )
+    assert (
+        agent_preview(
+            "self_drive_search",
+            {"self_drive_report": {"rental_options": [{"name": "Car"}, {"name": "Bike"}]}},
+        )
+        == "Found 2 rental options"
+    )
+    assert (
+        agent_preview("reviews", {"reviews_summary": {"stay-1": {}, "stay-2": {}}})
+        == "Found 2 review summaries"
+    )
 
 
 def test_agent_preview_counts_nested_food_recommendations() -> None:
     output = {
         "food_recommendations_by_stop": {
-            "stop_1": {
-                "2026-11-11": [{"meal_type": "breakfast"}, {"meal_type": "lunch"}]
-            }
+            "stop_1": {"2026-11-11": [{"meal_type": "breakfast"}, {"meal_type": "lunch"}]}
         }
     }
 
@@ -77,14 +81,20 @@ def test_agent_preview_counts_nested_food_recommendations() -> None:
 
 
 def test_agent_preview_reads_dictionary_shaped_model_outputs() -> None:
-    assert agent_preview(
-        "transport_optimizer",
-        {"transport_recommendation": {"rationale": "Fastest direct route"}},
-    ) == "Fastest direct route"
-    assert agent_preview(
-        "budget_planner",
-        {"budget_report": {"total_estimated_cost": 16360, "vs_budget_verdict": "on-budget"}},
-    ) == "16360 (on-budget)"
-    assert agent_preview(
-        "itinerary_compiler", {"itinerary": {"title": "Goa escape"}}
-    ) == "Goa escape"
+    assert (
+        agent_preview(
+            "transport_optimizer",
+            {"transport_recommendation": {"rationale": "Fastest direct route"}},
+        )
+        == "Fastest direct route"
+    )
+    assert (
+        agent_preview(
+            "budget_planner",
+            {"budget_report": {"total_estimated_cost": 16360, "vs_budget_verdict": "on-budget"}},
+        )
+        == "16360 (on-budget)"
+    )
+    assert (
+        agent_preview("itinerary_compiler", {"itinerary": {"title": "Goa escape"}}) == "Goa escape"
+    )

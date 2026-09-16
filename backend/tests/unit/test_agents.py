@@ -355,9 +355,19 @@ class TestOrchestratorAgent:
     async def test_optional_clarification_is_opt_in(self) -> None:
         from app.agents.orchestrator import optional_clarification_node
         from app.config import settings
+        from app.models.user_profile import UserProfile
+
+        # Food preference prompts are folded into this node but always ask unless
+        # already configured; isolate the opt-in catalogue by pre-configuring food.
+        food_done = UserProfile(user_id="s_opt", food_preferences_configured=True)
 
         with patch("app.services.clarification_manager.interrupt") as interrupt_mock:
-            assert await optional_clarification_node({"session_id": "s_opt"}) == {}
+            assert (
+                await optional_clarification_node(
+                    {"session_id": "s_opt", "user_profile": food_done}
+                )
+                == {}
+            )
         interrupt_mock.assert_not_called()
 
         with (
@@ -367,7 +377,9 @@ class TestOrchestratorAgent:
                 return_value={"optional_pace": "relaxed", "optional_must_see": "__skip__"},
             ),
         ):
-            result = await optional_clarification_node({"session_id": "s_opt"})
+            result = await optional_clarification_node(
+                {"session_id": "s_opt", "user_profile": food_done}
+            )
 
         assert result["optional_clarification_answers"] == {"optional_pace": "relaxed"}
 
@@ -780,7 +792,7 @@ class TestVisaAgent:
             "is_international": True,
             "user_profile": UserProfile(
                 user_id="u1",
-                passport_country="India",
+                nationality="India",
             ),
             "visa_application_city": "Mumbai",
         }

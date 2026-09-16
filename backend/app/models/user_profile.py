@@ -46,7 +46,6 @@ class UserProfile(BaseModel):
     username: str | None = None  # auth-free identity; keys the profile across sessions
     display_name: str | None = None
     nationality: str | None = None
-    passport_country: str | None = None
     preferred_currency: str = "INR"
     dietary_restrictions: list[str] = Field(default_factory=list)
     preferred_cuisines: list[str] = Field(default_factory=list)

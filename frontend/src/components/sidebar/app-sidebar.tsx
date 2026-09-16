@@ -118,8 +118,8 @@ export function AppSidebar({
           <button
             className="inline-flex size-7 items-center justify-center rounded-full bg-[#9b59b6] text-[0.65rem] font-bold text-white transition-transform hover:scale-105"
             onClick={() => router.push("/profile")}
-            aria-label="Open profile"
-            title="Open profile"
+            aria-label="Open settings"
+            title="Open settings"
           >
             {username ? username.charAt(0).toUpperCase() : <User size={14} />}
           </button>
@@ -202,7 +202,7 @@ export function AppSidebar({
         <button
           className="flex flex-1 items-center gap-2 rounded-lg p-2 text-left hover:bg-white/10"
           onClick={() => router.push("/profile")}
-          aria-label="Open profile"
+          aria-label="Open settings"
         >
           <span className="inline-flex size-7 items-center justify-center rounded-full bg-[#9b59b6] text-[0.72rem] font-bold text-white">
             {username ? username.charAt(0).toUpperCase() : <User size={16} />}

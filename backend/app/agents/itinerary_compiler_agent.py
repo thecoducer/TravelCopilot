@@ -31,6 +31,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -150,13 +151,19 @@ class ItineraryCompilerAgent(AgentClarificationMixin):
     async def _compile_all_stops(
         self, route: RoutePlan, state: dict[str, Any], log: Any
     ) -> list[TripDays]:
-        """Compile every stop that has at least one allocated day."""
-        days: list[TripDays] = []
-        for stop in route.stops:
-            allocations = route.allocations_for(stop.stop_id)
-            if allocations:
-                days.extend(await self._compile_stop_days(stop, allocations, route, state, log))
-        return days
+        """Compile every stop that has at least one allocated day, in parallel."""
+        stops_with_days = [
+            (stop, allocations)
+            for stop in route.stops
+            if (allocations := route.allocations_for(stop.stop_id))
+        ]
+        results = await asyncio.gather(
+            *(
+                self._compile_stop_days(stop, allocations, route, state, log)
+                for stop, allocations in stops_with_days
+            )
+        )
+        return [day for stop_days in results for day in stop_days]
 
     async def _compile_stop_days(
         self,

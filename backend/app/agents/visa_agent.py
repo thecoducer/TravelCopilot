@@ -60,7 +60,7 @@ class VisaAgent(AgentClarificationMixin):
         destination: str = state.get("destination", "")
         session_id: str = state.get("session_id", "")
         user_profile = state.get("user_profile")
-        passport_country = (user_profile.passport_country if user_profile else None) or "Unknown"
+        passport_country = (user_profile.nationality if user_profile else None) or "Unknown"
         application_city = state.get("visa_application_city")
         if not application_city:
             answers = ClarificationManager.request(
