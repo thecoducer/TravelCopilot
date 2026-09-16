@@ -22,6 +22,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.stops import RouteLegPlan, stop_display_name
@@ -58,7 +59,7 @@ class _HubResult(BaseModel):
     route_combinations: list[_RouteCombo] = Field(default_factory=list)
 
 
-class TransportSearchAgent:
+class TransportSearchAgent(AgentClarificationMixin):
     """Layer 2 — Multi-modal transport supply search."""
 
     def __init__(

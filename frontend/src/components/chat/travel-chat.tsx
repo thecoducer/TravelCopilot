@@ -12,11 +12,12 @@ import { ErrorBanner } from "@/components/ui/error-banner";
 import { useTripPlanner, type PlannerTurn } from "@/hooks/use-trip-planner";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useSessions } from "@/hooks/use-sessions";
+import { renameSession } from "@/lib/api";
 import type { SessionSummary } from "@/lib/types";
 
 export function TravelChat({ initialSessionId }: { initialSessionId?: string }) {
   const { username } = useCurrentUser();
-  const { addSession, refresh } = useSessions();
+  const { addSession, refresh, updateSession } = useSessions();
 
   const onSessionCreated = useCallback(
     (sessionId: string, title: string, createdAt: string) => {
@@ -37,10 +38,21 @@ export function TravelChat({ initialSessionId }: { initialSessionId?: string }) 
     [addSession, initialSessionId, refresh],
   );
 
+  const onItineraryTitle = useCallback(
+    (sessionId: string, title: string) => {
+      updateSession(sessionId, { title, has_itinerary: true });
+      if (username) {
+        void renameSession(username, sessionId, title).catch(() => undefined);
+      }
+    },
+    [updateSession, username],
+  );
+
   const { state, isHydrating, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf } = useTripPlanner({
     username,
     initialSessionId,
     onSessionCreated,
+    onItineraryTitle,
   });
 
   const hasStarted = state.turns.length > 0;
@@ -148,6 +160,7 @@ function TurnView({
 
           {turn.status === "awaiting_clarification" ? (
             <ClarificationForm
+              key={turn.clarificationPrompts.map((prompt) => prompt.field).join("|")}
               prompts={turn.clarificationPrompts}
               onSubmit={onSubmitClarification}
             />

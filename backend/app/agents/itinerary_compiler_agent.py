@@ -37,6 +37,7 @@ from typing import Any, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.base import AgentClarificationMixin
 from app.config import settings
 from app.llm import get_llm
 from app.logging import get_agent_logger
@@ -84,7 +85,7 @@ the input. Never give safety, visa, budget or booking advice.
 """
 
 
-class ItineraryCompilerAgent:
+class ItineraryCompilerAgent(AgentClarificationMixin):
     """Layer 5 — absorbs upstream agent output into a day-wise itinerary.
 
     Owns the LLM calls and the tool-calling quality-gate loop. Every deterministic

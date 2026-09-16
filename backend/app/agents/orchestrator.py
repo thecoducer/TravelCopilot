@@ -6,14 +6,13 @@ Responsibilities:
     2. Detect ``is_international`` (compares source vs destination country).
     3. Detect ``self_drive_intent`` from the structured parser output.
   4. Load ``UserProfile`` from DB by session_id (best-effort, non-blocking).
-  5. **UserProfile pre-fill**: silently resolve missing fields (source city,
-     budget tier) from the user's saved profile before triggering clarification.
+    5. Identify missing or low-confidence fields for the clarification manager.
   6. **Clarification gate**: if required fields remain missing or low-confidence
      after profile pre-fill, use LangGraph ``interrupt()`` to pause the graph
      and await structured answers from the client.  The graph resumes via
      ``POST /api/trip/{session_id}/clarify`` — no full re-POST needed.
-     Up to ``settings.max_clarification_rounds`` rounds are attempted; after
-     that the agent proceeds with best-effort defaults.
+    Up to ``settings.max_clarification_rounds`` rounds are attempted; after
+    that unresolved required fields produce a hard stop.
 """
 
 from __future__ import annotations
@@ -24,9 +23,9 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.config import settings
 from app.llm import get_llm
 from app.logging import get_agent_logger
@@ -38,6 +37,7 @@ from app.models.user_profile import (
     UserProfile,
     budget_to_state,
 )
+from app.services.clarification_manager import ClarificationManager
 
 # ── Security: prompt injection patterns ──────────────────────────────────────
 _INJECTION_PATTERNS = re.compile(
@@ -63,8 +63,8 @@ _FIELD_META: dict[str, dict[str, Any]] = {
     "travelers": {
         "input_type": "number",
         "options": [],
-        "generic": "How many people are travelling? (including yourself)",
-        "contextual": "How many people are travelling? (including yourself)",
+        "generic": "How many people are travelling?",
+        "contextual": "How many people will be going on the trip?",
     },
     "trip_days": {
         "input_type": "number",
@@ -82,10 +82,13 @@ _FIELD_META: dict[str, dict[str, Any]] = {
         "input_type": "text",
         "options": [],
         "generic": "What city will you be departing from?",
-        "contextual": (
-            "We need the city, state or country for '{value}' to determine the route."
-            " Please provide the departure city and country/state."
-        ),
+        "contextual": "Please provide the departure city.",
+    },
+    "is_international": {
+        "input_type": "select",
+        "options": ["domestic", "international"],
+        "generic": "Is this a domestic trip or an international trip?",
+        "contextual": "Is this a domestic trip or an international trip?",
     },
 }
 
@@ -112,9 +115,7 @@ class _ParsedQuery(BaseModel):
     )
     return_date: str | None = Field(
         default=None,
-        description=(
-            "ISO-8601 return/end date if explicitly mentioned, otherwise null"
-        ),
+        description=("ISO-8601 return/end date if explicitly mentioned, otherwise null"),
     )
     # None means the query did not state or imply a duration — the compiler must
     # never guess this, so it is a first-class clarification field like ``dates``.
@@ -147,7 +148,7 @@ You are a travel query parser. Extract structured fields from the user's trip re
 For each field that has ambiguity, set a lower confidence score.
 
 Rules:
-- source: extract the complete departure place and its stated geographic context from phrases such as "from Kolkata, West Bengal, India", "departing from Mumbai, India", or "starting in Delhi, India". Preserve the city, state/region, and country when the user provides them; do not reduce a qualified place to only its city name. Return null with confidence=0.0 when no origin is provided. If a place name is ambiguous, lower its confidence and request the missing state or country through clarification.
+- source: return only the departure city name from phrases such as "from Kolkata", "departing from Mumbai", or "starting in Delhi". Do not include the state, region, or country. Return null with confidence=0.0 when no departure city is provided. If the city is ambiguous, lower its confidence and ask the user to clarify the city.
 - destination: extract the complete requested place and its stated geographic context from phrases such as "to Arunachal Pradesh, India", "visit Tokyo, Japan", or "trip in Goa, India". Preserve the city, state/region, and country when provided. Return null with confidence=0.0 when no destination is provided.
 - If the departure date is relative (e.g. "next month"), resolve to ISO-8601 assuming today is {today}.
 - If no date is mentioned at all, set departure_date=null and dates_confidence=0.0.
@@ -158,10 +159,11 @@ Rules:
 - budget_tier: extract an explicit budget preference only. Use "budget" for hostel/cheapest/backpacker, "luxury" for five-star/premium, and "mid" for mid-range/standard. If no preference is stated, return null; never assume "mid".
 - For interests, extract: food, nightlife, history, adventure, photography, wellness, nature, art.
 - Confidence rules (dates_confidence, trip_days_confidence): 1.0 = explicitly stated; 0.7 = strongly implied; 0.5 = inferred; 0.0 = absent.
-- For travelers: confidence=1.0 for explicit phrases such as "2 people", "2 travelers", "there are 2 of us", or "we are 2". If no traveler count is stated, return value=null and confidence=0.0; never assume one traveler.
+- For travelers: confidence=1.0 for explicit phrases such as "2 people", "three people", "2 travelers", "three travelers", "there are 2 of us", "we are 2", or "a group of three". Convert number words to integers. If no traveler count is stated, return value=null and confidence=0.0; never assume one traveler.
 
 Examples:
 - "Plan 5 days in Tokyo from Kolkata" -> is_international=true, self_drive_intent=false.
+- "Plan a trip to Darjeeling for 5 days for three people" -> travelers.value="3", travelers.confidence=1.0.
 - "Plan a road trip from Mumbai to Goa in our own car" -> is_international=false, self_drive_intent=true.
 - "Fly from Delhi to London and take trains between cities" -> is_international=true, self_drive_intent=false.
 - "Rent a scooter in Goa" -> is_international=false, self_drive_intent=true.
@@ -201,14 +203,6 @@ def _build_clarification_prompt(field: str, extracted_value: str | None) -> Clar
     )
 
 
-def _apply_profile_prefill(parsed: _ParsedQuery, user_profile: UserProfile | None) -> None:
-    """Silently fill missing fields from the user's saved profile (idempotent)."""
-    if not user_profile:
-        return
-    if _is_blank(parsed.source.value) and user_profile.home_city:
-        parsed.source = _FieldConfidence(value=user_profile.home_city, confidence=1.0)
-
-
 def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
     """Return list of (field, extracted_value_or_None) for fields needing clarification."""
     field_values: dict[str, str | None] = {
@@ -218,6 +212,13 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
         "dates": parsed.departure_date,
         "trip_days": str(parsed.trip_days) if parsed.trip_days is not None else None,
         "budget": parsed.budget_tier,
+        "is_international": (
+            "international"
+            if parsed.is_international is True
+            else "domestic"
+            if parsed.is_international is False
+            else None
+        ),
     }
     field_confidences: dict[str, float] = {
         "destination": parsed.destination.confidence,
@@ -226,6 +227,7 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
         "dates": parsed.dates_confidence,
         "trip_days": parsed.trip_days_confidence,
         "budget": 1.0 if parsed.budget_tier else 0.0,
+        "is_international": 1.0 if parsed.is_international is not None else 0.0,
     }
     thresholds = settings.field_thresholds
     fallback = settings.parse_confidence_threshold
@@ -240,8 +242,10 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
             extracted = None if _is_blank(val) else str(val)
             missing.append((field, extracted))
 
-    if parsed.is_international is None and not any(field == "source" for field, _ in missing):
-        missing.append(("source", parsed.source.value))
+    if parsed.is_international is None and not any(
+        field == "is_international" for field, _ in missing
+    ):
+        missing.append(("is_international", None))
     return missing
 
 
@@ -294,6 +298,11 @@ def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
         tier.value for tier in BudgetTier
     }:
         parsed.budget_tier = budget
+    if trip_type := answers.get("is_international", "").strip().lower():
+        if trip_type in {"international", "international trip"}:
+            parsed.is_international = True
+        elif trip_type in {"domestic", "domestic trip"}:
+            parsed.is_international = False
     if dates_str := answers.get("dates", "").strip():
         dep_iso, ret_iso, conf = _parse_date_answer(dates_str)
         if dep_iso:
@@ -303,7 +312,7 @@ def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
         parsed.dates_confidence = conf
 
 
-class OrchestratorAgent:
+class OrchestratorAgent(AgentClarificationMixin):
     def __init__(self, llm: Any | None = None) -> None:
         self._llm = llm or get_llm("orchestrator")
 
@@ -311,14 +320,13 @@ class OrchestratorAgent:
         raw_query: str = state.get("query", "")
         session_id: str = state.get("session_id", "")
         clarification_round: int = state.get("clarification_round", 0)
-        user_profile: UserProfile | None = state.get("user_profile")
-
         query = html.unescape(raw_query).strip()[:500]
         log = get_agent_logger("orchestrator", session_id)
         log.info("agent_start", query=query[:80])
 
         parsed: _ParsedQuery | None = None
         rounds_taken = 0
+        optional_answers: dict[str, str] = {}
 
         for _round in range(settings.max_clarification_rounds):
             # ── Injection check ──────────────────────────────────────────────
@@ -335,8 +343,8 @@ class OrchestratorAgent:
                         input_type="text",
                     )
                 ]
-                answers: dict[str, str] = interrupt(
-                    {"prompts": [p.model_dump() for p in prompts], "round": _round}
+                answers = ClarificationManager.request(
+                    prompts, requester="orchestrator", round_number=_round
                 )
                 new_q = html.unescape(answers.get("query", "")).strip()[:500]
                 if new_q:
@@ -370,8 +378,8 @@ class OrchestratorAgent:
                             input_type="text",
                         )
                     ]
-                    answers = interrupt(
-                        {"prompts": [p.model_dump() for p in prompts], "round": _round}
+                    answers = ClarificationManager.request(
+                        prompts, requester="orchestrator", round_number=_round
                     )
                     new_q = html.unescape(answers.get("query", "")).strip()[:500]
                     if new_q:
@@ -385,18 +393,16 @@ class OrchestratorAgent:
                 parsed.trip_days = extracted_days
                 parsed.trip_days_confidence = 1.0
 
-            extracted_travelers = quick_extract_travelers(query)
-            if extracted_travelers is not None and parsed is not None:
-                parsed.travelers = _FieldConfidence(
-                    value=str(extracted_travelers), confidence=1.0
-                )
-
-            # ── UserProfile pre-fill (idempotent) ────────────────────────────
-            _apply_profile_prefill(parsed, user_profile)
-
             # ── Compute missing / low-confidence fields ──────────────────────
             missing = _compute_missing(parsed)
             if not missing:
+                optional_answers = await self.ask_optional_clarification(
+                    self._llm,
+                    state,
+                    requester="orchestrator",
+                    round_number=_round,
+                    context=f"Parsed trip request: {query}",
+                )
                 break  # all required fields satisfied
 
             # ── Interrupt: pause graph and await client answers ──────────────
@@ -406,7 +412,9 @@ class OrchestratorAgent:
                 round=_round,
             )
             prompts = [_build_clarification_prompt(f, ev) for f, ev in missing]
-            answers = interrupt({"prompts": [p.model_dump() for p in prompts], "round": _round})
+            answers = ClarificationManager.request(
+                prompts, requester="orchestrator", round_number=_round
+            )
             _apply_answers(parsed, answers)
             rounds_taken += 1
 
@@ -505,6 +513,7 @@ class OrchestratorAgent:
             "self_drive_intent": self_drive,
             "parse_confidence": parse_confidence,
             "clarification_round": clarification_round + rounds_taken,
+            "optional_clarification_answers": optional_answers,
         }
 
         # Bootstrap user profile from interests
@@ -535,22 +544,6 @@ class OrchestratorAgent:
 _DAYS_PATTERN = re.compile(r"\b(\d+)\s*[- ]?days?\b", re.IGNORECASE)
 _NIGHTS_PATTERN = re.compile(r"\b(\d+)\s*[- ]?nights?\b", re.IGNORECASE)
 _WEEKS_PATTERN = re.compile(r"\b(\d+)\s*[- ]?weeks?\b", re.IGNORECASE)
-_TRAVELERS_PATTERN = re.compile(
-    r"\b(?:we\s+are|there\s+are|party\s+of|group\s+of)\s+(\d+)\b"
-    r"|\b(\d+)\s+(?:people|persons?|travelers?|travellers?|of\s+us)\b",
-    re.IGNORECASE,
-)
-
-
-def quick_extract_travelers(query: str) -> int | None:
-    """Return an explicitly stated traveler count, if present."""
-    if not query:
-        return None
-    match = _TRAVELERS_PATTERN.search(query)
-    if not match:
-        return None
-    count = int(next(group for group in match.groups() if group is not None))
-    return count if count >= 1 else None
 
 
 def quick_extract_days(query: str) -> int | None:

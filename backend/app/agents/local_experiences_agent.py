@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.itinerary import (
@@ -40,7 +41,7 @@ Rules:
 """
 
 
-class LocalExperiencesAgent:
+class LocalExperiencesAgent(AgentClarificationMixin):
     """Layer 2 — LLM-driven attractions, activities, and experiences with geocode enrichment."""
 
     def __init__(

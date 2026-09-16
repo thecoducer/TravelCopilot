@@ -409,8 +409,8 @@ class TestFullGraph:
             assert stay.personalization_reason
             assert stay.price_disclaimer
 
-        # No clarification triggered
-        assert result.get("needs_clarification") is False
+        # Planning completed without an unresolved required-field error.
+        assert result.get("error") is None
 
     # Case 2: international trip with visa
     def test_international_trip_tokyo_has_visa_report(self) -> None:
@@ -420,9 +420,8 @@ class TestFullGraph:
             is_intl=True,
             extra_state={
                 "is_international": True,
-                "user_profile": UserProfile(
-                    user_id="u1", passport_country="India", home_city="Mumbai"
-                ),
+                "visa_application_city": "Mumbai",
+                "user_profile": UserProfile(user_id="u1", passport_country="India"),
             },
         )
         visa = result.get("visa_report")
@@ -563,9 +562,8 @@ class TestFullGraph:
             is_intl=True,
             extra_state={
                 "is_international": True,
-                "user_profile": UserProfile(
-                    user_id="u2", passport_country="India", home_city="Mumbai"
-                ),
+                "visa_application_city": "Mumbai",
+                "user_profile": UserProfile(user_id="u2", passport_country="India"),
             },
         )
         visa = result.get("visa_report")

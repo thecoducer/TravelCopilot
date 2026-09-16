@@ -81,7 +81,36 @@ async def clarify_trip(session_id: str, request: ClarifyRequest) -> StreamingRes
         compiled = await get_compiled_graph()
         config = {"configurable": {"thread_id": session_id}}
         snapshot = await compiled.aget_state(config)
+        interrupts = snapshot.tasks[0].interrupts if snapshot and snapshot.tasks else []
+        active_request_id = (
+            interrupts[0].value.get("request_id")
+            if interrupts and isinstance(interrupts[0].value, dict)
+            else None
+        )
+        if active_request_id != request.request_id:
+            raise HTTPException(status_code=409, detail="This clarification request is stale.")
+        active_prompts = (
+            interrupts[0].value.get("prompts", [])
+            if interrupts and isinstance(interrupts[0].value, dict)
+            else []
+        )
+        active_fields = {
+            prompt.get("field")
+            for prompt in active_prompts
+            if isinstance(prompt, dict) and prompt.get("field")
+        }
+        unknown_fields = set(request.answers) - active_fields
+        if unknown_fields:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Answers do not match the active clarification prompts: "
+                    + ", ".join(sorted(unknown_fields))
+                ),
+            )
         query = (snapshot.values or {}).get("query", "") if snapshot else ""
+    except HTTPException:
+        raise
     except Exception:
         query = ""
 

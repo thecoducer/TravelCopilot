@@ -31,7 +31,7 @@ describe("activeAgentsFor", () => {
 describe("buildAgentTasks", () => {
   const completed = [{ agent: "orchestrator", preview: "Delhi → Goa", elapsedMs: 1200 }];
 
-  it("marks completed, active, and pending tasks while planning", () => {
+  it("shows completed and active tasks while planning", () => {
     const tasks = buildAgentTasks(completed, ["stops_discovery"], true);
     const byAgent = new Map(tasks.map((task) => [task.agent, task]));
 
@@ -39,16 +39,16 @@ describe("buildAgentTasks", () => {
     expect(byAgent.get("orchestrator")?.preview).toBe("Delhi → Goa");
     expect(byAgent.get("orchestrator")?.elapsedMs).toBe(1200);
     expect(byAgent.get("stops_discovery")?.status).toBe("active");
-    expect(byAgent.get("visa")?.status).toBe("pending");
+    expect(byAgent.has("visa")).toBe(false);
   });
 
-  it("keeps pending tasks visible while clarification pauses planning", () => {
-    const tasks = buildAgentTasks(completed, [], true);
+  it("keeps the next task visible as paused during clarification", () => {
+    const tasks = buildAgentTasks(completed, [], true, ["stops_discovery"]);
     const byAgent = new Map(tasks.map((task) => [task.agent, task]));
 
     expect(byAgent.get("orchestrator")?.status).toBe("done");
-    expect(byAgent.get("stops_discovery")?.status).toBe("pending");
-    expect(byAgent.get("itinerary_compiler")?.status).toBe("pending");
+    expect(byAgent.get("stops_discovery")?.status).toBe("paused");
+    expect(byAgent.has("itinerary_compiler")).toBe(false);
   });
 
   it("drops unreached pending tasks once planning stops", () => {
@@ -62,6 +62,6 @@ describe("buildAgentTasks", () => {
     const tasks = buildAgentTasks(completed, ["stops_discovery"], true);
     const order = tasks.map((task) => task.agent);
     expect(order.indexOf("orchestrator")).toBeLessThan(order.indexOf("stops_discovery"));
-    expect(order.indexOf("stops_discovery")).toBeLessThan(order.indexOf("itinerary_compiler"));
+    expect(order).toEqual(["orchestrator", "stops_discovery"]);
   });
 });

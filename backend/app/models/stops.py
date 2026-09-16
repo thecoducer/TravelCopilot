@@ -25,6 +25,7 @@ StopKind = Literal["overnight", "gateway_transit"]
 # Sentinel origin/destination stop_id for legs anchored at the user's source —
 # the source is a plain string label (from TripState), never a routed TripStop.
 SOURCE_STOP_ID = "source"
+SINGLE_STOP_ID = "0"
 
 
 class LegType(StrEnum):

@@ -48,16 +48,18 @@ def _base_state(**overrides: Any) -> dict[str, Any]:
 
 
 class TestSingleDestination:
-    async def test_single_destination_status_produces_no_route_structure(self) -> None:
+    async def test_single_destination_status_produces_one_stop_route_structure(self) -> None:
         route = _Route(route_discovery_status="single_destination")
         agent = StopsDiscoveryAgent(llm=_make_llm(route))
 
         result = await agent(_base_state(destination="Osaka"))
 
         assert result["route_discovery_status"] == "single_destination"
-        assert result["stops"] == {}
+        assert list(result["stops"]) == ["0"]
+        assert result["stops"]["0"].name == "Osaka"
         assert result["route_legs"] == {}
-        assert result["stops_by_day"] == {}
+        assert len(result["stops_by_day"]) == 5
+        assert {allocation.stop_id for allocation in result["stops_by_day"].values()} == {"0"}
         assert result["gateway_options"] == []
 
     async def test_missing_dates_defaults_to_single_destination_without_llm_call(self) -> None:

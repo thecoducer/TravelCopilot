@@ -13,7 +13,7 @@ export type AgentInfo = {
 export const AGENT_CATALOG: Record<string, AgentInfo> = {
   orchestrator: {
     label: "Understanding your request",
-    description: "Reading your trip request and filling in the essentials",
+    description: "Extracting the essentials from your request",
   },
   stops_discovery: {
     label: "Building the route",
@@ -28,12 +28,12 @@ export const AGENT_CATALOG: Record<string, AgentInfo> = {
     description: "Looking for flights, trains, and transit routes",
   },
   stay_search: {
-    label: "Comparing places to stay",
-    description: "Gathering hotel and stay options",
+    label: "Finding places to stay",
+    description: "Gathering stays that fit your trip",
   },
   local_experiences: {
-    label: "Finding local experiences",
-    description: "Discovering attractions and things to do",
+    label: "Finding things to do",
+    description: "Discovering attractions and local experiences",
   },
   transport_optimizer: {
     label: "Optimizing your route",
@@ -78,6 +78,10 @@ export const AGENT_CATALOG: Record<string, AgentInfo> = {
   discovery_failed_end: {
     label: "Needs more information",
     description: "Couldn't build a route with the details given",
+  },
+  required_fields_end: {
+    label: "Needs more information",
+    description: "Some required trip details are still missing",
   },
 };
 
@@ -140,7 +144,7 @@ export function activeAgentsFor(completedAgents: ReadonlySet<string>): string[] 
 /** Canonical execution order of every agent shown in the task timeline. */
 export const AGENT_PIPELINE: string[] = PLANNING_PHASES.flatMap((phase) => phase.agents);
 
-export type AgentTaskStatus = "done" | "active" | "pending";
+export type AgentTaskStatus = "done" | "active" | "paused" | "pending";
 
 export type AgentTask = {
   agent: string;
@@ -167,9 +171,11 @@ export function buildAgentTasks(
   completed: readonly CompletedAgentSummary[],
   activeAgents: readonly string[],
   isPlanning: boolean,
+  pausedAgents: readonly string[] = [],
 ): AgentTask[] {
   const completedByAgent = new Map(completed.map((entry) => [entry.agent, entry]));
   const activeSet = new Set(activeAgents);
+  const pausedSet = new Set(pausedAgents);
   const ordered = [
     ...AGENT_PIPELINE,
     ...completed.map((entry) => entry.agent).filter((agent) => !AGENT_PIPELINE.includes(agent)),
@@ -188,9 +194,11 @@ export function buildAgentTasks(
       ? "done"
       : activeSet.has(agent)
         ? "active"
+        : pausedSet.has(agent)
+          ? "paused"
         : "pending";
 
-    if (status === "pending" && !isPlanning) {
+    if (status === "pending") {
       continue;
     }
 

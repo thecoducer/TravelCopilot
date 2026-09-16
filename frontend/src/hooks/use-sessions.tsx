@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -18,6 +19,7 @@ type SessionsContextValue = {
   loading: boolean;
   refresh: () => Promise<void>;
   addSession: (session: SessionSummary) => void;
+  updateSession: (sessionId: string, changes: Partial<SessionSummary>) => void;
 };
 
 const SessionsContext = createContext<SessionsContextValue | null>(null);
@@ -26,8 +28,15 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
   const { username, mounted } = useCurrentUser();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const optimisticSessionsRef = useRef<SessionSummary[]>([]);
 
   const addSession = useCallback((session: SessionSummary) => {
+    optimisticSessionsRef.current = [
+      session,
+      ...optimisticSessionsRef.current.filter(
+        (existing) => existing.session_id !== session.session_id,
+      ),
+    ];
     setSessions((current) => {
       if (current.some((existing) => existing.session_id === session.session_id)) {
         return current;
@@ -36,6 +45,18 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const updateSession = useCallback((sessionId: string, changes: Partial<SessionSummary>) => {
+    const update = (session: SessionSummary): SessionSummary =>
+      session.session_id === sessionId ? { ...session, ...changes } : session;
+
+    optimisticSessionsRef.current = optimisticSessionsRef.current.map(update);
+    setSessions((current) => current.map(update));
+  }, []);
+
+  useEffect(() => {
+    optimisticSessionsRef.current = [];
+  }, [username]);
+
   const refresh = useCallback(async () => {
     if (!username) {
       setSessions([]);
@@ -43,7 +64,11 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
     }
     setLoading(true);
     try {
-      setSessions(await listSessions(username));
+      const listedSessions = await listSessions(username);
+      setSessions(mergeSessions(listedSessions, optimisticSessionsRef.current));
+      optimisticSessionsRef.current = optimisticSessionsRef.current.filter(
+        (optimistic) => !listedSessions.some((listed) => listed.session_id === optimistic.session_id),
+      );
     } catch {
       // Sidebar is non-critical; keep the last good list on failure.
     } finally {
@@ -60,7 +85,10 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
       try {
         const list = await listSessions(username);
         if (!cancelled) {
-          setSessions(list);
+          setSessions(mergeSessions(list, optimisticSessionsRef.current));
+          optimisticSessionsRef.current = optimisticSessionsRef.current.filter(
+            (optimistic) => !list.some((listed) => listed.session_id === optimistic.session_id),
+          );
         }
       } catch {
         // Sidebar is non-critical.
@@ -72,11 +100,22 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
   }, [mounted, username]);
 
   const value = useMemo(
-    () => ({ sessions, loading, refresh, addSession }),
-    [sessions, loading, refresh, addSession],
+    () => ({ sessions, loading, refresh, addSession, updateSession }),
+    [sessions, loading, refresh, addSession, updateSession],
   );
 
   return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>;
+}
+
+function mergeSessions(
+  listedSessions: SessionSummary[],
+  optimisticSessions: SessionSummary[],
+): SessionSummary[] {
+  const listedIds = new Set(listedSessions.map((session) => session.session_id));
+  return [
+    ...optimisticSessions.filter((session) => !listedIds.has(session.session_id)),
+    ...listedSessions,
+  ];
 }
 
 export function useSessions(): SessionsContextValue {

@@ -2,14 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import type { CSSProperties, Ref } from "react";
-import { Check } from "lucide-react";
+import { Check, Pause } from "lucide-react";
 import { SectionCard } from "@/components/ui/section-card";
 import { Spinner } from "@/components/ui/spinner";
 import { useElapsedTimer } from "@/hooks/use-elapsed-timer";
 import {
   activeAgentsFor,
+  AGENT_PIPELINE,
   buildAgentTasks,
-  PLANNING_PHASES,
   type AgentTask,
 } from "@/lib/agent-catalog";
 import { formatElapsed } from "@/lib/format";
@@ -34,36 +34,32 @@ export function PlanningActivity({
   const isAwaitingClarification = status === "awaiting_clarification";
   const elapsedMs = useElapsedTimer(planningStartedAt, isPlanning);
   const completedIds = new Set(completedAgents.map((entry) => entry.agent));
-  const activeAgents = isPlanning ? activeAgentsFor(completedIds) : [];
-  const currentPhase = PLANNING_PHASES.find((phase) =>
-    phase.agents.some((agent) => activeAgents.includes(agent)),
-  );
+  const currentAgents = activeAgentsFor(completedIds);
+  const activeAgents = isPlanning ? currentAgents : [];
 
   const tasks = buildAgentTasks(
     completedAgents,
     activeAgents,
     isPlanning || isAwaitingClarification,
+    isAwaitingClarification ? currentAgents : [],
   ).sort((left, right) => {
-    const statusOrder = { done: 0, active: 1, pending: 2 };
+    const statusOrder = { done: 0, active: 1, paused: 1, pending: 2 };
     return statusOrder[left.status] - statusOrder[right.status];
   });
   const doneCount = tasks.filter((task) => task.status === "done").length;
 
-  const subtitle = isPlanning
-    ? `${currentPhase?.name ?? "Planning"} · ${formatElapsed(elapsedMs)} elapsed`
-    : isAwaitingClarification
-      ? "Planning is paused while we get a few details"
-      : `${doneCount} step${doneCount === 1 ? "" : "s"} · finished in ${formatElapsed(elapsedMs)}`;
+  const elapsedLabel = `${formatElapsed(elapsedMs)} elapsed`;
 
   return (
     <SectionCard
-      title="Planning activity"
-      subtitle={subtitle}
-      actions={
-        <span className="inline-flex items-baseline text-[0.9rem] font-bold tabular-nums text-fg">
-          {doneCount}
-          <span className="text-[0.78rem] font-semibold text-faint">/{tasks.length}</span>
-        </span>
+      flat
+      headerContent={
+        <div className="flex w-full items-center justify-between gap-4">
+          <span className="font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-muted">
+            {doneCount}/{AGENT_PIPELINE.length} complete
+          </span>
+          <span className="text-[0.78rem] text-muted">{elapsedLabel}</span>
+        </div>
       }
     >
       <TaskTimeline tasks={tasks} />
@@ -85,7 +81,7 @@ function TaskTimeline({ tasks }: { tasks: AgentTask[] }) {
 
   return (
     <ol
-      className="flex min-w-0 max-h-[calc(3.25rem*var(--visible-tasks))] flex-col overflow-x-hidden overflow-y-auto"
+      className="flex min-w-0 max-h-[calc(4.5rem*var(--visible-tasks))] flex-col gap-1 overflow-x-hidden overflow-y-auto pr-1"
       style={{ "--visible-tasks": VISIBLE_TASKS } as CSSProperties}
       aria-label="Agent tasks"
     >
@@ -102,25 +98,25 @@ function TaskTimeline({ tasks }: { tasks: AgentTask[] }) {
 
 function TaskRow({ task, rowRef }: { task: AgentTask; rowRef?: Ref<HTMLLIElement> }) {
   const isActive = task.status === "active";
-  const isPending = task.status === "pending";
   return (
     <li
       ref={rowRef}
       className={cn(
-        "grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-1 py-2 last:border-0",
-        isActive && "-mx-2 rounded-md border-b-transparent px-2",
-        isPending && "opacity-60",
+        "grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-3 px-2 py-3",
       )}
     >
       <span
         className={cn(
-          "inline-flex size-6 items-center justify-center rounded-full",
-          task.status === "done" && "bg-success-soft",
+          "inline-flex size-7 items-center justify-center rounded-full",
+          task.status === "done" && "bg-accent-soft text-success",
+          !isActive && task.status !== "done" && task.status !== "paused" && "border border-border-strong",
         )}
         aria-hidden
       >
         {task.status === "done" ? (
-          <Check className="size-3.5 text-success" strokeWidth={3} />
+          <Check className="size-3.5" strokeWidth={2.5} />
+        ) : task.status === "paused" ? (
+          <Pause className="size-3.5 text-muted" strokeWidth={2.5} />
         ) : isActive ? (
           <Spinner label="" />
         ) : (
@@ -132,8 +128,7 @@ function TaskRow({ task, rowRef }: { task: AgentTask; rowRef?: Ref<HTMLLIElement
         <p
           className={cn(
             "text-[0.88rem] font-semibold text-fg",
-            isActive && "text-accent-hover",
-            isPending && "font-medium text-muted",
+            (isActive || task.status === "paused") && "text-accent-hover",
           )}
         >
           {task.label}
@@ -144,10 +139,14 @@ function TaskRow({ task, rowRef }: { task: AgentTask; rowRef?: Ref<HTMLLIElement
       </div>
 
       {task.status === "done" && task.elapsedMs !== null ? (
-        <span className="text-[0.78rem] tabular-nums text-faint">+{formatElapsed(task.elapsedMs)}</span>
+        <span className="font-mono text-[0.68rem] tabular-nums text-faint">+{formatElapsed(task.elapsedMs)}</span>
       ) : isActive ? (
-        <span className="text-[0.72rem] font-semibold uppercase tracking-wide text-accent">
-          Working…
+        <span className="font-mono text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-accent-hover">
+          Working
+        </span>
+      ) : task.status === "paused" ? (
+        <span className="font-mono text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-muted">
+          Paused
         </span>
       ) : null}
     </li>

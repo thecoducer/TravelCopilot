@@ -10,6 +10,7 @@ import asyncio
 import re
 from typing import Any
 
+from app.agents.base import AgentClarificationMixin
 from app.logging import get_agent_logger
 from app.models.stops import TripStop
 from app.models.transport import StayOption
@@ -140,7 +141,7 @@ def _extract_maps_url(prop: dict[str, Any], lat: float | None, lng: float | None
     return None
 
 
-class StaySearchAgent:
+class StaySearchAgent(AgentClarificationMixin):
     """Layer 2 — Hotel and accommodation search via SerpAPI Google Hotels."""
 
     def __init__(self, tool_factory: ToolFactory | None = None) -> None:

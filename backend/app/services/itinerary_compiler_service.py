@@ -42,14 +42,19 @@ from app.models.itinerary import (
     TripDays,
 )
 from app.models.itinerary_compilation import (
-    SINGLE_STOP_ID,
     ActivityPick,
     DayPlan,
     RoutePlan,
     TripNarrative,
 )
 from app.models.reports import BudgetReport, SafetyReport
-from app.models.stops import DayAllocation, RouteLegPlan, TripStop, stop_display_name
+from app.models.stops import (
+    SINGLE_STOP_ID,
+    DayAllocation,
+    RouteLegPlan,
+    TripStop,
+    stop_display_name,
+)
 from app.models.transport import StayOption, TransportRecommendation
 
 logger = structlog.get_logger(__name__)

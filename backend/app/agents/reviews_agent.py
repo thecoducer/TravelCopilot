@@ -13,6 +13,7 @@ from typing import Any, NamedTuple
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.reports import ReviewSummary
@@ -70,7 +71,7 @@ def _review_key(route_version: int, target: _ReviewTarget) -> str:
     return f"{route_version}:{target.stop_id or 'unknown'}:{place_key}"
 
 
-class ReviewsAgent:
+class ReviewsAgent(AgentClarificationMixin):
     """Layer 4 — Reviews and photos for selected accommodation and experiences."""
 
     def __init__(

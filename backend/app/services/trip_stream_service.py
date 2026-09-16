@@ -42,6 +42,23 @@ def sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
+def _result_count(*values: Any) -> int:
+    """Count result items across flat and per-stop/per-leg state shapes."""
+    count = 0
+    for value in values:
+        if isinstance(value, list):
+            count += len(value)
+        elif isinstance(value, dict):
+            count += sum(len(items) if isinstance(items, list) else 1 for items in value.values())
+    return count
+
+
+def _found_preview(count: int, singular: str, plural: str) -> str:
+    if count == 0:
+        return f"No {plural} found"
+    return f"Found {count} {singular if count == 1 else plural}"
+
+
 def agent_preview(agent_name: str, output: dict[str, Any]) -> str:
     try:
         m: dict[str, Any] = {
@@ -52,10 +69,26 @@ def agent_preview(agent_name: str, output: dict[str, Any]) -> str:
             "visa": lambda o: (
                 f"Visa required: {getattr(o.get('visa_report'), 'visa_required', 'N/A')}"
             ),
-            "transport_search": lambda o: f"{len(o.get('transport_legs_raw', {}))} route legs",
-            "stay_search": lambda o: f"{len(o.get('stays_raw', []))} hotels",
-            "local_experiences": lambda o: f"{len(o.get('experiences_raw', []))} experiences",
-            "stay_analyst": lambda o: f"{len(o.get('stays_shortlist', []))} shortlisted hotels",
+            "transport_search": lambda o: _found_preview(
+                _result_count(o.get("transport_legs_raw"), o.get("transport_legs_raw_by_leg")),
+                "route leg",
+                "route legs",
+            ),
+            "stay_search": lambda o: _found_preview(
+                _result_count(o.get("stays_raw"), o.get("stays_raw_by_stop")),
+                "place to stay",
+                "places to stay",
+            ),
+            "local_experiences": lambda o: _found_preview(
+                _result_count(o.get("experiences_raw"), o.get("experiences_raw_by_stop")),
+                "experience",
+                "experiences",
+            ),
+            "stay_analyst": lambda o: _found_preview(
+                _result_count(o.get("stays_shortlist"), o.get("stays_shortlist_by_stop")),
+                "shortlisted stay",
+                "shortlisted stays",
+            ),
             "transport_optimizer": lambda o: (
                 getattr(o.get("transport_recommendation"), "rationale", "")[:80] or "Done"
             ),
@@ -121,7 +154,7 @@ async def stream_graph(
             config["callbacks"] = [langfuse_handler]
 
         async for chunk in compiled.astream(state, stream_mode="updates", config=config):
-            # Detect interrupt() from OrchestratorAgent — graph is paused
+            # Detect a managed clarification interrupt — graph is paused
             if "__interrupt__" in chunk:
                 interrupt_val = chunk["__interrupt__"][0]
                 payload = interrupt_val.value if hasattr(interrupt_val, "value") else interrupt_val
@@ -129,6 +162,8 @@ async def stream_graph(
                     "needs_clarification",
                     {
                         "session_id": session_id,
+                        "request_id": payload.get("request_id"),
+                        "requester": payload.get("requester"),
                         "prompts": payload.get("prompts", []),
                         "round": payload.get("round", 0),
                     },
@@ -202,6 +237,8 @@ async def stream_resumed_graph(
                     "needs_clarification",
                     {
                         "session_id": session_id,
+                        "request_id": payload.get("request_id"),
+                        "requester": payload.get("requester"),
                         "prompts": payload.get("prompts", []),
                         "round": payload.get("round", 0),
                     },

@@ -12,6 +12,7 @@ export type PlanRequest = {
 };
 
 export type ClarifyRequest = {
+  request_id: string;
   answers: Record<string, string>;
 };
 
@@ -37,7 +38,6 @@ export type UserProfileData = {
   user_id: string;
   username?: string | null;
   display_name?: string | null;
-  home_city?: string | null;
   nationality?: string | null;
   passport_country?: string | null;
   preferred_currency?: string;
@@ -75,10 +75,14 @@ export type ClarificationPrompt = {
   input_type: "text" | "date" | "number" | "select";
   options: string[];
   extracted_value: string | null;
+  optional?: boolean;
+  skip_label?: string;
 };
 
 export type NeedsClarificationEvent = {
   session_id: string;
+  request_id: string;
+  requester: string;
   prompts: ClarificationPrompt[];
   round: number;
 };

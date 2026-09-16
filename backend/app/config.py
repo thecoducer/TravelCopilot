@@ -244,15 +244,17 @@ class Settings(BaseSettings):
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate
-    clarification_required_fields: str = "source,destination,dates,trip_days,travelers,budget"
+    clarification_required_fields: str
     # Per-field confidence thresholds (comma-separated field:threshold pairs).
     # Falls back to parse_confidence_threshold for fields not listed.
-    clarification_field_thresholds: str = (
-        "source:0.3,destination:0.7,dates:0.6,trip_days:0.7,travelers:0.4,budget:0.7"
-    )
-    parse_confidence_threshold: float = 0.6
+    clarification_field_thresholds: str
+    clarification_allowed_fields: str
+    clarification_max_questions: int
+    clarification_max_optional_questions: int
+    clarification_max_prompt_length: int
+    parse_confidence_threshold: float
     # Maximum clarification rounds before proceeding with best-effort defaults
-    max_clarification_rounds: int = 3
+    max_clarification_rounds: int
 
     # StopsDiscoveryAgent — max candidate access-gateway options to surface per route
     max_gateway_options: int = 2
@@ -304,6 +306,10 @@ class Settings(BaseSettings):
                 with contextlib.suppress(ValueError):
                     result[field.strip()] = float(val.strip())
         return result
+
+    @property
+    def clarification_allowed_field_names(self) -> list[str]:
+        return [field.strip() for field in self.clarification_allowed_fields.split(",")]
 
     def missing_real_provider_credentials(self) -> dict[str, str]:
         if self.mock_external_apis:

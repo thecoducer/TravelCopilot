@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { getProfile, saveProfile } from "@/lib/api";
 import type { UserProfileData } from "@/lib/types";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 const HOTEL_STYLES = ["hostel", "budget", "boutique", "business", "luxury"];
 const TRAVEL_STYLES = ["adventure", "cultural", "luxury", "backpacker", "family"];
@@ -99,13 +100,6 @@ export function ProfileForm() {
             className={inputClass}
             value={profile.display_name ?? ""}
             onChange={(e) => update("display_name", e.target.value)}
-          />
-        </Field>
-        <Field label="Home city">
-          <input
-            className={inputClass}
-            value={profile.home_city ?? ""}
-            onChange={(e) => update("home_city", e.target.value)}
           />
         </Field>
         <Field label="Nationality">
@@ -244,7 +238,7 @@ export function ProfileForm() {
         </button>
         {status === "saved" ? <span className="text-[0.88rem] font-semibold text-success">Saved ✓</span> : null}
         {status === "error" ? (
-          <span className="text-[0.88rem] text-danger">Could not save. Try again.</span>
+          <ErrorBanner message="Could not save. Try again." className="px-3 py-2" />
         ) : null}
       </div>
     </div>

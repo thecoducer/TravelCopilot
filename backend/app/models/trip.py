@@ -25,6 +25,7 @@ class ClarifyRequest(BaseModel):
     Example: ``{"question": "answer"}``
     """
 
+    request_id: str
     answers: dict[str, str]
 
 

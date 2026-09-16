@@ -16,6 +16,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.config import settings
 from app.graph.state import TripStateModel
 from app.llm import get_llm
@@ -60,7 +61,7 @@ class _CostSavingTips(BaseModel):
     tips: list[str] = Field(default_factory=list)
 
 
-class BudgetPlannerAgent:
+class BudgetPlannerAgent(AgentClarificationMixin):
     """Layer 4 — Cost aggregation, FX conversion, and budget verdict."""
 
     def __init__(

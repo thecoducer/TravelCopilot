@@ -19,11 +19,13 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.config import settings
 from app.graph.state import TripStateModel
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.stops import (
+    SINGLE_STOP_ID,
     SOURCE_STOP_ID,
     DayAllocation,
     GatewayOption,
@@ -337,11 +339,39 @@ def _shape_route(
     dates: TripDates,
     self_drive_intent: bool,
     route_version: int,
+    destination: str,
 ) -> dict[str, Any]:
     trip_days = dates.trip_days
 
     if route.route_discovery_status == "single_destination" or not route.overnight_stops:
-        return _empty_result("single_destination", route_version)
+        stop = TripStop(
+            stop_id=SINGLE_STOP_ID,
+            name=destination,
+            stop_kind="overnight",
+            sequence=0,
+            nights=trip_days,
+            arrival_date=dates.departure,
+            departure_date=dates.return_date,
+        )
+        return {
+            "route_discovery_status": "single_destination",
+            "route_verification_status": "provisional",
+            "route_version": route_version,
+            "stops": {SINGLE_STOP_ID: stop},
+            "route_legs": {},
+            "stops_by_day": {
+                day_index: DayAllocation(
+                    day_index=day_index,
+                    date=dates.departure + timedelta(days=day_index),
+                    stop_id=SINGLE_STOP_ID,
+                    is_checkin_day=day_index == 0,
+                    is_checkout_day=day_index == trip_days - 1,
+                )
+                for day_index in range(trip_days)
+            },
+            "gateway_options": [],
+            "selected_gateway_option_id": None,
+        }
 
     # A stop can't be allocated fewer than 1 night, so cap the circuit length
     # to the trip's actual duration rather than producing an invalid route.
@@ -409,17 +439,21 @@ def _shape_route(
     # never asked of the LLM, so it can neither invent nor drop a transfer.
     for i in range(len(overnight_ids) - 1):
         origin = overnight_stops[overnight_ids[i]]
-        destination = overnight_stops[overnight_ids[i + 1]]
+        destination_stop = overnight_stops[overnight_ids[i + 1]]
         leg_type = (
             LegType.COUNTRY_TRANSFER
-            if origin.country and destination.country and origin.country != destination.country
+            if (
+                origin.country
+                and destination_stop.country
+                and origin.country != destination_stop.country
+            )
             else LegType.INTERNAL_TRANSFER
         )
         day_index = max(d for d, a in stops_by_day.items() if a.stop_id == origin.stop_id)
         leg = _make_leg(
             f"leg_internal_{i + 1:02d}",
             origin.stop_id,
-            destination.stop_id,
+            destination_stop.stop_id,
             leg_type,
             day_index,
             stops_by_day,
@@ -439,7 +473,7 @@ def _shape_route(
     }
 
 
-class StopsDiscoveryAgent:
+class StopsDiscoveryAgent(AgentClarificationMixin):
     """Layer 1 — provisional multi-stop route and gateway discovery."""
 
     def __init__(self, llm: Any | None = None) -> None:
@@ -483,7 +517,7 @@ class StopsDiscoveryAgent:
             return _empty_result("discovery_failed", route_version)
 
         try:
-            result = _shape_route(route, s.dates, s.self_drive_intent, route_version)
+            result = _shape_route(route, s.dates, s.self_drive_intent, route_version, s.destination)
         except Exception as exc:
             log.error("route_shaping_failed", error=str(exc))
             return _empty_result("discovery_failed", route_version)

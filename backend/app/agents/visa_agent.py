@@ -15,9 +15,12 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.clarification import ClarificationPrompt
 from app.models.reports import VisaReport, VisaSource
+from app.services.clarification_manager import ClarificationManager
 from app.tools.factory import ToolFactory
 
 _SYSTEM_PROMPT = """\
@@ -36,7 +39,7 @@ Critical rules:
 """
 
 
-class VisaAgent:
+class VisaAgent(AgentClarificationMixin):
     """Layer 1 — Visa requirements, embassy, and application centre details."""
 
     def __init__(
@@ -58,7 +61,23 @@ class VisaAgent:
         session_id: str = state.get("session_id", "")
         user_profile = state.get("user_profile")
         passport_country = (user_profile.passport_country if user_profile else None) or "Unknown"
-        home_city = (user_profile.home_city if user_profile else None) or "Unknown"
+        application_city = state.get("visa_application_city")
+        if not application_city:
+            answers = ClarificationManager.request(
+                [
+                    ClarificationPrompt(
+                        field="visa_application_city",
+                        question="Which city will you apply for the visa from?",
+                        reason="Needed to find the correct visa centre and embassy.",
+                        input_type="text",
+                    )
+                ],
+                requester="visa",
+                round_number=state.get("clarification_round", 0),
+            )
+            application_city = answers.get("visa_application_city", "").strip()
+            if not application_city:
+                return {"error": "A visa application city is required for visa lookup."}
         destination_country = destination
 
         log = get_agent_logger("visa", session_id, destination=destination)
@@ -76,12 +95,12 @@ class VisaAgent:
         centre_task = self._visa_centre.run(
             passport_country=passport_country,
             destination_country=destination_country,
-            home_city=home_city,
+            application_city=application_city,
         )
         embassy_task = self._embassy.run(
             passport_country=passport_country,
             destination_country=destination_country,
-            home_city=home_city,
+            application_city=application_city,
         )
 
         tavily_result: dict[str, Any] | BaseException
@@ -147,6 +166,7 @@ class VisaAgent:
         if not sources:
             log.warning("no_visa_sources", forcing_confidence_low=True)
             return {
+                "visa_application_city": application_city,
                 "visa_report": VisaReport(
                     passport_country=passport_country,
                     destination_country=destination_country,
@@ -155,7 +175,7 @@ class VisaAgent:
                     validity_notes=(
                         "No grounded sources found — verify directly with consulate before booking."
                     ),
-                )
+                ),
             }
 
         chain = self._llm.with_structured_output(VisaReport)
@@ -197,4 +217,4 @@ class VisaAgent:
             confidence=report.confidence,
             sources=len(report.sources),
         )
-        return {"visa_report": report}
+        return {"visa_application_city": application_city, "visa_report": report}

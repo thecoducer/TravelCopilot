@@ -18,7 +18,6 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import Experience, Itinerary
 from app.models.reports import (
     AgentTokenUsage,
@@ -51,11 +50,11 @@ class TripState(TypedDict, total=False):
     user_profile: UserProfile | None
     is_international: bool  # set by OrchestratorAgent
     self_drive_intent: bool  # set by OrchestratorAgent
+    visa_application_city: str | None
+    optional_clarification_answers: dict[str, str]
 
     # ── Clarification gate (F) ─────────────────────────────────────────────
-    needs_clarification: bool  # kept for backward-compat; no longer written by orchestrator
     missing_required_fields: list[str]
-    clarification_prompts: list[ClarificationPrompt]  # kept for backward-compat
     parse_confidence: dict[str, float]  # field → confidence score 0–1
     clarification_round: int  # number of completed clarification rounds
 
@@ -137,9 +136,7 @@ class TripStateModel(BaseModel):
     is_international: bool = False
     self_drive_intent: bool = False
 
-    needs_clarification: bool = False
     missing_required_fields: list[str] = Field(default_factory=list)
-    clarification_prompts: list[ClarificationPrompt] = Field(default_factory=list)
     parse_confidence: dict[str, float] = Field(default_factory=dict)
     clarification_round: int = 0
 

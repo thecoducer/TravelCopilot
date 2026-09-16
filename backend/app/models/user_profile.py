@@ -45,7 +45,6 @@ class UserProfile(BaseModel):
     user_id: str
     username: str | None = None  # auth-free identity; keys the profile across sessions
     display_name: str | None = None
-    home_city: str | None = None
     nationality: str | None = None
     passport_country: str | None = None
     preferred_currency: str = "INR"

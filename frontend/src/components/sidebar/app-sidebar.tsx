@@ -100,13 +100,13 @@ export function AppSidebar({
         <div className="relative mb-5 size-9">
           <TravelCopilotLogo
             showWordmark={false}
-            className="absolute inset-0 transition-[filter,opacity,transform] duration-300 ease-out group-hover:scale-95 group-hover:opacity-0 group-hover:blur-sm"
+            className="absolute inset-0 transition-[opacity,transform] duration-300 ease-out group-hover:scale-95 group-hover:opacity-0"
           />
           <RailButton
             icon={<PanelLeftOpen size={18} />}
             label="Expand sidebar"
             onClick={onShow}
-            className="absolute inset-0 opacity-0 blur-sm transition-[filter,opacity,transform] duration-300 ease-out group-hover:scale-100 group-hover:opacity-100 group-hover:blur-0"
+            className="absolute inset-0 opacity-0 transition-[opacity,transform] duration-300 ease-out group-hover:scale-100 group-hover:opacity-100"
           />
         </div>
         <div className="flex flex-col items-center gap-3">

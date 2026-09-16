@@ -595,17 +595,6 @@
             ],
             "title": "Display Name"
           },
-          "home_city": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Home City"
-          },
           "nationality": {
             "anyOf": [
               {

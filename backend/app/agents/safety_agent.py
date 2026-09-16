@@ -16,6 +16,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.reports import SafetyReport
@@ -42,7 +43,7 @@ Rules:
 """
 
 
-class SafetyAgent:
+class SafetyAgent(AgentClarificationMixin):
     """Layer 4 — Destination context, scam warnings, and emergency contacts.
 
     Runs after FoodDiscoveryAgent so ``experiences_raw`` and ``food_recommendations``

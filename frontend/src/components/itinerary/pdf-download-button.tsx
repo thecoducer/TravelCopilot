@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { Spinner } from "@/components/ui/spinner";
 
 type PdfDownloadButtonProps = {
@@ -27,9 +28,7 @@ export function PdfDownloadButton({
         {isDownloading ? "Preparing PDF…" : "Download PDF"}
       </Button>
       {error ? (
-        <p role="alert" className="text-xs text-danger">
-          {error}
-        </p>
+        <ErrorBanner message={error} className="w-full max-w-sm px-3 py-2" />
       ) : null}
     </div>
   );

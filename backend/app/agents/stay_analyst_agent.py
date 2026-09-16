@@ -15,6 +15,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.transport import StayOption
@@ -65,7 +66,7 @@ def _budget_filter(stays: list[StayOption], budget_tier: str) -> list[StayOption
     return [s for s in stays if s.price_per_night >= avg * 0.5] or stays
 
 
-class StayAnalystAgent:
+class StayAnalystAgent(AgentClarificationMixin):
     """Layer 3 — Budget-filtered hotel ranking with shortlist + personalization."""
 
     def __init__(self, llm: Any | None = None) -> None:

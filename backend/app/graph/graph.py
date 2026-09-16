@@ -1,7 +1,7 @@
-"""LangGraph StateGraph — 14 agent nodes with interrupt-based clarification.
+"""LangGraph StateGraph — 14 agent nodes with managed clarification.
 
-The OrchestratorAgent uses LangGraph ``interrupt()`` to pause the graph when
-the user query is ambiguous.  The client resumes via
+The ClarificationManager uses LangGraph ``interrupt()`` to pause the graph
+when a query or domain-specific input is ambiguous. The client resumes via
 ``POST /api/trip/{session_id}/clarify`` — no full re-POST is needed.
 
 After the orchestrator finishes (with or without clarification rounds), route
@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import interrupt
 
 from app.agents.budget_planner_agent import BudgetPlannerAgent
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
@@ -34,6 +33,7 @@ from app.graph.state import TripState, initial_state
 from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
 from app.models.user_profile import UserProfile
+from app.services.clarification_manager import ClarificationManager
 from app.services.user_profile_service import upsert_user_profile
 from app.tools.factory import ToolFactory
 
@@ -41,7 +41,7 @@ from app.tools.factory import ToolFactory
 async def _route_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
     """Pause the graph when StopsDiscoveryAgent could not shape a usable route.
 
-    Reuses the existing ``interrupt()``/resume mechanism (see OrchestratorAgent)
+    Reuses the shared ClarificationManager interrupt/resume mechanism
     instead of silently falling back to a single-destination itinerary — a
     ``discovery_failed`` route must never reach Layer 2 supply search.
     """
@@ -59,7 +59,9 @@ async def _route_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
         reason="Route discovery failed",
         input_type="text",
     )
-    answers: dict[str, str] = interrupt({"prompts": [prompt.model_dump()], "round": round_})
+    answers = ClarificationManager.request(
+        [prompt], requester="route_clarification", round_number=round_
+    )
     updates: dict[str, Any] = {"clarification_round": round_ + 1}
     new_destination = answers.get("destination", "").strip()
     if new_destination:
@@ -96,11 +98,10 @@ async def _food_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
         ),
     ]
     log.info("clarification_required", fields=[prompt.field for prompt in prompts])
-    answers: dict[str, str] = interrupt(
-        {
-            "prompts": [prompt.model_dump() for prompt in prompts],
-            "round": state.get("clarification_round", 0),
-        }
+    answers = ClarificationManager.request(
+        prompts,
+        requester="food_clarification",
+        round_number=state.get("clarification_round", 0),
     )
 
     dietary_answer = answers.get("dietary_restrictions", "").strip()

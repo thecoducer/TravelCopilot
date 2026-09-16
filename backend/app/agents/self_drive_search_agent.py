@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.reports import SelfDriveReport
@@ -32,7 +33,7 @@ Rules:
 """
 
 
-class SelfDriveSearchAgent:
+class SelfDriveSearchAgent(AgentClarificationMixin):
     """Layer 3 — Conditional: rental options + fuel estimate for self-drive trips."""
 
     def __init__(

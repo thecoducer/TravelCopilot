@@ -14,6 +14,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.base import AgentClarificationMixin
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.stops import RouteLegPlan
@@ -111,7 +112,7 @@ def _budget_filter(legs_raw: dict[str, list[Any]], budget_tier: str) -> dict[str
     }
 
 
-class TransportOptimizerAgent:
+class TransportOptimizerAgent(AgentClarificationMixin):
     """Layer 3 — Budget-filtered route selection + alternatives."""
 
     def __init__(
