@@ -23,12 +23,14 @@ type PlanningActivityProps = {
   status: PlannerStatus;
   completedAgents: CompletedAgentActivity[];
   planningStartedAt: number | null;
+  isDismissed?: boolean;
 };
 
 export function PlanningActivity({
   status,
   completedAgents,
   planningStartedAt,
+  isDismissed = false,
 }: PlanningActivityProps) {
   const isPlanning = status === "planning";
   const isAwaitingClarification = status === "awaiting_clarification";
@@ -51,19 +53,26 @@ export function PlanningActivity({
   const elapsedLabel = `${formatElapsed(elapsedMs)} elapsed`;
 
   return (
-    <SectionCard
-      flat
-      headerContent={
-        <div className="flex w-full items-center justify-between gap-4">
-          <span className="font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-muted">
-            {doneCount}/{AGENT_PIPELINE.length} complete
-          </span>
-          <span className="text-[0.78rem] text-muted">{elapsedLabel}</span>
-        </div>
-      }
+    <div
+      className={cn(
+        "overflow-hidden transition-[max-height,opacity] duration-250 ease-out",
+        isDismissed ? "pointer-events-none max-h-0 opacity-0" : "max-h-[48rem] opacity-100",
+      )}
     >
-      <TaskTimeline tasks={tasks} />
-    </SectionCard>
+      <SectionCard
+        flat
+        headerContent={
+          <div className="flex w-full items-center justify-between gap-4">
+            <span className="font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-muted">
+              {doneCount}/{AGENT_PIPELINE.length} complete
+            </span>
+            <span className="text-[0.78rem] text-muted">{elapsedLabel}</span>
+          </div>
+        }
+      >
+        <TaskTimeline tasks={tasks} />
+      </SectionCard>
+    </div>
   );
 }
 

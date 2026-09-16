@@ -537,9 +537,9 @@ class TestFullGraph:
 
         result, snapshot = asyncio.run(_run())
 
-        # Graph is paused at orchestrator — next step is still 'orchestrator'
-        assert "orchestrator" in snapshot.next, (
-            f"Graph should be paused at orchestrator, got next={snapshot.next}"
+        # The interrupt lives in the dedicated clarification node, not the orchestrator
+        assert "orchestrator_clarification" in snapshot.next, (
+            f"Graph should be paused at orchestrator_clarification, got next={snapshot.next}"
         )
         assert result.get("itinerary") is None, "No itinerary when clarification needed"
 

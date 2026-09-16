@@ -75,6 +75,37 @@ def _make_llm(return_value: Any) -> MagicMock:
     return mock_llm
 
 
+async def _drive_orchestrator(
+    agent: Any,
+    state: dict[str, Any],
+    answers: dict[str, str] | None = None,
+) -> tuple[dict[str, Any], list[dict]]:
+    """Run orchestrator + clarification nodes the way the graph wires them.
+
+    Returns the final orchestrator update and every interrupt payload raised.
+    """
+    from app.agents.orchestrator import orchestrator_clarification_node
+    from app.config import settings
+
+    payloads: list[dict] = []
+
+    def fake_interrupt(payload: dict) -> dict:
+        payloads.append(payload)
+        fields = {prompt["field"] for prompt in payload["prompts"]}
+        return {f: v for f, v in (answers or {}).items() if f in fields}
+
+    working = dict(state)
+    result: dict[str, Any] = {}
+    with patch("app.services.clarification_manager.interrupt", side_effect=fake_interrupt):
+        for _ in range(settings.max_clarification_rounds + 1):
+            result = await agent(working)
+            working.update(result)
+            if not result.get("pending_clarification_fields"):
+                break
+            working.update(await orchestrator_clarification_node(working))
+    return result, payloads
+
+
 class _StaticTool:
     def __init__(self, response: dict[str, Any]) -> None:
         self._response = response
@@ -199,22 +230,13 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        call_args: list[dict] = []
+        with patch.object(settings, "max_clarification_rounds", 1):
+            _, payloads = await _drive_orchestrator(
+                agent, {"query": "plan a trip", "session_id": "s3"}
+            )
 
-        def mock_interrupt(val: dict) -> dict:
-            call_args.append(val)
-            return {}  # empty answers — loop continues until max rounds
-
-        with (
-            patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 1),
-        ):
-            await agent({"query": "plan a trip", "session_id": "s3"})
-
-        assert len(call_args) >= 1, "interrupt() was not called"
-        payload = call_args[0]
-        assert "prompts" in payload
-        fields = [p["field"] for p in payload["prompts"]]
+        assert len(payloads) >= 1, "interrupt() was not called"
+        fields = [p["field"] for p in payloads[0]["prompts"]]
         assert "destination" in fields
 
     @pytest.mark.asyncio
@@ -223,20 +245,14 @@ class TestOrchestratorAgent:
         from app.config import settings
 
         agent = OrchestratorAgent(llm=_make_llm(_ParsedQuery()))
-        call_args: list[dict] = []
 
-        def mock_interrupt(value: dict) -> dict:
-            call_args.append(value)
-            return {}
+        with patch.object(settings, "max_clarification_rounds", 1):
+            result, payloads = await _drive_orchestrator(
+                agent, {"query": "plan a trip", "session_id": "s_all_missing"}
+            )
 
-        with (
-            patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 1),
-        ):
-            result = await agent({"query": "plan a trip", "session_id": "s_all_missing"})
-
-        fields = {prompt["field"] for prompt in call_args[0]["prompts"]}
-        assert fields == {"source", "destination", "dates", "trip_days", "travelers", "budget"}
+        fields = {prompt["field"] for prompt in payloads[0]["prompts"]}
+        assert fields == set(settings.clarification_fields)
         assert result["error"] == "Required trip details are still missing."
 
     @pytest.mark.asyncio
@@ -258,17 +274,14 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        call_args: list[dict] = []
+        result, payloads = await _drive_orchestrator(
+            agent,
+            {"query": "trip to Goa from Kolkata", "session_id": "s_days"},
+            {"trip_days": "4"},
+        )
 
-        def mock_interrupt(val: dict) -> dict:
-            call_args.append(val)
-            return {"trip_days": "4"}
-
-        with patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt):
-            result = await agent({"query": "trip to Goa from Kolkata", "session_id": "s_days"})
-
-        assert len(call_args) >= 1, "interrupt() was not called"
-        fields = [p["field"] for p in call_args[0]["prompts"]]
+        assert len(payloads) >= 1, "interrupt() was not called"
+        fields = [p["field"] for p in payloads[0]["prompts"]]
         assert "trip_days" in fields
         assert result["dates"].trip_days == 4
 
@@ -296,6 +309,67 @@ class TestOrchestratorAgent:
         # No interrupt — result contains destination and source directly
         assert result.get("destination") == "Osaka"
         assert result.get("source") == "Kolkata"
+
+    @pytest.mark.asyncio
+    async def test_unstable_llm_parse_does_not_reask_answered_fields(self) -> None:
+        """A disagreeing second parse must not restart the clarification loop."""
+        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+
+        first = _ParsedQuery(
+            source=_FieldConfidence(value=None, confidence=0.0),
+            destination=_FieldConfidence(value="Sikkim", confidence=0.95),
+            departure_date=None,
+            trip_days=8,
+            trip_days_confidence=1.0,
+            travelers=_FieldConfidence(value=None, confidence=0.0),
+            budget_tier=None,
+            dates_confidence=0.0,
+            destination_country="India",
+        )
+        drifted = first.model_copy(
+            update={"destination": _FieldConfidence(value="Sikkim", confidence=0.1)}
+        )
+
+        chain = MagicMock()
+        chain.ainvoke = AsyncMock(side_effect=[first, drifted, drifted])
+        llm = MagicMock()
+        llm.with_structured_output = MagicMock(return_value=chain)
+
+        agent = OrchestratorAgent(llm=llm)
+        result, payloads = await _drive_orchestrator(
+            agent,
+            {"query": "Plan a trip to sikkim for eight days", "session_id": "s_unstable"},
+            {"source": "Kolkata", "dates": "2026-11-01", "travelers": "2", "budget": "mid"},
+        )
+
+        assert len(payloads) == 1, "all missing fields must be asked in one round"
+        assert chain.ainvoke.await_count == 1, "the parse must not re-run per round"
+        asked = [p["field"] for payload in payloads for p in payload["prompts"]]
+        assert sorted(asked) == sorted(set(asked)), f"a field was asked twice: {asked}"
+        assert result.get("source") == "Kolkata"
+        assert result.get("destination") == "Sikkim"
+        assert result.get("is_international") is False
+        assert result["dates"].trip_days == 8
+
+    @pytest.mark.asyncio
+    async def test_optional_clarification_is_opt_in(self) -> None:
+        from app.agents.orchestrator import optional_clarification_node
+        from app.config import settings
+
+        with patch("app.services.clarification_manager.interrupt") as interrupt_mock:
+            assert await optional_clarification_node({"session_id": "s_opt"}) == {}
+        interrupt_mock.assert_not_called()
+
+        with (
+            patch.object(settings, "enable_optional_clarification", True),
+            patch(
+                "app.services.clarification_manager.interrupt",
+                return_value={"optional_pace": "relaxed", "optional_must_see": "__skip__"},
+            ),
+        ):
+            result = await optional_clarification_node({"session_id": "s_opt"})
+
+        assert result["optional_clarification_answers"] == {"optional_pace": "relaxed"}
 
     def test_quick_extract_days(self) -> None:
         assert quick_extract_days("3 days trip to Goa") == 3
@@ -359,16 +433,14 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        def mock_interrupt(val: dict) -> dict:
-            return {"dates": "2026-10-28"}
-
-        with patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt):
-            result = await agent(
-                {
-                    "query": "I want to visit Ladakh from Kolkata for 6 days.",
-                    "session_id": "s_6day_test",
-                }
-            )
+        result, _ = await _drive_orchestrator(
+            agent,
+            {
+                "query": "I want to visit Ladakh from Kolkata for 6 days.",
+                "session_id": "s_6day_test",
+            },
+            {"dates": "2026-10-28"},
+        )
 
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Ladakh"
@@ -398,20 +470,13 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        call_args: list[dict] = []
+        with patch.object(settings, "max_clarification_rounds", 1):
+            _, payloads = await _drive_orchestrator(
+                agent, {"query": "trip somewhere", "session_id": "s5"}
+            )
 
-        def mock_interrupt(val: dict) -> dict:
-            call_args.append(val)
-            return {}
-
-        with (
-            patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 1),
-        ):
-            await agent({"query": "trip somewhere", "session_id": "s5"})
-
-        assert len(call_args) >= 1
-        prompts = call_args[0]["prompts"]
+        assert len(payloads) >= 1
+        prompts = payloads[0]["prompts"]
         destination_prompt = next(p for p in prompts if p["field"] == "destination")
         assert destination_prompt["input_type"] == "text"
         dates_prompt = next((p for p in prompts if p["field"] == "dates"), None)
@@ -440,18 +505,15 @@ class TestOrchestratorAgent:
             "query": "4 days in Leh in July",
             "session_id": "s6",
         }
-        with patch(
-            "app.services.clarification_manager.interrupt",
-            return_value={"source": "Kolkata"},
-        ):
-            result = await agent(state)
+        result, _ = await _drive_orchestrator(agent, state, {"source": "Kolkata"})
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Leh"
 
-    def test_confirmed_source_is_not_reasked_when_geography_is_unknown(self) -> None:
-        """An unresolved international flag must not turn into a source loop."""
+    def test_is_international_is_derived_not_asked(self) -> None:
+        """An unresolved international flag is derived from countries, never clarified."""
         from app.agents.orchestrator import (
             _compute_missing,
+            _derive_is_international,
             _FieldConfidence,
             _ParsedQuery,
         )
@@ -466,12 +528,18 @@ class TestOrchestratorAgent:
             departure_date="2026-10-01",
             dates_confidence=1.0,
             is_international=None,
+            source_country="India",
+            destination_country="India",
         )
 
         missing = dict(_compute_missing(parsed))
 
         assert "source" not in missing
-        assert "is_international" in missing
+        assert "is_international" not in missing
+        assert _derive_is_international(parsed, MagicMock()) is False
+
+        crossing = parsed.model_copy(update={"destination_country": "Japan"})
+        assert _derive_is_international(crossing, MagicMock()) is True
 
     def test_clarification_manager_wraps_request_metadata(self) -> None:
         prompt = ClarificationPrompt(
@@ -555,16 +623,14 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        def mock_interrupt(val: dict) -> dict:
-            return {"dates": "2026-10-14"}
-
-        with patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt):
-            result = await agent(
-                {
-                    "query": "I want to go to ladakh from kolkata for 5 days",
-                    "session_id": "s_clarify",
-                }
-            )
+        result, _ = await _drive_orchestrator(
+            agent,
+            {
+                "query": "I want to go to ladakh from kolkata for 5 days",
+                "session_id": "s_clarify",
+            },
+            {"dates": "2026-10-14"},
+        )
 
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Ladakh"
@@ -621,23 +687,17 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(ambiguous_response))
 
-        call_count = 0
-
-        def mock_interrupt(val: dict) -> dict:
-            nonlocal call_count
-            call_count += 1
-            return {}  # return empty answers — fields remain missing
-
-        with (
-            patch("app.services.clarification_manager.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 2),
-        ):
-            result = await agent({"query": "plan a trip", "session_id": "s7"})
+        with patch.object(settings, "max_clarification_rounds", 2):
+            result, payloads = await _drive_orchestrator(
+                agent, {"query": "plan a trip", "session_id": "s7"}
+            )
 
         # interrupt() should have been called exactly max_clarification_rounds times
-        assert call_count == 2
+        assert len(payloads) == 2
         assert result["error"] == "Required trip details are still missing."
         assert "destination" in result["missing_required_fields"]
+        # The single parse is reused across rounds instead of re-running the LLM.
+        assert agent._llm.with_structured_output.call_count == 1
 
 
 # ── SafetyAgent ───────────────────────────────────────────────────────────────

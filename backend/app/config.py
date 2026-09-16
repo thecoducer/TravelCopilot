@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Shared tool-runtime constants. Keeping these values here makes provider adapters
@@ -167,6 +168,14 @@ class Settings(BaseSettings):
     # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
     llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama
 
+    # LLM runtime guards — reasoning-heavy models stall indefinitely without an explicit budget
+    llm_timeout_seconds: float = 60.0
+    llm_max_tokens: int = 4096
+    llm_num_retries: int = 2  # LiteLLM-side retries
+    llm_max_retries: int = 1  # LangChain-side tenacity retries
+    # "json_schema" | "function_calling" | "json_mode"; blank uses the provider default
+    llm_structured_output_method: str = "json_schema"
+
     # Execution mode switch: real invokes provider adapters; mock replays recordings only.
     mock_external_apis: bool = True
 
@@ -244,17 +253,19 @@ class Settings(BaseSettings):
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate
-    clarification_required_fields: str
+    clarification_required_fields: str = Field(default="")
     # Per-field confidence thresholds (comma-separated field:threshold pairs).
     # Falls back to parse_confidence_threshold for fields not listed.
-    clarification_field_thresholds: str
-    clarification_allowed_fields: str
-    clarification_max_questions: int
-    clarification_max_optional_questions: int
-    clarification_max_prompt_length: int
-    parse_confidence_threshold: float
+    clarification_field_thresholds: str = Field(default="")
+    clarification_allowed_fields: str = Field(default="")
+    clarification_max_questions: int = Field(default=0)
+    clarification_max_optional_questions: int = Field(default=0)
+    clarification_max_prompt_length: int = Field(default=0)
+    parse_confidence_threshold: float = Field(default=0.0)
     # Maximum clarification rounds before proceeding with best-effort defaults
-    max_clarification_rounds: int
+    max_clarification_rounds: int = Field(default=0)
+    # Skippable questions cost an extra interrupt/resume cycle, so they are opt-in.
+    enable_optional_clarification: bool = False
 
     # StopsDiscoveryAgent — max candidate access-gateway options to surface per route
     max_gateway_options: int = 2

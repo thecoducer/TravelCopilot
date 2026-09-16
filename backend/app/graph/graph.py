@@ -2,7 +2,9 @@
 
 The ClarificationManager uses LangGraph ``interrupt()`` to pause the graph
 when a query or domain-specific input is ambiguous. The client resumes via
-``POST /api/trip/{session_id}/clarify`` — no full re-POST is needed.
+``POST /api/trip/{session_id}/clarify`` — no full re-POST is needed. Every
+interrupt lives in a dedicated LLM-free node, because LangGraph re-executes a
+node from the top on resume.
 
 After the orchestrator finishes (with or without clarification rounds), route
 discovery fans out directly to the Layer 1 and Layer 2 entry nodes in parallel.
@@ -18,7 +20,11 @@ from app.agents.budget_planner_agent import BudgetPlannerAgent
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
 from app.agents.itinerary_compiler_agent import ItineraryCompilerAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
-from app.agents.orchestrator import OrchestratorAgent
+from app.agents.orchestrator import (
+    OrchestratorAgent,
+    optional_clarification_node,
+    orchestrator_clarification_node,
+)
 from app.agents.reviews_agent import ReviewsAgent
 from app.agents.safety_agent import SafetyAgent
 from app.agents.self_drive_search_agent import SelfDriveSearchAgent
@@ -154,7 +160,9 @@ async def _required_fields_end_node(state: dict[str, Any]) -> dict[str, Any]:
 def _route_after_orchestrator(state: dict[str, Any]) -> str:
     if state.get("missing_required_fields") or state.get("error"):
         return "required_fields_end"
-    return "stops_discovery"
+    if state.get("pending_clarification_fields"):
+        return "orchestrator_clarification"
+    return "optional_clarification"
 
 
 def _route_after_discovery(state: dict[str, Any]) -> str | list[str]:
@@ -208,6 +216,8 @@ def build_graph(
 
     # Control nodes (orchestration + interrupt-based gates, not a numbered layer)
     graph.add_node("orchestrator", orchestrator)
+    graph.add_node("orchestrator_clarification", orchestrator_clarification_node)
+    graph.add_node("optional_clarification", optional_clarification_node)
     graph.add_node("route_clarification", _route_clarification_node)
     graph.add_node("food_clarification", _food_clarification_node)
     graph.add_node("discovery_failed_end", _discovery_failed_end_node)
@@ -241,16 +251,19 @@ def build_graph(
     # ── Edges ──────────────────────────────────────────────────────────────
     graph.add_edge(START, "orchestrator")
 
-    # Orchestrator clarification pauses inside the node. If the configured
-    # rounds are exhausted, stop before any route or supply search begins.
+    # The orchestrator never pauses itself: it flags the fields it still needs and the
+    # clarification node performs the interrupt, so a resume never re-runs the LLM parse.
     graph.add_conditional_edges(
         "orchestrator",
         _route_after_orchestrator,
         {
-            "stops_discovery": "stops_discovery",
+            "orchestrator_clarification": "orchestrator_clarification",
+            "optional_clarification": "optional_clarification",
             "required_fields_end": "required_fields_end",
         },
     )
+    graph.add_edge("orchestrator_clarification", "orchestrator")
+    graph.add_edge("optional_clarification", "stops_discovery")
     graph.add_edge("required_fields_end", END)
 
     # Successful route discovery fans out directly to the Layer 1/2 entry nodes;

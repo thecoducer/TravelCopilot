@@ -74,7 +74,7 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
         {icon}
       </span>
       <div>
-        <dt className="text-[0.7rem] uppercase tracking-wide text-faint">{label}</dt>
+        <dt className="text-[0.7rem] uppercase tracking-wide text-summary-heading">{label}</dt>
         <dd className="mt-0.5 font-mono text-[0.9rem] font-semibold text-fg">{value}</dd>
       </div>
     </div>

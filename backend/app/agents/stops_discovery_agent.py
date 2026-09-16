@@ -41,7 +41,7 @@ from app.models.user_profile import TripDates
 _SYSTEM_PROMPT = """\
 You are a trip route-planning expert with deep knowledge of world geography and \
 regional transport connectivity. Given a traveller's source, destination, trip \
-length, and travel style, decide whether the destination is best modelled as:
+days, and travel style, decide whether the destination is best modelled as:
 
 - a single overnight stop ("single_destination"), or
 - a multi-stop circuit of overnight stops connected by an access gateway \

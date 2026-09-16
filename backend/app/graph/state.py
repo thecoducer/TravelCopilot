@@ -57,6 +57,10 @@ class TripState(TypedDict, total=False):
     missing_required_fields: list[str]
     parse_confidence: dict[str, float]  # field → confidence score 0–1
     clarification_round: int  # number of completed clarification rounds
+    # Serialized orchestrator parse, reused across rounds so the LLM runs once per session.
+    parsed_query: dict[str, Any] | None
+    clarification_answers: dict[str, str]  # accumulated answers, keyed by field
+    pending_clarification_fields: list[str]  # fields the clarification node must ask next
 
     # ── Layer 1: Destination Intelligence ─────────────────────────────────
     safety_report: SafetyReport | None
@@ -139,6 +143,10 @@ class TripStateModel(BaseModel):
     missing_required_fields: list[str] = Field(default_factory=list)
     parse_confidence: dict[str, float] = Field(default_factory=dict)
     clarification_round: int = 0
+    parsed_query: dict[str, Any] | None = None
+    clarification_answers: dict[str, str] = Field(default_factory=dict)
+    pending_clarification_fields: list[str] = Field(default_factory=list)
+    optional_clarification_answers: dict[str, str] = Field(default_factory=dict)
 
     safety_report: SafetyReport | None = None
     visa_report: VisaReport | None = None

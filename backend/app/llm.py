@@ -279,8 +279,27 @@ def get_llm(agent_name: str, session_id: str = "") -> Any:
     kwargs: dict[str, Any] = {
         "model": model_string,
         "temperature": 0.0,
+        "max_tokens": settings.llm_max_tokens,
+        "max_retries": settings.llm_max_retries,
+        # timeout and num_retries are LiteLLM completion params, not ChatLiteLLM fields.
+        "model_kwargs": {
+            "timeout": settings.llm_timeout_seconds,
+            "num_retries": settings.llm_num_retries,
+        },
         "metadata": {"agent_name": agent_name, "session_id": session_id},
     }
     if settings.llm_api_base:
         kwargs["api_base"] = settings.llm_api_base
     return ChatLiteLLM(**kwargs)
+
+
+def structured_llm(llm: Any, schema: type) -> Any:
+    """Bind a Pydantic schema using the configured structured-output method."""
+    method = settings.llm_structured_output_method.strip()
+    if not method:
+        return llm.with_structured_output(schema)
+    try:
+        return llm.with_structured_output(schema, method=method)
+    except TypeError:
+        # Test doubles and older integrations expose with_structured_output(schema) only.
+        return llm.with_structured_output(schema)

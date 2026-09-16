@@ -1,4 +1,5 @@
 import type { TripDays } from "@/lib/types";
+import { formatPlaceCategory } from "@/lib/place-categories";
 import Image from "next/image";
 import { memo } from "react";
 
@@ -129,7 +130,7 @@ function ItineraryDayCardContent({ day, showStay = true }: ItineraryDayCardProps
                       </div>
                       <p className="text-sm leading-relaxed text-muted">{option.place.description}</p>
                       <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted">
-                        <span>{option.place.category}</span>
+                        <span>{formatPlaceCategory(option.place.category)}</span>
                         <span>{option.place.price_range}</span>
                         {option.place.rating ? <span>★ {option.place.rating.toFixed(1)}</span> : null}
                         {formatDuration(option.estimated_duration_minutes ?? option.place.duration_minutes) ? (
@@ -230,7 +231,7 @@ export const ItineraryDayCard = memo(ItineraryDayCardContent);
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-3 font-medium text-muted before:size-1 before:rounded-full before:bg-accent/60 first:before:hidden">
+    <span className="inline-flex items-center gap-3 font-medium text-meta-gold before:size-1 before:rounded-full before:bg-meta-gold/60 first:before:hidden">
       {children}
     </span>
   );

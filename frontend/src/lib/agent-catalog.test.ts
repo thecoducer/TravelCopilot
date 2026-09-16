@@ -64,4 +64,19 @@ describe("buildAgentTasks", () => {
     expect(order.indexOf("orchestrator")).toBeLessThan(order.indexOf("stops_discovery"));
     expect(order).toEqual(["orchestrator", "stops_discovery"]);
   });
+
+  it("hides clarification and metadata events from the activity list", () => {
+    const tasks = buildAgentTasks(
+      [
+        ...completed,
+        { agent: "orchestrator_clarification", preview: "Done", elapsedMs: 100 },
+        { agent: "optional_clarification", preview: "Done", elapsedMs: 100 },
+        { agent: "metadata", preview: "Done", elapsedMs: 100 },
+      ],
+      [],
+      false,
+    );
+
+    expect(tasks.map((task) => task.agent)).toEqual(["orchestrator"]);
+  });
 });

@@ -155,12 +155,13 @@ function TurnView({
               status={turn.status}
               completedAgents={turn.completedAgents}
               planningStartedAt={turn.planningStartedAt}
+              isDismissed={Boolean(turn.itinerary)}
             />
           ) : null}
 
           {turn.status === "awaiting_clarification" ? (
             <ClarificationForm
-              key={turn.clarificationPrompts.map((prompt) => prompt.field).join("|")}
+              key={turn.clarificationRequestId ?? turn.clarificationPrompts.map((prompt) => prompt.field).join("|")}
               prompts={turn.clarificationPrompts}
               onSubmit={onSubmitClarification}
             />

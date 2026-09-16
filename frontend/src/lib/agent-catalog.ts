@@ -66,23 +66,7 @@ export const AGENT_CATALOG: Record<string, AgentInfo> = {
   itinerary_compiler: {
     label: "Assembling the itinerary",
     description: "Putting the full itinerary together",
-  },
-  route_clarification: {
-    label: "Confirming your route",
-    description: "Needs a bit more detail about your route",
-  },
-  food_clarification: {
-    label: "Confirming food preferences",
-    description: "Needs a bit more detail about food preferences",
-  },
-  discovery_failed_end: {
-    label: "Needs more information",
-    description: "Couldn't build a route with the details given",
-  },
-  required_fields_end: {
-    label: "Needs more information",
-    description: "Some required trip details are still missing",
-  },
+  }
 };
 
 export type PlanningPhase = {
@@ -162,8 +146,8 @@ type CompletedAgentSummary = {
 };
 
 /**
- * Builds the ordered todo-style task list for the timeline: every pipeline
- * agent plus any that completed off-pipeline, tagged done / active / pending.
+ * Builds the ordered todo-style task list for the timeline from the allowlisted
+ * pipeline agents, tagged done / active / pending.
  * Once planning stops, unreached pipeline agents are dropped so the list shows
  * only what actually ran.
  */
@@ -176,10 +160,7 @@ export function buildAgentTasks(
   const completedByAgent = new Map(completed.map((entry) => [entry.agent, entry]));
   const activeSet = new Set(activeAgents);
   const pausedSet = new Set(pausedAgents);
-  const ordered = [
-    ...AGENT_PIPELINE,
-    ...completed.map((entry) => entry.agent).filter((agent) => !AGENT_PIPELINE.includes(agent)),
-  ];
+  const ordered = AGENT_PIPELINE;
 
   const tasks: AgentTask[] = [];
   const seen = new Set<string>();
