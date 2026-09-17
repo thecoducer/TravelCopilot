@@ -22,7 +22,6 @@
   --accent-soft: #E0E4E7;
   --accent-warm: #7B858D;
   --accent-warm-soft: #E5E8EA;
-  --meta-gold: #9A6B22;
   --danger: #B65F62;
   --danger-soft: #F5E7E8;
   --success: #5F8174;
@@ -31,10 +30,6 @@
   --chat-blue-hover: #1D4ED8;
   --chat-blue-soft: #DBEAFE;
   --chat-blue-border: #93C5FD;
-  --summary-heading: #2563EB;
-  --scrollbar-track: color-mix(in srgb, var(--canvas) 72%, var(--surface));
-  --scrollbar-thumb: color-mix(in srgb, var(--accent) 48%, var(--border));
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 68%, var(--border-strong));
 
   /* Legacy aliases for any component still on CSS Modules during migration. */
   --color-text: var(--fg);
@@ -67,7 +62,6 @@
   --accent-soft: #30363B;
   --accent-warm: #AEB8BE;
   --accent-warm-soft: #353B40;
-  --meta-gold: #D9B15A;
   --danger: #E29A9D;
   --danger-soft: #3B292B;
   --success: #9BC5B4;
@@ -76,10 +70,6 @@
   --chat-blue-hover: #1D4ED8;
   --chat-blue-soft: #1E3A5F;
   --chat-blue-border: #3B82F6;
-  --summary-heading: #60A5FA;
-  --scrollbar-track: color-mix(in srgb, var(--canvas) 78%, var(--surface));
-  --scrollbar-thumb: color-mix(in srgb, var(--accent) 58%, var(--border));
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 78%, var(--border-strong));
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.42);
@@ -99,7 +89,6 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-warm: var(--accent-warm);
   --color-accent-warm-soft: var(--accent-warm-soft);
-  --color-meta-gold: var(--meta-gold);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
@@ -108,7 +97,6 @@
   --color-chat-blue-hover: var(--chat-blue-hover);
   --color-chat-blue-soft: var(--chat-blue-soft);
   --color-chat-blue-border: var(--chat-blue-border);
-  --color-summary-heading: var(--summary-heading);
   --color-chat-bubble: var(--chat-bubble);
 
   --radius-sm: 5px;
@@ -121,34 +109,6 @@
 }
 
 @layer base {
-  * {
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-    scrollbar-width: thin;
-  }
-
-  *::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-
-  *::-webkit-scrollbar-track {
-    background: var(--scrollbar-track);
-  }
-
-  *::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb);
-    border: 3px solid var(--scrollbar-track);
-    border-radius: 999px;
-  }
-
-  *::-webkit-scrollbar-thumb:hover {
-    background: var(--scrollbar-thumb-hover);
-  }
-
-  *::-webkit-scrollbar-corner {
-    background: var(--scrollbar-track);
-  }
-
   body {
     background:
       linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 38%, transparent), transparent 46%),

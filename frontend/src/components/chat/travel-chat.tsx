@@ -87,7 +87,7 @@ export function TravelChat({ initialSessionId }: { initialSessionId?: string }) 
       </div>
 
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-9 bg-gradient-to-t from-canvas/90 via-canvas/45 to-transparent sm:h-10"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-9 bg-gradient-to-t from-canvas/90 via-canvas/45 to-transparent sm:h-35"
         aria-hidden="true"
       />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-4 pb-4 sm:px-8 sm:pb-6">
