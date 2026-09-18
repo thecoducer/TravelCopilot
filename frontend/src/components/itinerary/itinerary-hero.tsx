@@ -57,7 +57,7 @@ export function ItineraryHero({
         {totalCost ? (
           <Stat
             icon={<Wallet size={15} />}
-            label={`Est. cost · ${budget?.vs_budget_verdict ?? ""}`.trim()}
+            label="Est. cost"
             value={totalCost}
           />
         ) : null}
@@ -74,7 +74,7 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
         {icon}
       </span>
       <div>
-        <dt className="text-[0.7rem] uppercase tracking-wide text-summary-heading">{label}</dt>
+        <dt className="text-[0.7rem] uppercase tracking-wide text-chat-blue">{label}</dt>
         <dd className="mt-0.5 font-mono text-[0.9rem] font-semibold text-fg">{value}</dd>
       </div>
     </div>

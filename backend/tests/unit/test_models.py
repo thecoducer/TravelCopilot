@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from app.config import settings
 from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import (
     ActivityOption,
@@ -21,9 +22,9 @@ from app.models.itinerary import (
     TripDays,
 )
 from app.models.reports import (
-    AgentTokenUsage,
     BudgetReport,
     FxRateEntry,
+    RunUsage,
     SafetyReport,
     ScamEntry,
     SelfDriveReport,
@@ -38,6 +39,7 @@ from app.models.user_profile import (
     TripDates,
     UserProfile,
 )
+from app.services.currency_service import resolve_trip_currency
 
 # ── UserProfile models ───────────────────────────────────────────────────────
 
@@ -62,17 +64,14 @@ class TestTripDates:
     def test_flexibility_defaults(self):
         d = TripDates(departure=date(2026, 9, 1))
         assert d.flexibility_days == 0
-        assert d.night_travel_ok is True
 
     def test_flexibility_configured(self):
         d = TripDates(
             departure=date(2026, 9, 1),
             return_date=date(2026, 9, 6),
             flexibility_days=2,
-            night_travel_ok=False,
         )
         assert d.flexibility_days == 2
-        assert d.night_travel_ok is False
 
 
 class TestBudgetPreference:
@@ -104,7 +103,9 @@ class TestClarificationPrompt:
 class TestUserProfile:
     def test_defaults(self):
         up = UserProfile(user_id="u1")
-        assert up.preferred_currency == "INR"
+        # Unset rather than a baked-in currency; resolution is the currency service's job.
+        assert up.preferred_currency is None
+        assert resolve_trip_currency(up) == settings.default_currency.upper()
         assert up.preferred_cuisines == []
         assert up.food_preferences_configured is False
         assert up.interests == []
@@ -867,8 +868,11 @@ class TestSelfDriveReport:
         assert r.permits_required == []
 
 
-class TestAgentTokenUsage:
+class TestRunUsage:
     def test_defaults_zero(self):
-        u = AgentTokenUsage(agent_name="orchestrator")
-        assert u.prompt_tokens == 0
+        u = RunUsage()
+        assert u.input_tokens == 0
+        assert u.reasoning_tokens == 0
+        assert u.cached_tokens == 0
         assert u.cost_usd == 0.0
+        assert u.llm_calls == 0

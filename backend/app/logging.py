@@ -65,7 +65,10 @@ def configure_logging() -> None:
         ]
 
     structlog.configure(
-        processors=shared_processors + final_processors,
+        # Because records are routed through stdlib, structlog must hand the event
+        # dict to ProcessorFormatter instead of rendering it — rendering here too
+        # produces a fully-formatted line nested inside a second formatted line.
+        processors=shared_processors + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
         wrapper_class=structlog.make_filtering_bound_logger(level_int),
         context_class=dict,
         # Route through stdlib so both structlog + stdlib share one handler.
@@ -76,7 +79,10 @@ def configure_logging() -> None:
     # Single stdlib handler using structlog's ProcessorFormatter so foreign
     # logs (LiteLLM, uvicorn, SQLAlchemy) are also rendered consistently.
     formatter = structlog.stdlib.ProcessorFormatter(
-        processors=final_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            *final_processors,
+        ],
         foreign_pre_chain=shared_processors,
     )
     handler = stdlib_logging.StreamHandler()

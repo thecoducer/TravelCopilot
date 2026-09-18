@@ -16,8 +16,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.transport import StayOption
 from app.models.user_profile import BudgetTier, budget_from_state
 
@@ -176,9 +178,10 @@ class StayAnalystAgent(AgentClarificationMixin):
             for i, s in enumerate(candidates)
         ]
 
-        chain = self._llm.with_structured_output(_RankingOutput)
         try:
-            ranking: _RankingOutput = await chain.ainvoke(
+            ranking = await invoke_structured(
+                self._llm,
+                _RankingOutput,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
@@ -189,10 +192,12 @@ class StayAnalystAgent(AgentClarificationMixin):
                             f"Hotels (JSON):\n{json.dumps(stays_summary, indent=2)}"
                         )
                     ),
-                ]
+                ],
+                agent=AgentName.STAY_ANALYST,
+                log=log,
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(LogEvent.AGENT_DEGRADED, section="stay_ranking", error=str(exc))
             # Fallback: top 3 by rating
             ranking = _RankingOutput(
                 ranked_indices=list(range(min(3, len(candidates)))),

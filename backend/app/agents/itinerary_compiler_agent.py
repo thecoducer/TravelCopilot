@@ -39,14 +39,40 @@ from typing import Any, cast
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.config import settings
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.itinerary import MEAL_TYPES, SLOT_NAMES, Experience, TripDays
-from app.models.itinerary_compilation import DayPlan, RoutePlan, TripNarrative
+from app.models.itinerary_compilation import DayPlan, FoodPick, RoutePlan, TripNarrative
 from app.models.stops import DayAllocation, TripStop
 from app.services.itinerary_compiler_service import ItineraryCompilerService, MissingTripDatesError
 from app.tools.factory import ToolFactory
+
+
+def _fallback_day_plan(day_count: int, food_candidates: list[str]) -> DayPlan:
+    """Assign meals round-robin when the planning call fails.
+
+    Venue selection is a lookup, not a judgement, so discarding an already-fetched
+    venue pool because the activity plan failed leaves days with no meals at all.
+    """
+    if not food_candidates:
+        return DayPlan()
+    picks: list[FoodPick] = []
+    cursor = 0
+    for day_number in range(1, day_count + 1):
+        for meal_type in MEAL_TYPES:
+            picks.append(
+                FoodPick(
+                    day_number=day_number,
+                    meal_type=meal_type,
+                    venue_name=food_candidates[cursor % len(food_candidates)],
+                )
+            )
+            cursor += 1
+    return DayPlan(food=picks)
+
 
 _DAY_PLAN_PROMPT = """\
 You are assembling {day_count} day(s) at {stop_name} for a traveller.
@@ -246,33 +272,41 @@ class ItineraryCompilerAgent(AgentClarificationMixin):
         if not any(c["experiences"] for c in day_candidates) and not food_candidates:
             return DayPlan()
 
-        chain = self._llm.with_structured_output(DayPlan)
         try:
-            return cast(
+            return await invoke_structured(
+                self._llm,
                 DayPlan,
-                await chain.ainvoke(
-                    [
-                        SystemMessage(
-                            content=_DAY_PLAN_PROMPT.format(
-                                day_count=day_count,
-                                stop_name=stop.name,
-                                max_activities_per_day=settings.itinerary_max_activities_per_day,
-                                meal_types="/".join(MEAL_TYPES),
-                            )
-                        ),
-                        HumanMessage(
-                            content=(
-                                f"Candidate experiences by day:\n"
-                                f"{json.dumps(day_candidates, indent=2)}\n\n"
-                                f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
-                            )
-                        ),
-                    ]
-                ),
+                [
+                    SystemMessage(
+                        content=_DAY_PLAN_PROMPT.format(
+                            day_count=day_count,
+                            stop_name=stop.name,
+                            max_activities_per_day=settings.itinerary_max_activities_per_day,
+                            meal_types="/".join(MEAL_TYPES),
+                        )
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"Candidate experiences by day:\n"
+                            f"{json.dumps(day_candidates, indent=2)}\n\n"
+                            f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
+                        )
+                    ),
+                ],
+                agent=AgentName.ITINERARY_COMPILER,
+                log=log,
             )
-        except Exception as exc:
-            log.warning("day_plan_llm_failed", stop_id=stop.stop_id, error=str(exc))
-            return DayPlan()
+        except StructuredOutputError as exc:
+            log.warning(
+                LogEvent.AGENT_DEGRADED,
+                section="day_plan",
+                stop_id=stop.stop_id,
+                truncated=exc.truncated,
+                error=str(exc),
+            )
+            # Food assignment needs no reasoning, so it must survive a failed plan
+            # rather than leaving the stop with no meals at all.
+            return _fallback_day_plan(day_count, food_candidates)
 
     # ── Deterministic quality gate (tool calls stay here; logic lives in the service) ──
 
@@ -320,17 +354,17 @@ class ItineraryCompilerAgent(AgentClarificationMixin):
     ) -> TripNarrative:
         if not days:
             return TripNarrative()
-        chain = self._llm.with_structured_output(TripNarrative)
         try:
-            return cast(
+            return await invoke_structured(
+                self._llm,
                 TripNarrative,
-                await chain.ainvoke(
-                    [
-                        SystemMessage(content=_NARRATIVE_PROMPT),
-                        HumanMessage(content=self._compiler.build_narrative_context(state, days)),
-                    ]
-                ),
+                [
+                    SystemMessage(content=_NARRATIVE_PROMPT),
+                    HumanMessage(content=self._compiler.build_narrative_context(state, days)),
+                ],
+                agent=AgentName.ITINERARY_COMPILER,
+                log=log,
             )
-        except Exception as exc:
-            log.warning("narrative_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.warning(LogEvent.AGENT_DEGRADED, section="narrative", error=str(exc))
             return TripNarrative()

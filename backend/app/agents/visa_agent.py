@@ -16,9 +16,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
+from app.models.enums import AgentName, LogEvent
 from app.models.reports import VisaReport, VisaSource
 from app.services.clarification_manager import ClarificationManager
 from app.tools.factory import ToolFactory
@@ -178,9 +180,10 @@ class VisaAgent(AgentClarificationMixin):
                 ),
             }
 
-        chain = self._llm.with_structured_output(VisaReport)
         try:
-            report: VisaReport = await chain.ainvoke(
+            report = await invoke_structured(
+                self._llm,
+                VisaReport,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
@@ -190,7 +193,9 @@ class VisaAgent(AgentClarificationMixin):
                             f"Search results:\n{context}"
                         )
                     ),
-                ]
+                ],
+                agent=AgentName.VISA,
+                log=log,
             )
             report = report.model_copy(
                 update={
@@ -200,8 +205,8 @@ class VisaAgent(AgentClarificationMixin):
                     "destination_country": destination_country,
                 }
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(LogEvent.AGENT_DEGRADED, section="visa", error=str(exc))
             report = VisaReport(
                 passport_country=passport_country,
                 destination_country=destination_country,

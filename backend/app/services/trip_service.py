@@ -9,6 +9,7 @@ import structlog
 from sqlalchemy import text
 
 from app.db import AsyncSessionLocal
+from app.models.reports import RunUsage
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +27,7 @@ async def persist_trip(
     query: str,
     state: dict[str, Any],
     itinerary: Any,
-    usage_summary: dict[str, Any] | None = None,
+    run_usage: RunUsage | None = None,
     username: str | None = None,
 ) -> None:
     """Persist the completed trip to the database.  Best-effort — never blocks SSE."""
@@ -40,17 +41,7 @@ async def persist_trip(
         if ctx and hasattr(ctx, "crowd_level"):
             reality_score = _CROWD_LEVEL_TO_REALITY_SCORE.get(ctx.crowd_level, 50)
 
-        if usage_summary and usage_summary.get("per_agent"):
-            token_usage_json = json.dumps(usage_summary, default=str)
-        else:
-            token_usage = state.get("token_usage", {}) or {}
-            token_usage_json = json.dumps(
-                {
-                    name: (u.model_dump() if hasattr(u, "model_dump") else u)
-                    for name, u in token_usage.items()
-                },
-                default=str,
-            )
+        token_usage_json = json.dumps(run_usage.model_dump() if run_usage else {})
 
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -147,7 +138,7 @@ async def update_itinerary_days(trip_id: str, trip_days: list[dict[str, Any]]) -
 
 
 async def get_usage_json(trip_id: str) -> dict[str, Any] | None:
-    """Return the stored per-agent usage JSON for a trip, or None if the trip is absent."""
+    """Return the stored per-run usage JSON for a trip, or None if the trip is absent."""
     async with AsyncSessionLocal() as db:
         row = await db.execute(
             text("SELECT token_usage_json FROM trips WHERE id = :id"),
@@ -246,14 +237,23 @@ async def rename_session(session_id: str, title: str) -> None:
         await db.commit()
 
 
-async def soft_delete_session(session_id: str) -> None:
-    """Reversibly hide a session from the sidebar (keeps token/cost history)."""
+async def delete_session(username: str, session_id: str) -> bool:
+    """Permanently delete a user's chat, including turns and saved itineraries."""
     async with AsyncSessionLocal() as db:
+        ownership = await db.execute(
+            text("SELECT 1 FROM trips WHERE session_id = :sid AND username = :username LIMIT 1"),
+            {"sid": session_id, "username": username},
+        )
+        if not ownership.fetchone():
+            return False
+
         await db.execute(
-            text(
-                "UPDATE trips SET deleted_at = NOW(), updated_at = NOW() "
-                "WHERE session_id = :sid AND deleted_at IS NULL"
-            ),
+            text("DELETE FROM chat_turns WHERE session_id = :sid"),
             {"sid": session_id},
         )
+        await db.execute(
+            text("DELETE FROM trips WHERE session_id = :sid AND username = :username"),
+            {"sid": session_id, "username": username},
+        )
         await db.commit()
+    return True

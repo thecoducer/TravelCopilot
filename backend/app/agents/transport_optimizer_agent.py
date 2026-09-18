@@ -7,7 +7,9 @@ up to 2 budget-filtered alternatives.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,11 +17,15 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
+from app.config import settings
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.stops import RouteLegPlan
 from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
+from app.services.currency_service import resolve_from_state
 from app.tools.factory import ToolFactory
 
 # Seat classes considered "premium" — excluded for budget tier
@@ -47,39 +53,103 @@ class _OptimiserOutput(BaseModel):
 
 class _LegRecommendation(BaseModel):
     leg_id: str
-    recommendation: TransportRecommendation
+    # Optional so a no-result leg is expressible: the prompt permits skipping the
+    # recommendation, and a required field would reject the model's own valid answer.
+    recommendation: TransportRecommendation | None = None
     no_result: bool = False
 
 
-class _MultiLegOptimiserOutput(BaseModel):
-    per_leg: list[_LegRecommendation] = Field(default_factory=list)
-    aggregate: TransportRecommendation
-
-
 _LEG_SYSTEM_PROMPT = """\
-You are a transport planning expert. For every route leg listed below, pick the \
-best available option and explain your reasoning, then produce one route-wide \
-aggregate summary across all legs.
+You are a transport planning expert. Pick the best available option for the single \
+route leg below and explain your reasoning.
 
 Rules:
 - All options MUST be budget-filtered (no premium/business class unless tier is luxury).
-- Each leg's ``personalization_reason`` must reference the traveller's budget tier.
-- Each ``RouteLeg`` must have a non-empty ``price_disclaimer`` and a valid ``price_cached_at``.
-- If a leg has no viable options, set ``no_result=true`` and leave its recommended_legs empty.
-- ``aggregate`` summarises the whole route (all legs combined) — total cost and duration.
-- Return exactly one ``per_leg`` entry for every ``leg_id`` provided.
+- ``personalization_reason`` must reference the traveller's budget tier.
+- Express every cost in the currency given, and set ``currency_code`` to it.
+- If the leg has no viable option, set ``no_result=true`` and omit ``recommendation``.
+- Never invent a duration or price that is not present in the supplied options.
 """
+
+# Google Routes returns durations as a protobuf duration string ("18543s").
+_ISO_SECONDS_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*s\s*$", re.IGNORECASE)
+
+
+def _duration_to_minutes(value: object) -> float | None:
+    """Normalise a provider duration to minutes, or None when it is unusable.
+
+    Returning None rather than 0 matters: a zero-minute leg reads as an instant
+    free transfer, and the model then reports it as "invalid data" or picks it.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    if isinstance(value, str):
+        match = _ISO_SECONDS_PATTERN.match(value)
+        if match:
+            seconds = float(match.group(1))
+            return round(seconds / 60.0, 2) if seconds > 0 else None
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
 
 
 def _trim_leg(leg: dict[str, Any]) -> dict[str, Any]:
+    duration = _duration_to_minutes(leg.get("total_duration", leg.get("duration")))
+    raw_price = leg.get("price")
+    has_price = isinstance(raw_price, (int, float)) and not isinstance(raw_price, bool)
     return {
         "operator": leg.get("operator", leg.get("airline", {}).get("name", "")),
-        "duration_minutes": leg.get("total_duration", leg.get("duration", 0)),
-        "price": leg.get("price", 0),
+        "duration_minutes": duration,
+        # Ground providers return no fare at all; a 0 here would read as free.
+        "price": float(raw_price) if isinstance(raw_price, (int, float)) else None,
+        "price_unknown": not has_price,
         "stops": leg.get("stops", len(leg.get("layovers", []))),
         "departure": leg.get("departure_airport", {}).get("time", ""),
         "seat_class": leg.get("travel_class", "economy"),
     }
+
+
+def _no_result_recommendation(
+    leg_id: str, currency: str, route_version: int
+) -> TransportRecommendation:
+    """Explicit 'nothing bookable found' record for one leg."""
+    return TransportRecommendation(
+        recommended_legs=[],
+        total_cost=0.0,
+        total_duration_minutes=0,
+        currency_code=currency,
+        rationale="No transport options found for this leg.",
+        personalization_reason="",
+        leg_id=leg_id,
+        route_version=route_version,
+        no_result=True,
+    )
+
+
+def _aggregate_recommendation(
+    per_leg: dict[str, TransportRecommendation], currency: str, route_version: int
+) -> TransportRecommendation:
+    """Sum the per-leg picks deterministically instead of asking the model to add up."""
+    priced = [rec for rec in per_leg.values() if not rec.no_result]
+    legs = [leg for rec in priced for leg in rec.recommended_legs]
+    return TransportRecommendation(
+        recommended_legs=legs,
+        total_cost=round(sum(rec.total_cost for rec in priced), 2),
+        total_duration_minutes=sum(rec.total_duration_minutes for rec in priced),
+        currency_code=currency,
+        rationale=(
+            f"Whole-route total across {len(priced)} priced leg(s) of {len(per_leg)} discovered."
+        ),
+        personalization_reason="Aggregated from each leg's budget-filtered pick.",
+        leg_id="route_aggregate",
+        route_version=route_version,
+        no_result=not priced,
+    )
 
 
 def _patch_legs(
@@ -134,15 +204,33 @@ class TransportOptimizerAgent(AgentClarificationMixin):
         log = get_agent_logger(
             "transport_optimizer", session_id, source=source, destination=destination
         )
-        log.info("agent_start", route_options=list(legs_raw.keys()))
+        currency = resolve_from_state(state, log=log)
 
         route_legs: dict[str, RouteLegPlan] = state.get("route_legs", {})
         legs_raw_by_leg: dict[str, list[Any]] = state.get("transport_legs_raw_by_leg", {})
         if state.get("route_discovery_status") == "multi_stop_provisional" and legs_raw_by_leg:
+            log.info(
+                "agent_start",
+                mode="multi_stop_provisional",
+                legs=list(legs_raw_by_leg.keys()),
+                currency=currency,
+            )
             return await self._optimize_route_legs(
-                route_legs, legs_raw_by_leg, budget, travelers, state.get("route_version", 0), log
+                route_legs,
+                legs_raw_by_leg,
+                budget,
+                travelers,
+                state.get("route_version", 0),
+                currency,
+                log,
             )
 
+        log.info(
+            "agent_start",
+            mode="single_destination",
+            legs=list(legs_raw.keys()),
+            currency=currency,
+        )
         if not legs_raw:
             log.warning("no_legs_raw")
             return {"transport_recommendation": None, "transport_alternatives": []}
@@ -156,9 +244,10 @@ class TransportOptimizerAgent(AgentClarificationMixin):
 
         legs_summary = {k: [_trim_leg(leg) for leg in v[:4]] for k, v in filtered_legs.items()}
 
-        chain = self._llm.with_structured_output(_OptimiserOutput)
         try:
-            output: _OptimiserOutput = await chain.ainvoke(
+            output = await invoke_structured(
+                self._llm,
+                _OptimiserOutput,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
@@ -169,10 +258,17 @@ class TransportOptimizerAgent(AgentClarificationMixin):
                             f"Route options (JSON):\n{json.dumps(legs_summary, indent=2)}"
                         )
                     ),
-                ]
+                ],
+                agent=AgentName.TRANSPORT_OPTIMIZER,
+                log=log,
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(
+                LogEvent.AGENT_DEGRADED,
+                section="transport",
+                truncated=exc.truncated,
+                error=str(exc),
+            )
             return {"transport_recommendation": None, "transport_alternatives": []}
 
         now = datetime.now(tz=UTC)
@@ -194,6 +290,7 @@ class TransportOptimizerAgent(AgentClarificationMixin):
         budget: Any,
         travelers: int,
         route_version: int,
+        currency: str,
         log: Any,
     ) -> dict[str, Any]:
         """Return one recommendation per discovered ``leg_id`` plus a route-wide aggregate.
@@ -218,60 +315,79 @@ class TransportOptimizerAgent(AgentClarificationMixin):
             for leg_id, options in filtered.items()
         }
 
-        chain = self._llm.with_structured_output(_MultiLegOptimiserOutput)
-        try:
-            output: _MultiLegOptimiserOutput = await chain.ainvoke(
-                [
-                    SystemMessage(content=_LEG_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Travelers: {travelers}\nBudget tier: {budget_tier}\n\n"
-                            f"Route legs (JSON):\n{json.dumps(legs_summary, indent=2)}"
-                        )
-                    ),
-                ]
-            )
-        except Exception as exc:
-            log.error("llm_failed_multi_leg", error=str(exc))
-            return {
-                "transport_recommendation_by_leg": {},
-                "transport_recommendation": None,
-                "transport_alternatives": [],
-            }
-
         now = datetime.now(tz=UTC)
         disclaimer = "Price is indicative — verify before booking."
 
-        per_leg: dict[str, TransportRecommendation] = {}
-        for item in output.per_leg:
+        # One bounded call per leg rather than a single request covering the whole
+        # route: the combined schema is large enough that a 9-leg route reliably
+        # truncated, and one bad leg then discarded every other leg's answer.
+        semaphore = asyncio.Semaphore(settings.llm_concurrency)
+
+        async def _optimise_one(leg_id: str, summary: dict[str, Any]) -> TransportRecommendation:
+            if not summary["options"]:
+                return _no_result_recommendation(leg_id, currency, route_version)
+            async with semaphore:
+                try:
+                    item = await invoke_structured(
+                        self._llm,
+                        _LegRecommendation,
+                        [
+                            SystemMessage(content=_LEG_SYSTEM_PROMPT),
+                            HumanMessage(
+                                content=(
+                                    f"Travelers: {travelers}\n"
+                                    f"Budget tier: {budget_tier}\n"
+                                    f"Currency: {currency}\n\n"
+                                    f"Leg id: {leg_id}\n"
+                                    f"Leg (JSON):\n{json.dumps(summary, indent=2)}"
+                                )
+                            ),
+                        ],
+                        agent=AgentName.TRANSPORT_OPTIMIZER,
+                        log=log,
+                    )
+                except StructuredOutputError as exc:
+                    log.warning(
+                        LogEvent.AGENT_DEGRADED,
+                        section="transport_leg",
+                        leg_id=leg_id,
+                        truncated=exc.truncated,
+                        error=str(exc),
+                    )
+                    return _no_result_recommendation(leg_id, currency, route_version)
+
+            if item.recommendation is None:
+                return _no_result_recommendation(leg_id, currency, route_version)
             rec = _patch_legs(item.recommendation, now, disclaimer)
-            per_leg[item.leg_id] = rec.model_copy(
+            return rec.model_copy(
                 update={
-                    "leg_id": item.leg_id,
+                    "leg_id": leg_id,
                     "route_version": route_version,
                     "no_result": item.no_result,
                 }
             )
 
+        leg_ids = list(legs_summary.keys())
+        results = await asyncio.gather(
+            *[_optimise_one(leg_id, legs_summary[leg_id]) for leg_id in leg_ids]
+        )
+        per_leg: dict[str, TransportRecommendation] = dict(zip(leg_ids, results, strict=True))
+
         # Deterministic coverage guarantee — a leg the LLM omitted still gets an
         # explicit no-result record rather than silently disappearing.
         for leg_id in legs_raw_by_leg:
-            if leg_id in per_leg:
-                continue
-            per_leg[leg_id] = TransportRecommendation(
-                recommended_legs=[],
-                total_cost=0.0,
-                total_duration_minutes=0,
-                currency_code="INR",
-                rationale="No transport options found for this leg.",
-                personalization_reason="",
-                leg_id=leg_id,
-                route_version=route_version,
-                no_result=True,
-            )
+            if leg_id not in per_leg:
+                per_leg[leg_id] = _no_result_recommendation(leg_id, currency, route_version)
 
-        aggregate = _patch_legs(output.aggregate, now, disclaimer)
-        log.info("agent_done", mode="multi_stop_provisional", legs=list(per_leg.keys()))
+        aggregate = _aggregate_recommendation(per_leg, currency, route_version)
+        priced = sum(1 for rec in per_leg.values() if not rec.no_result)
+        log.info(
+            "agent_done",
+            mode="multi_stop_provisional",
+            legs=list(per_leg.keys()),
+            priced_legs=priced,
+            unpriced_legs=len(per_leg) - priced,
+        )
         return {
             "transport_recommendation_by_leg": per_leg,
             "transport_recommendation": aggregate,

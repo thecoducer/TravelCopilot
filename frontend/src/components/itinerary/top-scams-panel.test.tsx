@@ -106,7 +106,7 @@ describe("ItineraryDetails", () => {
     expect(screen.getByText("Use licensed taxis after dark.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Medical facilities" })).toBeInTheDocument();
     expect(screen.getByText("Osaka City General Hospital has emergency care.")).toBeInTheDocument();
-    expect(screen.queryByText("Practical details")?.closest("details")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Practical details" }).closest("details")).toBeNull();
   });
 
   it("hides Read more when fewer than two practical details are available", () => {

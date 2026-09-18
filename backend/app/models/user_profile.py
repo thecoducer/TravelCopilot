@@ -25,8 +25,7 @@ class HotelStyle(StrEnum):
 class TripDates(BaseModel):
     departure: date
     return_date: date | None = None
-    flexibility_days: int = 0  # ±N days flexible departure window
-    night_travel_ok: bool = True  # whether overnight trains / buses are acceptable
+    flexibility_days: int = Field(default=0, ge=0)  # ±N days flexible departure window
 
     @property
     def trip_days(self) -> int:
@@ -46,7 +45,8 @@ class UserProfile(BaseModel):
     username: str | None = None  # auth-free identity; keys the profile across sessions
     display_name: str | None = None
     nationality: str | None = None
-    preferred_currency: str = "INR"
+    # Unset means "use the configured default"; resolve via services.currency_service.
+    preferred_currency: str | None = None
     dietary_restrictions: list[str] = Field(default_factory=list)
     preferred_cuisines: list[str] = Field(default_factory=list)
     # Distinguishes an explicit "no dietary restrictions" answer from unset preferences.

@@ -18,9 +18,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.models.enums import StopKind
+
 RouteDiscoveryStatus = Literal["single_destination", "multi_stop_provisional", "discovery_failed"]
 RouteVerificationStatus = Literal["provisional", "verified"]
-StopKind = Literal["overnight", "gateway_transit"]
 
 # Sentinel origin/destination stop_id for legs anchored at the user's source —
 # the source is a plain string label (from TripState), never a routed TripStop.
@@ -78,7 +79,7 @@ class TripStop(BaseModel):
     country: str | None = None
     lat: float | None = None
     lng: float | None = None
-    stop_kind: StopKind = "overnight"
+    stop_kind: StopKind = StopKind.OVERNIGHT
     sequence: int = Field(ge=0)
     nights: int = Field(default=0, ge=0)
     arrival_date: date | None = None

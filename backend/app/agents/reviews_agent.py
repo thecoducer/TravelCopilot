@@ -14,8 +14,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent, Sentiment
 from app.models.reports import ReviewSummary
 from app.services.cache_service import TTL_PLACES, cache_service
 from app.tools.factory import ToolFactory
@@ -23,14 +25,17 @@ from app.tools.factory import ToolFactory
 # Keep review synthesis bounded so one slow provider call cannot stall the full graph.
 _REVIEW_SUMMARY_TIMEOUT_SECONDS = 60
 
-_SYSTEM_PROMPT = """\
+# Sentiments the model may choose from; UNKNOWN is reserved for "no evidence".
+_JUDGEABLE_SENTIMENTS = (Sentiment.POSITIVE, Sentiment.MIXED, Sentiment.NEGATIVE)
+
+_SYSTEM_PROMPT = f"""\
 You are a travel reviewer. Given the raw place details and reviews below, synthesise a
 concise reviewer summary for a traveller.
 
 Rules:
 - ``pros`` should list 2–4 concrete positives mentioned by multiple reviewers.
 - ``cons`` should list 1–3 genuine negatives (skip if the place has near-perfect reviews).
-- ``sentiment`` must be one of: "positive" | "mixed" | "negative".
+- ``sentiment`` must be one of: {" | ".join(_JUDGEABLE_SENTIMENTS)}.
 - Keep each pro/con to a single short sentence.
 """
 
@@ -38,7 +43,12 @@ Rules:
 class _PlaceSummary(BaseModel):
     pros: list[str] = Field(default_factory=list)
     cons: list[str] = Field(default_factory=list)
-    sentiment: str = "positive"
+    sentiment: Sentiment = Sentiment.UNKNOWN
+
+
+# Returned whenever no review text reached the model, so downstream consumers can
+# tell "no evidence" apart from "reviewers were positive".
+_NO_EVIDENCE_SUMMARY = _PlaceSummary(pros=[], cons=[], sentiment=Sentiment.UNKNOWN)
 
 
 class _ReviewTarget(NamedTuple):
@@ -104,7 +114,7 @@ class ReviewsAgent(AgentClarificationMixin):
         )
 
         log.info(
-            "agent_start",
+            LogEvent.AGENT_START,
             targets=len(targets),
             mode="multi_stop_provisional" if multi_stop else "single_destination",
         )
@@ -141,12 +151,18 @@ class ReviewsAgent(AgentClarificationMixin):
         reviews_summary: dict[str, ReviewSummary] = {}
         for r in results:
             if isinstance(r, BaseException):
-                log.warning("review_fetch_failed", error=str(r))
+                log.warning(LogEvent.TOOL_CALL_FAILED, tool="place_details", error=str(r))
                 continue
             key, summary = r
             reviews_summary[key] = summary
 
-        log.info("agent_done", reviewed=len(reviews_summary))
+        evidenced = sum(1 for s in reviews_summary.values() if s.sentiment != Sentiment.UNKNOWN)
+        log.info(
+            LogEvent.AGENT_DONE,
+            reviewed=len(reviews_summary),
+            evidenced=evidenced,
+            without_evidence=len(reviews_summary) - evidenced,
+        )
         return {"reviews_summary": reviews_summary}
 
     @staticmethod
@@ -199,12 +215,20 @@ class ReviewsAgent(AgentClarificationMixin):
             for r in details.get("reviews", [])[:5]
         )
         if not reviews_text:
-            return details, _PlaceSummary(pros=[], cons=[], sentiment="positive")
+            log.info(
+                LogEvent.SECTION_UNAVAILABLE,
+                section="reviews",
+                place=target.name,
+                place_id=target.place_id or None,
+                reason="no_review_text_from_provider",
+            )
+            return details, _NO_EVIDENCE_SUMMARY
 
-        chain = self._llm.with_structured_output(_PlaceSummary)
         try:
             summary: _PlaceSummary = await asyncio.wait_for(
-                chain.ainvoke(
+                invoke_structured(
+                    self._llm,
+                    _PlaceSummary,
                     [
                         SystemMessage(content=_SYSTEM_PROMPT),
                         HumanMessage(
@@ -215,18 +239,23 @@ class ReviewsAgent(AgentClarificationMixin):
                                 f"Reviews:\n{reviews_text}"
                             )
                         ),
-                    ]
+                    ],
+                    agent=AgentName.REVIEWS,
+                    log=log,
                 ),
                 timeout=_REVIEW_SUMMARY_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             log.warning(
-                "llm_timeout", place=target.name, timeout_seconds=_REVIEW_SUMMARY_TIMEOUT_SECONDS
+                LogEvent.AGENT_DEGRADED,
+                reason="llm_timeout",
+                place=target.name,
+                timeout_seconds=_REVIEW_SUMMARY_TIMEOUT_SECONDS,
             )
-            summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")
-        except Exception as exc:
-            log.warning("llm_failed", place=target.name, error=str(exc))
-            summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")
+            summary = _NO_EVIDENCE_SUMMARY
+        except StructuredOutputError as exc:
+            log.warning(LogEvent.AGENT_DEGRADED, reason=str(exc), place=target.name)
+            summary = _NO_EVIDENCE_SUMMARY
         return details, summary
 
     async def _build_review_summary(
@@ -250,6 +279,7 @@ class ReviewsAgent(AgentClarificationMixin):
             photos=photos,
             google_maps_url=details.get("google_maps_url"),
             stop_id=stop_id,
+            place_id=target.place_id or details.get("place_id") or None,
             review_key=key if route_version is not None else None,
             route_version=route_version,
         )

@@ -8,6 +8,14 @@ ENV PYTHONUNBUFFERED=1
 # Install system dependencies (libpq5 required by psycopg pure-Python impl at runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    fontconfig \
+    libfontconfig1 \
+    libfreetype6 \
+    libgdk-pixbuf-2.0-0 \
+    libglib2.0-0 \
+    libharfbuzz0b \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
     libpq5 \
     && rm -rf /var/lib/apt/lists/*
 

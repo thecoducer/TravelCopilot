@@ -20,6 +20,7 @@ type SessionsContextValue = {
   refresh: () => Promise<void>;
   addSession: (session: SessionSummary) => void;
   updateSession: (sessionId: string, changes: Partial<SessionSummary>) => void;
+  removeSession: (sessionId: string) => void;
 };
 
 const SessionsContext = createContext<SessionsContextValue | null>(null);
@@ -29,6 +30,7 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const optimisticSessionsRef = useRef<SessionSummary[]>([]);
+  const deletedSessionIdsRef = useRef<Set<string>>(new Set());
 
   const addSession = useCallback((session: SessionSummary) => {
     optimisticSessionsRef.current = [
@@ -53,8 +55,17 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
     setSessions((current) => current.map(update));
   }, []);
 
+  const removeSession = useCallback((sessionId: string) => {
+    deletedSessionIdsRef.current.add(sessionId);
+    optimisticSessionsRef.current = optimisticSessionsRef.current.filter(
+      (session) => session.session_id !== sessionId,
+    );
+    setSessions((current) => current.filter((session) => session.session_id !== sessionId));
+  }, []);
+
   useEffect(() => {
     optimisticSessionsRef.current = [];
+    deletedSessionIdsRef.current.clear();
   }, [username]);
 
   const refresh = useCallback(async () => {
@@ -65,9 +76,11 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const listedSessions = await listSessions(username);
-      setSessions(mergeSessions(listedSessions, optimisticSessionsRef.current));
+      setSessions(mergeSessions(listedSessions, optimisticSessionsRef.current, deletedSessionIdsRef.current));
       optimisticSessionsRef.current = optimisticSessionsRef.current.filter(
-        (optimistic) => !listedSessions.some((listed) => listed.session_id === optimistic.session_id),
+        (optimistic) =>
+          !listedSessions.some((listed) => listed.session_id === optimistic.session_id) &&
+          !deletedSessionIdsRef.current.has(optimistic.session_id),
       );
     } catch {
       // Sidebar is non-critical; keep the last good list on failure.
@@ -85,9 +98,11 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
       try {
         const list = await listSessions(username);
         if (!cancelled) {
-          setSessions(mergeSessions(list, optimisticSessionsRef.current));
+          setSessions(mergeSessions(list, optimisticSessionsRef.current, deletedSessionIdsRef.current));
           optimisticSessionsRef.current = optimisticSessionsRef.current.filter(
-            (optimistic) => !list.some((listed) => listed.session_id === optimistic.session_id),
+            (optimistic) =>
+              !list.some((listed) => listed.session_id === optimistic.session_id) &&
+              !deletedSessionIdsRef.current.has(optimistic.session_id),
           );
         }
       } catch {
@@ -100,8 +115,8 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
   }, [mounted, username]);
 
   const value = useMemo(
-    () => ({ sessions, loading, refresh, addSession, updateSession }),
-    [sessions, loading, refresh, addSession, updateSession],
+    () => ({ sessions, loading, refresh, addSession, updateSession, removeSession }),
+    [sessions, loading, refresh, addSession, updateSession, removeSession],
   );
 
   return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>;
@@ -110,11 +125,17 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
 function mergeSessions(
   listedSessions: SessionSummary[],
   optimisticSessions: SessionSummary[],
+  deletedSessionIds: Set<string>,
 ): SessionSummary[] {
-  const listedIds = new Set(listedSessions.map((session) => session.session_id));
+  const visibleListedSessions = listedSessions.filter(
+    (session) => !deletedSessionIds.has(session.session_id),
+  );
+  const listedIds = new Set(visibleListedSessions.map((session) => session.session_id));
   return [
-    ...optimisticSessions.filter((session) => !listedIds.has(session.session_id)),
-    ...listedSessions,
+    ...optimisticSessions.filter(
+      (session) => !listedIds.has(session.session_id) && !deletedSessionIds.has(session.session_id),
+    ),
+    ...visibleListedSessions,
   ];
 }
 

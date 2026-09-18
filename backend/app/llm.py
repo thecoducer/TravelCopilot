@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-import queue
-import threading
 from collections.abc import Mapping
 from contextvars import ContextVar, Token
-from datetime import datetime
 from typing import Any
 
 import structlog
@@ -16,37 +13,26 @@ import structlog
 from app.config import settings
 
 logger = structlog.get_logger(__name__)
-_ACTIVE_SESSION_ID: ContextVar[str] = ContextVar("active_llm_session_id", default="")
-_usage_queue: queue.Queue[tuple[str, str, dict[str, int | float]]] = queue.Queue()
-_usage_worker_started = False
-_usage_worker_lock = threading.Lock()
+
+# Identifies one planning run (one graph invocation) so usage recorded deep
+# inside agent LLM calls can be attributed without threading an id through
+# every agent constructor.
+_ACTIVE_RUN_ID: ContextVar[str] = ContextVar("active_llm_run_id", default="")
 
 
-def set_active_llm_session_id(session_id: str) -> Token[str]:
-    """Bind a session ID to the current async context."""
-    return _ACTIVE_SESSION_ID.set(session_id)
+def set_active_llm_run_id(run_id: str) -> Token[str]:
+    """Bind a run ID to the current async context."""
+    return _ACTIVE_RUN_ID.set(run_id)
 
 
-def reset_active_llm_session_id(token: Token[str]) -> None:
-    """Restore the previous session ID context."""
-    _ACTIVE_SESSION_ID.reset(token)
+def reset_active_llm_run_id(token: Token[str]) -> None:
+    """Restore the previous run ID context."""
+    _ACTIVE_RUN_ID.reset(token)
 
 
-def _effective_session_id(metadata: dict[str, Any]) -> str:
-    session_id = metadata.get("session_id")
-    if isinstance(session_id, str) and session_id:
-        return session_id
-    return _ACTIVE_SESSION_ID.get()
-
-
-def _callback_metadata(kwargs: Mapping[str, Any]) -> dict[str, Any]:
-    """Read metadata from LiteLLM's normalized callback payload."""
-    metadata = kwargs.get("metadata")
-    if isinstance(metadata, Mapping):
-        return dict(metadata)
-    litellm_params = kwargs.get("litellm_params")
-    metadata = _read_value(litellm_params, "metadata", {}) or {}
-    return dict(metadata) if isinstance(metadata, Mapping) else {}
+def get_active_llm_run_id() -> str:
+    """Return the run ID bound for the current planning run, or ``""``."""
+    return _ACTIVE_RUN_ID.get()
 
 
 def _sync_api_keys() -> None:
@@ -85,183 +71,102 @@ def try_enable_litellm_langfuse_callbacks() -> bool:
         return False
 
 
-async def _write_usage(agent_name: str, session_id: str, usage: dict[str, int | float]) -> None:
-    from app.services.cache_service import CacheService
-
-    cache = CacheService()
-    try:
-        key = cache.usage_key(session_id, agent_name)
-        existing = await cache.get(key) or {}
-        for field, value in usage.items():
-            existing[field] = existing.get(field, 0) + value
-        existing["calls"] = existing.get("calls", 0) + 1
-        await cache.set(key, existing, ttl=604800)
-    finally:
-        await cache.close()
-
-
-async def _usage_worker() -> None:
-    while True:
-        agent_name, session_id, usage = await asyncio.to_thread(_usage_queue.get)
-        try:
-            await _write_usage(agent_name, session_id, usage)
-        except Exception as exc:
-            logger.warning("usage_cache_failed", agent=agent_name, error=str(exc))
-        finally:
-            _usage_queue.task_done()
-
-
-def _ensure_usage_worker() -> None:
-    global _usage_worker_started
-    with _usage_worker_lock:
-        if _usage_worker_started:
-            return
-
-        def run() -> None:
-            asyncio.run(_usage_worker())
-
-        threading.Thread(target=run, name="llm-usage-worker", daemon=True).start()
-        _usage_worker_started = True
-
-
-def _latency_ms(start_time: Any, end_time: Any) -> float:
-    if isinstance(start_time, datetime) and isinstance(end_time, datetime):
-        return max((end_time - start_time).total_seconds() * 1000, 0.0)
-    return 0.0
-
-
 def _read_value(value: Any, key: str, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         return value.get(key, default)
     return getattr(value, key, default)
 
 
-def extract_llm_usage(
-    response_obj: Any, kwargs: Mapping[str, Any] | None = None
-) -> dict[str, int | float]:
-    """Normalize token and cost fields from LiteLLM and LangChain response shapes."""
-    metadata = _read_value(response_obj, "response_metadata", {}) or {}
-    hidden_params = _read_value(response_obj, "_hidden_params", {}) or {}
-    callback_kwargs = kwargs or {}
-    usage_candidates = (
-        _read_value(response_obj, "usage"),
-        _read_value(response_obj, "usage_metadata"),
-        _read_value(metadata, "token_usage"),
-        _read_value(metadata, "usage"),
-    )
-    prompt_tokens = completion_tokens = total_tokens = 0
-    for candidate in usage_candidates:
-        if not candidate:
-            continue
-        prompt_tokens = int(
-            _read_value(candidate, "prompt_tokens", _read_value(candidate, "input_tokens", 0)) or 0
-        )
-        completion_tokens = int(
-            _read_value(candidate, "completion_tokens", _read_value(candidate, "output_tokens", 0))
-            or 0
-        )
-        total_tokens = int(
-            _read_value(candidate, "total_tokens", prompt_tokens + completion_tokens)
-            or prompt_tokens + completion_tokens
-        )
-        if prompt_tokens or completion_tokens or total_tokens:
-            break
+def _fallback_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Static-pricing-table cost estimate, used when a provider reports none."""
+    try:
+        import litellm
 
-    cost = 0.0
-    for source in (hidden_params, metadata, callback_kwargs):
-        for key in ("response_cost", "cost_usd", "total_cost"):
-            value = _read_value(source, key)
-            if value is not None:
-                cost = float(value or 0.0)
-                break
-        if cost:
-            break
+        prompt_cost, completion_cost = litellm.cost_per_token(
+            model=model, prompt_tokens=input_tokens, completion_tokens=output_tokens
+        )
+        return float(prompt_cost + completion_cost)
+    except Exception as exc:
+        logger.debug("llm_cost_fallback_failed", model=model, error=str(exc))
+        return 0.0
+
+
+def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
+    """Normalize token, cost, and reasoning/cache detail for one LLM response.
+
+    Reads LangChain's normalized ``usage_metadata`` first, falling back to the
+    raw LiteLLM ``Usage`` object under ``response_metadata`` for provider-specific
+    detail (e.g. reasoning/cached token breakdowns) that LangChain doesn't
+    normalize on every integration version.
+    """
+    usage_metadata = _read_value(response, "usage_metadata") or {}
+    response_metadata = _read_value(response, "response_metadata") or {}
+    raw_usage = (
+        _read_value(response_metadata, "token_usage")
+        or _read_value(response_metadata, "usage")
+        or {}
+    )
+
+    input_tokens = int(
+        _read_value(usage_metadata, "input_tokens") or _read_value(raw_usage, "prompt_tokens") or 0
+    )
+    output_tokens = int(
+        _read_value(usage_metadata, "output_tokens")
+        or _read_value(raw_usage, "completion_tokens")
+        or 0
+    )
+    total_tokens = int(
+        _read_value(usage_metadata, "total_tokens")
+        or _read_value(raw_usage, "total_tokens")
+        or (input_tokens + output_tokens)
+    )
+
+    output_token_details = _read_value(usage_metadata, "output_token_details") or {}
+    completion_tokens_details = _read_value(raw_usage, "completion_tokens_details") or {}
+    reasoning_tokens = int(
+        _read_value(output_token_details, "reasoning")
+        or _read_value(completion_tokens_details, "reasoning_tokens")
+        or 0
+    )
+
+    input_token_details = _read_value(usage_metadata, "input_token_details") or {}
+    prompt_tokens_details = _read_value(raw_usage, "prompt_tokens_details") or {}
+    cached_tokens = int(
+        _read_value(input_token_details, "cache_read")
+        or _read_value(prompt_tokens_details, "cached_tokens")
+        or 0
+    )
+
+    # Prefer a provider-reported real cost (e.g. OpenRouter with usage.include=true)
+    # over the static pricing table, which may not cover every routed model.
+    cost = _read_value(raw_usage, "cost")
+    if cost is None:
+        hidden_params = _read_value(response, "_hidden_params") or {}
+        cost = _read_value(hidden_params, "response_cost") or _read_value(
+            response_metadata, "response_cost"
+        )
+    cost_usd = (
+        float(cost) if cost is not None else _fallback_cost_usd(model, input_tokens, output_tokens)
+    )
 
     return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "cached_tokens": cached_tokens,
         "total_tokens": total_tokens,
-        "cost_usd": cost,
+        "cost_usd": cost_usd,
     }
 
 
-async def flush_usage_events() -> None:
-    """Wait for callback events already queued by LiteLLM to reach Redis."""
-    try:
-        await asyncio.wait_for(asyncio.to_thread(_usage_queue.join), timeout=2.0)
-    except TimeoutError:
-        logger.warning("usage_queue_flush_timeout")
-
-
-try:
-    import litellm
-
-    class UsageLogger(litellm.CustomLogger):  # type: ignore[name-defined, misc]
-        """Aggregate provider usage by session and agent in Redis."""
-
-        def _record_success_event(
-            self,
-            kwargs: dict[str, Any],
-            response_obj: Any,
-            start_time: Any,
-            end_time: Any,
-        ) -> None:
-            metadata = _callback_metadata(kwargs)
-            agent_name = str(metadata.get("agent_name", "unknown"))
-            session_id = _effective_session_id(metadata)
-            if not session_id:
-                return
-            usage = extract_llm_usage(response_obj, kwargs)
-            _ensure_usage_worker()
-            _usage_queue.put(
-                (
-                    agent_name,
-                    session_id,
-                    {
-                        "prompt_tokens": int(usage["prompt_tokens"]),
-                        "completion_tokens": int(usage["completion_tokens"]),
-                        "total_tokens": int(usage["total_tokens"]),
-                        "cost_usd": float(usage["cost_usd"]),
-                        "latency_ms": _latency_ms(start_time, end_time),
-                    },
-                )
-            )
-
-        def log_success_event(
-            self,
-            kwargs: dict[str, Any],
-            response_obj: Any,
-            start_time: Any,
-            end_time: Any,
-        ) -> None:
-            self._record_success_event(kwargs, response_obj, start_time, end_time)
-
-        async def async_log_success_event(
-            self,
-            kwargs: dict[str, Any],
-            response_obj: Any,
-            start_time: Any,
-            end_time: Any,
-        ) -> None:
-            self._record_success_event(kwargs, response_obj, start_time, end_time)
-
-    _usage_logger = UsageLogger()
-except ImportError:
-    logger.warning("litellm_not_installed")
-
-    class UsageLogger:  # type: ignore[no-redef]
-        """Fallback marker when LiteLLM is unavailable."""
-
-
 def init_llm() -> None:
-    """Initialize provider credentials and optional global callbacks."""
+    """Initialize provider credentials and optional observability callbacks."""
     _sync_api_keys()
     try:
         import litellm
 
-        litellm.callbacks = [_usage_logger]
         litellm.set_verbose = False  # type: ignore[attr-defined]
-    except (ImportError, NameError):
+    except ImportError:
         return
     if try_enable_litellm_langfuse_callbacks():
         logger.info("litellm_langfuse_registered")
@@ -276,16 +181,21 @@ except ImportError:
 def get_llm(agent_name: str, session_id: str = "") -> Any:
     """Return the official LangChain LiteLLM chat model."""
     model_string = f"{settings.llm_provider}/{settings.llm_model}"
+    model_kwargs: dict[str, Any] = {
+        "timeout": settings.llm_timeout_seconds,
+        "num_retries": settings.llm_num_retries,
+    }
+    if settings.llm_provider == "openrouter":
+        # Ask OpenRouter to report its own real billed cost per call instead of
+        # relying solely on LiteLLM's static pricing table.
+        model_kwargs["extra_body"] = {"usage": {"include": True}}
     kwargs: dict[str, Any] = {
         "model": model_string,
         "temperature": 0.0,
-        "max_tokens": settings.llm_max_tokens,
+        "max_tokens": settings.max_tokens_for_agent(agent_name),
         "max_retries": settings.llm_max_retries,
         # timeout and num_retries are LiteLLM completion params, not ChatLiteLLM fields.
-        "model_kwargs": {
-            "timeout": settings.llm_timeout_seconds,
-            "num_retries": settings.llm_num_retries,
-        },
+        "model_kwargs": model_kwargs,
         "metadata": {"agent_name": agent_name, "session_id": session_id},
     }
     if settings.llm_api_base:
@@ -303,3 +213,22 @@ def structured_llm(llm: Any, schema: type) -> Any:
     except TypeError:
         # Test doubles and older integrations expose with_structured_output(schema) only.
         return llm.with_structured_output(schema)
+
+
+_llm_semaphore: asyncio.Semaphore | None = None
+_llm_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
+def llm_semaphore() -> asyncio.Semaphore:
+    """Process-wide cap on in-flight LLM calls.
+
+    Agents fan out per stop/place with unbounded ``asyncio.gather``; without this
+    a multi-stop trip issues dozens of simultaneous requests and provider rate
+    limiting surfaces as an unexplained empty completion.
+    """
+    global _llm_semaphore, _llm_semaphore_loop
+    running_loop = asyncio.get_running_loop()
+    if _llm_semaphore is None or _llm_semaphore_loop is not running_loop:
+        _llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
+        _llm_semaphore_loop = running_loop
+    return _llm_semaphore

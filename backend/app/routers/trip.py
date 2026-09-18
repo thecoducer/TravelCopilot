@@ -176,7 +176,7 @@ async def update_itinerary(trip_id: str, payload: ItineraryUpdateRequest) -> dic
 
 @router.get("/{trip_id}/usage")
 async def get_usage(trip_id: str) -> dict[str, Any]:
-    """Return per-agent token and cost breakdown from the database."""
+    """Return the token/cost usage totals for one planning run."""
     try:
         usage = await trip_service.get_usage_json(trip_id)
     except Exception:

@@ -176,6 +176,16 @@ class Settings(BaseSettings):
     # "json_schema" | "function_calling" | "json_mode"; blank uses the provider default
     llm_structured_output_method: str = "json_schema"
 
+    # Token budget for agents whose schema produces large nested output. A single
+    # global budget truncates them mid-object, which surfaces only as a parse error.
+    llm_max_tokens_large: int = 0
+    # Comma-separated agent names (see models.enums.AgentName) using the large budget.
+    llm_large_output_agents: str = ""
+    # Re-prompt attempts after a schema-validation or truncation failure.
+    llm_structured_max_attempts: int = 0
+    # Cap on simultaneous in-flight LLM calls across all agent fan-outs.
+    llm_concurrency: int = 0
+
     # Execution mode switch: real invokes provider adapters; mock replays recordings only.
     mock_external_apis: bool = True
 
@@ -253,19 +263,34 @@ class Settings(BaseSettings):
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate
-    clarification_required_fields: str = Field(default="")
+    # Values live in the env file; a missing key must fail loudly at startup rather
+    # than silently defaulting to ""/0, which disables the gate entirely.
+    clarification_required_fields: str = "source,destination,dates,trip_days,travelers,budget"
     # Per-field confidence thresholds (comma-separated field:threshold pairs).
     # Falls back to parse_confidence_threshold for fields not listed.
-    clarification_field_thresholds: str = Field(default="")
-    clarification_allowed_fields: str = Field(default="")
-    clarification_max_questions: int = Field(default=0)
-    clarification_max_optional_questions: int = Field(default=0)
-    clarification_max_prompt_length: int = Field(default=0)
-    parse_confidence_threshold: float = Field(default=0.0)
+    clarification_field_thresholds: str = (
+        "source:0.3,destination:0.7,dates:0.6,trip_days:0.7,travelers:0.4,budget:0.7"
+    )
+    clarification_allowed_fields: str = (
+        "source,destination,dates,trip_days,travelers,budget,query,"
+        "preferred_cuisines,dietary_restrictions,visa_application_city,flexibility_days"
+    )
+    clarification_max_questions: int = Field(default=6, ge=1)
+    clarification_max_optional_questions: int = Field(default=3, ge=1)
+    clarification_max_prompt_length: int = Field(default=500, ge=1)
+    parse_confidence_threshold: float = Field(default=0.6, gt=0.0, le=1.0)
     # Maximum clarification rounds before proceeding with best-effort defaults
-    max_clarification_rounds: int = Field(default=0)
+    max_clarification_rounds: int = Field(default=3, ge=1)
     # Skippable questions cost an extra interrupt/resume cycle, so they are opt-in.
     enable_optional_clarification: bool = False
+    # Date-flexibility question asked through the optional clarification node.
+    flexibility_days_field: str = "flexibility_days"
+    flexibility_days_prompt: str = (
+        "How flexible are your travel dates? Answer in days either side "
+        "(for example 0, 2 or 3), or skip to keep the dates fixed."
+    )
+    flexibility_days_max: int = 7
+    flexibility_days_default: int = 0
 
     # StopsDiscoveryAgent — max candidate access-gateway options to surface per route
     max_gateway_options: int = 2
@@ -283,6 +308,11 @@ class Settings(BaseSettings):
     fallback_daily_activity_cost_mid: float = 1500.0
     fallback_daily_activity_cost_luxury: float = 4000.0
     fallback_daily_food_ratio: float = 0.35
+
+    # Connectivity + permits enrichment (ItineraryCompilerAgent)
+    # Above this elevation a stop is treated as remote for connectivity purposes.
+    connectivity_remote_altitude_meters: int = 2000
+    permits_lookup_enabled: bool = True
 
     # ItineraryCompilerAgent — quality-gate limits and narrative constraints
     itinerary_max_gate_iterations: int = 3
@@ -303,6 +333,19 @@ class Settings(BaseSettings):
     @property
     def clarification_fields(self) -> list[str]:
         return [f.strip() for f in self.clarification_required_fields.split(",")]
+
+    @property
+    def large_output_agent_names(self) -> frozenset[str]:
+        """Agents whose structured output needs ``llm_max_tokens_large``."""
+        return frozenset(
+            name.strip() for name in self.llm_large_output_agents.split(",") if name.strip()
+        )
+
+    def max_tokens_for_agent(self, agent_name: str) -> int:
+        """Token budget for one agent, falling back to the global budget."""
+        if agent_name in self.large_output_agent_names:
+            return self.llm_max_tokens_large
+        return self.llm_max_tokens
 
     @property
     def field_thresholds(self) -> dict[str, float]:

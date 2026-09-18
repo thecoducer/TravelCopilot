@@ -5,7 +5,7 @@ GET    /api/user/{username}/profile       → read the user's profile
 PUT    /api/user/{username}/profile       → upsert the user's profile
 GET    /api/user/{username}/sessions      → list the user's chat sessions
 PATCH  /api/user/{username}/sessions/{id} → rename a session
-DELETE /api/user/{username}/sessions/{id} → soft-delete a session
+DELETE /api/user/{username}/sessions/{id} → permanently delete a session
 
 Legacy (session-scoped) profile endpoints are retained for backward compatibility:
 PUT/GET /api/user/profile (X-Session-ID header)
@@ -114,13 +114,16 @@ async def rename_user_session(
 
 @router.delete("/{username}/sessions/{session_id}")
 async def delete_user_session(username: str, session_id: str) -> dict[str, Any]:
-    """Soft-delete a session (reversible; keeps token/cost history)."""
-    _validate_username(username)
+    """Permanently delete a session and its chat history and itineraries."""
+    username = _validate_username(username)
     try:
-        await trip_service.soft_delete_session(session_id)
+        deleted = await trip_service.delete_session(username, session_id)
     except Exception as exc:
         logger.warning("delete_session_db_error", error=str(exc))
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    logger.info("delete_session_ok", username=username, session_id=session_id)
     return {"status": "ok", "session_id": session_id}
 
 

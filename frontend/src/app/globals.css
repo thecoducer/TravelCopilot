@@ -22,6 +22,7 @@
   --accent-soft: #E0E4E7;
   --accent-warm: #7B858D;
   --accent-warm-soft: #E5E8EA;
+  --meta-gold: #9A6B2F;
   --danger: #B65F62;
   --danger-soft: #F5E7E8;
   --success: #5F8174;
@@ -62,6 +63,7 @@
   --accent-soft: #30363B;
   --accent-warm: #AEB8BE;
   --accent-warm-soft: #353B40;
+  --meta-gold: #D6AE6B;
   --danger: #E29A9D;
   --danger-soft: #3B292B;
   --success: #9BC5B4;
@@ -89,6 +91,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-warm: var(--accent-warm);
   --color-accent-warm-soft: var(--accent-warm-soft);
+  --color-meta-gold: var(--meta-gold);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);

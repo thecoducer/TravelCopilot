@@ -22,7 +22,7 @@ TTL_PLACES = 48 * 3600  # 48 hours
 TTL_TAVILY = 24 * 3600  # 24 hours
 TTL_FX_RATES = 12 * 3600  # 12 hours
 TTL_RENTALS = 12 * 3600  # 12 hours
-TTL_USAGE = 7 * 24 * 3600  # 7 days
+TTL_RUN_USAGE = 3600  # 1 hour — only needs to outlive one planning run
 
 # Fail fast when Redis is unreachable (e.g. local dev/tests without Docker) instead
 # of paying the default multi-second TCP connect timeout on every cache access.
@@ -111,6 +111,42 @@ class CacheService:
         await self.set(key, value, ttl)
         return value
 
+    async def incr_hash(self, key: str, increments: dict[str, float], ttl: int) -> bool:
+        """Atomically add *increments* to a Redis hash and refresh its TTL.
+
+        Returns ``False`` (without partial writes) when Redis is unavailable, so
+        callers can fall back to an in-process accumulator instead of losing data.
+        """
+        if self._breaker_open():
+            return False
+        try:
+            client = await self._get_client()
+            pipe = client.pipeline()
+            for field, value in increments.items():
+                pipe.hincrbyfloat(key, field, value)
+            pipe.expire(key, ttl)
+            await pipe.execute()
+            return True
+        except Exception:
+            logger.exception("cache_incr_hash_error", key=key)
+            self._trip_breaker()
+            return False
+
+    async def get_hash(self, key: str) -> dict[str, float] | None:
+        """Return a Redis hash as floats, or *None* if absent/unavailable."""
+        if self._breaker_open():
+            return None
+        try:
+            client = await self._get_client()
+            raw: dict[str, str] = await client.hgetall(key)  # type: ignore[assignment]
+            if not raw:
+                return None
+            return {field: float(value) for field, value in raw.items()}
+        except Exception:
+            logger.exception("cache_get_hash_error", key=key)
+            self._trip_breaker()
+            return None
+
     async def close(self) -> None:
         """Close the Redis connection pool gracefully."""
         if self._client is not None:
@@ -118,14 +154,16 @@ class CacheService:
             self._client = None
 
     # ── Convenience key builders ────────────────────────────────────────────
+    # Priced lookups are namespaced by currency: the same search in INR and USD
+    # returns different payloads and must never share a cache entry.
 
     @staticmethod
-    def flights_key(origin: str, dest: str, date: str) -> str:
-        return f"flights:{origin}:{dest}:{date}"
+    def flights_key(origin: str, dest: str, date: str, currency: str) -> str:
+        return f"flights:{origin}:{dest}:{date}:{currency}"
 
     @staticmethod
-    def hotels_key(location: str, checkin: str, checkout: str) -> str:
-        return f"hotels:{location}:{checkin}:{checkout}"
+    def hotels_key(location: str, checkin: str, checkout: str, currency: str) -> str:
+        return f"hotels:{location}:{checkin}:{checkout}:{currency}"
 
     @staticmethod
     def transit_key(origin: str, dest: str, mode: str, date: str) -> str:
@@ -148,8 +186,8 @@ class CacheService:
         return f"rentals:{destination}"
 
     @staticmethod
-    def usage_key(session_id: str, agent_name: str) -> str:
-        return f"usage:{session_id}:{agent_name}"
+    def run_usage_key(run_id: str) -> str:
+        return f"usage:run:{run_id}"
 
 
 # Module-level default instance — agents import this.

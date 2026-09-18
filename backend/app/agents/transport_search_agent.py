@@ -23,10 +23,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.stops import RouteLegPlan, stop_display_name
 from app.services.cache_service import TTL_FLIGHTS, TTL_TRANSIT, cache_service
+from app.services.currency_service import resolve_from_state
 from app.tools.factory import ToolFactory
 
 # Generic TransportSearchPolicy.allowed_modes value -> which fetch helper handles it.
@@ -84,11 +87,14 @@ class TransportSearchAgent(AgentClarificationMixin):
         log = get_agent_logger(
             "transport_search", session_id, source=source, destination=destination
         )
-        log.info("agent_start")
+        currency = resolve_from_state(state, log=log)
+        log.info("agent_start", currency=currency)
 
         route_legs: dict[str, RouteLegPlan] = state.get("route_legs", {})
         if state.get("route_discovery_status") == "multi_stop_provisional" and route_legs:
-            return await self._search_route_legs(route_legs, state.get("stops", {}), source, log)
+            return await self._search_route_legs(
+                route_legs, state.get("stops", {}), source, currency, log
+            )
 
         # Example: Kolkata -> Leh may produce KOL->IXL via DEL.
         raw_combos = await self._get_route_combinations(source, destination, log)
@@ -100,10 +106,10 @@ class TransportSearchAgent(AgentClarificationMixin):
         legs_raw: dict[str, list[Any]] = {}
 
         await asyncio.gather(
-            *[self._fetch_leg(combo, dep_date, legs_raw, log) for combo in raw_combos]
+            *[self._fetch_leg(combo, dep_date, currency, legs_raw, log) for combo in raw_combos]
         )
 
-        log.info("agent_done", hubs=transport_hubs, legs=list(legs_raw.keys()))
+        log.info("agent_done", hubs=transport_hubs, legs=list(legs_raw.keys()), currency=currency)
         return {
             "transport_hubs": transport_hubs,
             "transport_legs_raw": legs_raw,
@@ -114,18 +120,21 @@ class TransportSearchAgent(AgentClarificationMixin):
     ) -> list[dict[str, Any]]:
         """Ask the LLM for routes, then use a direct flight as a safe fallback."""
         try:
-            chain = self._llm.with_structured_output(_HubResult)
-            hubs: _HubResult = await chain.ainvoke(
+            hubs = await invoke_structured(
+                self._llm,
+                _HubResult,
                 [
                     SystemMessage(content=_HUB_SYSTEM_PROMPT),
                     HumanMessage(content=f"Source: {source}\nDestination: {destination}"),
-                ]
+                ],
+                agent=AgentName.TRANSPORT_SEARCH,
+                log=log,
             )
             combinations = [combo.model_dump() for combo in hubs.route_combinations]
             if combinations:
                 return combinations
-        except Exception as exc:
-            log.warning("hub_llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.warning(LogEvent.AGENT_DEGRADED, section="route_hubs", error=str(exc))
 
         return [{"origin": source, "destination": destination, "mode": "flight"}]
 
@@ -133,6 +142,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         self,
         combo: dict[str, Any],
         departure_date: str,
+        currency: str,
         legs_raw: dict[str, list[Any]],
         log: Any,
     ) -> None:
@@ -147,7 +157,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         leg_key = f"{origin}→{destination}"
 
         try:
-            options = await self._fetch_route(combo, departure_date)
+            options = await self._fetch_route(combo, departure_date, currency)
             if options:
                 legs_raw.setdefault(leg_key, []).extend(options)
         except ValueError:
@@ -155,28 +165,33 @@ class TransportSearchAgent(AgentClarificationMixin):
         except Exception as exc:
             log.warning("leg_fetch_failed", leg=leg_key, mode=mode, error=str(exc))
 
-    async def _fetch_route(self, combo: dict[str, Any], departure_date: str) -> list[Any]:
+    async def _fetch_route(
+        self, combo: dict[str, Any], departure_date: str, currency: str
+    ) -> list[Any]:
         """Map each route mode to its supply search tool."""
         origin = combo["origin"]
         destination = combo["destination"]
         mode = combo["mode"]
 
         if mode == "flight":
-            return await self._fetch_flight(origin, destination, departure_date)
+            return await self._fetch_flight(origin, destination, departure_date, currency)
         if mode in {"train", "bus", "ferry"}:
             return await self._fetch_transit(origin, destination, mode, departure_date)
         if mode in {"cab", "taxi"}:
             return await self._fetch_taxi(origin, destination, departure_date)
         raise ValueError(f"Unsupported transport mode: {mode}")
 
-    async def _fetch_flight(self, origin: str, destination: str, departure_date: str) -> list[Any]:
+    async def _fetch_flight(
+        self, origin: str, destination: str, departure_date: str, currency: str
+    ) -> list[Any]:
         result = await cache_service.get_or_set(
-            cache_service.flights_key(origin, destination, departure_date),
+            cache_service.flights_key(origin, destination, departure_date, currency),
             TTL_FLIGHTS,
             lambda: self._flight_tool.run(
                 origin=origin,
                 destination=destination,
                 departure_date=departure_date,
+                currency=currency,
             ),
         )
         return list(result.get("best_flights", [])) + list(result.get("other_flights", []))
@@ -214,6 +229,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         route_legs: dict[str, RouteLegPlan],
         stops: dict[str, Any],
         source: str,
+        currency: str,
         log: Any,
     ) -> dict[str, Any]:
         """Search every ``route_legs`` entry in parallel, keyed by ``leg_id``.
@@ -222,7 +238,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         the source/gateway sentinel endpoints) each resolve to their own leg.
         """
         results = await asyncio.gather(
-            *[self._search_leg(leg, stops, source, log) for leg in route_legs.values()]
+            *[self._search_leg(leg, stops, source, currency, log) for leg in route_legs.values()]
         )
         legs_raw_by_leg: dict[str, list[Any]] = {}
         updated_route_legs: dict[str, RouteLegPlan] = {}
@@ -230,7 +246,12 @@ class TransportSearchAgent(AgentClarificationMixin):
             legs_raw_by_leg[leg_id] = options
             updated_route_legs[leg_id] = updated_leg
 
-        log.info("agent_done", legs=list(legs_raw_by_leg.keys()), mode="multi_stop_provisional")
+        log.info(
+            "agent_done",
+            legs=list(legs_raw_by_leg.keys()),
+            mode="multi_stop_provisional",
+            currency=currency,
+        )
         return {
             "transport_legs_raw_by_leg": legs_raw_by_leg,
             "route_legs": updated_route_legs,
@@ -241,6 +262,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         leg: RouteLegPlan,
         stops: dict[str, Any],
         source: str,
+        currency: str,
         log: Any,
     ) -> tuple[list[Any], RouteLegPlan]:
         """Search one leg, trying its allowed modes in precedence order.
@@ -258,7 +280,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         for i, mode in enumerate(leg.policy.allowed_modes or ["road"]):
             try:
                 options = await self._fetch_by_generic_mode(
-                    mode, origin_name, destination_name, departure_date
+                    mode, origin_name, destination_name, departure_date, currency
                 )
             except Exception as exc:
                 log.warning("leg_mode_failed", leg_id=leg.leg_id, mode=mode, error=str(exc))
@@ -274,11 +296,11 @@ class TransportSearchAgent(AgentClarificationMixin):
         )
 
     async def _fetch_by_generic_mode(
-        self, mode: str, origin: str, destination: str, departure_date: str
+        self, mode: str, origin: str, destination: str, departure_date: str, currency: str
     ) -> list[Any]:
         """Map a generic ``TransportSearchPolicy`` mode to a concrete supply search."""
         if mode == "flight":
-            return await self._fetch_flight(origin, destination, departure_date)
+            return await self._fetch_flight(origin, destination, departure_date, currency)
         if mode in _TRANSIT_MODES:
             transit_mode = mode if mode in {"train", "bus", "ferry"} else "bus"
             return await self._fetch_transit(origin, destination, transit_mode, departure_date)

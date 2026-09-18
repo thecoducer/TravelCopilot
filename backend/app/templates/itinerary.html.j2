@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title|default('Travel itinerary') }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm;
+      @bottom-right {
+        color: #7a817d;
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 8pt;
+      }
+    }
+
+    :root {
+      color: #24302d;
+      font-family: "DejaVu Sans", sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.45;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    h1, h2, h3, h4, p { margin: 0; }
+    h1, h2, h3, h4 { font-family: "DejaVu Sans", sans-serif; }
+    h1 { color: #193f3a; font-size: 25pt; line-height: 1.1; }
+    h2 { color: #193f3a; font-size: 16pt; margin-bottom: 9pt; }
+    h3 { color: #193f3a; font-size: 11pt; margin-bottom: 4pt; }
+    h4 { color: #193f3a; font-size: 9pt; text-transform: uppercase; letter-spacing: .08em; }
+    a { color: #176c68; text-decoration: none; }
+    .muted { color: #68736f; }
+    .small { color: #68736f; font-size: 8pt; }
+    .eyebrow { color: #b06b35; font-size: 8pt; font-weight: bold; letter-spacing: .16em; text-transform: uppercase; }
+    .cover { border-bottom: 2pt solid #d8a35d; padding-bottom: 18pt; }
+    .cover .eyebrow { margin-bottom: 7pt; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8pt; margin-top: 16pt; }
+    .summary-item { border-left: 2pt solid #d8a35d; padding-left: 7pt; }
+    .summary-label { color: #68736f; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .08em; }
+    .summary-value { font-size: 9pt; font-weight: bold; margin-top: 2pt; }
+    .intro { background: #f2f5f1; border-left: 3pt solid #176c68; margin-top: 14pt; padding: 9pt 11pt; }
+    .section { border-top: 1pt solid #d8dfda; margin-top: 22pt; padding-top: 12pt; page-break-inside: avoid; }
+    .day { page-break-inside: avoid; }
+    .day + .day { border-top: 1pt solid #d8dfda; margin-top: 18pt; padding-top: 14pt; }
+    .day-header { align-items: baseline; display: flex; justify-content: space-between; gap: 12pt; }
+    .day-title { font-size: 15pt; }
+    .day-date { color: #68736f; font-size: 8.5pt; white-space: nowrap; }
+    .tag-row { color: #68736f; font-size: 8pt; margin: 5pt 0 8pt; }
+    .tag { display: inline-block; margin-right: 10pt; }
+    .subsection { margin-top: 11pt; }
+    .item { border-top: .6pt solid #e1e6e2; padding: 6pt 0; page-break-inside: avoid; }
+    .item:first-child { border-top: 0; }
+    .item-title { font-weight: bold; }
+    .meta { color: #68736f; font-size: 8pt; margin-top: 2pt; }
+    .reason { color: #68736f; font-size: 8pt; margin-top: 3pt; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18pt; }
+    .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8pt 14pt; }
+    .fact { border-top: .6pt solid #e1e6e2; padding-top: 5pt; }
+    .fact-label { color: #68736f; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .07em; }
+    .fact-value { margin-top: 2pt; }
+    ul { margin: 4pt 0 0 15pt; padding: 0; }
+    li { margin-bottom: 3pt; }
+    .avoid-break { page-break-inside: avoid; }
+    .footer-note { border-top: 1pt solid #d8dfda; color: #68736f; font-size: 8pt; margin-top: 24pt; padding-top: 8pt; }
+  </style>
+</head>
+<body>
+  <header class="cover">
+    <div class="eyebrow">Travel itinerary</div>
+    <h1>{{ title|default('Your trip') }}</h1>
+    <div class="summary">
+      <div class="summary-item"><div class="summary-label">From</div><div class="summary-value">{{ source|default('—') }}</div></div>
+      <div class="summary-item"><div class="summary-label">Dates</div><div class="summary-value">{{ dates.start_date|default(dates.departure|default('—')) }}{% if dates.end_date|default(dates.return_date|default('')) %} to {{ dates.end_date|default(dates.return_date) }}{% endif %}</div></div>
+      <div class="summary-item"><div class="summary-label">Travelers</div><div class="summary-value">{{ travelers|default('—') }}</div></div>
+      <div class="summary-item"><div class="summary-label">Days</div><div class="summary-value">{{ trip_days|length }}</div></div>
+    </div>
+    {% if reality_banner or safety_briefing %}
+      <div class="intro">{{ reality_banner|default(safety_briefing|default('')) }}</div>
+    {% endif %}
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="eyebrow">Your route</div>
+      <h2>Day by day</h2>
+      {% for day in trip_days %}
+        <article class="day">
+          <div class="day-header">
+            <h3 class="day-title">Day {{ day.day_number }} · {{ day.location }}</h3>
+            {% if day.date %}<div class="day-date">{{ day.date }}</div>{% endif %}
+          </div>
+          <div class="tag-row">
+            {% if day.is_travel_day %}<span class="tag">Travel day</span>{% endif %}
+            {% if day.is_checkin_day %}<span class="tag">Check-in</span>{% endif %}
+            {% if day.is_checkout_day %}<span class="tag">Check-out</span>{% endif %}
+            {% if day.estimated_cost %}<span class="tag">Approx. {{ day.estimated_cost }} {{ day.currency_code }}</span>{% endif %}
+          </div>
+          {% if day.summary %}<p class="muted">{{ day.summary }}</p>{% endif %}
+
+          {% if day.transport_options %}
+            <div class="subsection"><h4>Getting there</h4>
+              {% for transfer in day.transport_options %}
+                <div class="item"><div class="item-title">{{ transfer.origin }} to {{ transfer.destination }}</div>{% if transfer.recommended.rationale %}<div class="reason">{{ transfer.recommended.rationale }}</div>{% endif %}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% for slot_name, slot in [('Morning', day.morning), ('Afternoon', day.afternoon), ('Evening', day.evening)] %}
+            {% if slot.options or slot.notes or slot.unresolved_note %}
+              <div class="subsection"><h4>{{ slot_name }}{% if slot.notes %} <span class="muted">· {{ slot.notes }}</span>{% endif %}</h4>
+                {% if slot.unresolved_note %}<p class="small">{{ slot.unresolved_note }}</p>{% endif %}
+                {% for option in slot.options %}
+                  <div class="item">
+                    <div class="item-title">{{ option.place.name|default('Activity') }}</div>
+                    {% if option.place.description %}<div>{{ option.place.description }}</div>{% endif %}
+                    <div class="meta">{{ option.place.category|default('') }}{% if option.place.price_range %} · {{ option.place.price_range }}{% endif %}{% if option.place.rating %} · Rating {{ option.place.rating }}{% endif %}</div>
+                    {% if option.recommendation_reason %}<div class="reason">{{ option.recommendation_reason }}</div>{% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endfor %}
+
+          {% if day.food_options %}
+            <div class="subsection"><h4>Food recommendations</h4>
+              {% for meal in day.food_options %}
+                <div class="item"><div class="item-title">{{ meal.meal_type|capitalize }}</div>{% if meal.notes %}<div class="reason">{{ meal.notes }}</div>{% endif %}{% for venue in meal.options %}<div>{{ venue.name }} <span class="meta">· {{ venue.cuisine }} · {{ venue.price_range }}</span></div>{% endfor %}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </section>
+
+    {% if transport_section and (transport_section.recommended or transport_section.alternatives) %}
+      <section class="section"><div class="eyebrow">Route logistics</div><h2>Transport</h2>
+        {% for option in [transport_section.recommended] + transport_section.alternatives %}
+          {% if option %}<div class="item avoid-break"><h3>{{ 'Recommended route' if loop.first else 'Alternative route' }}{% if option.total_cost %} · {{ option.total_cost }} {{ option.currency_code }}{% endif %}</h3>{% if option.rationale %}<p>{{ option.rationale }}</p>{% endif %}{% for leg in option.recommended_legs|default([]) %}<div class="meta">{{ leg.origin }} to {{ leg.destination }} · {{ leg.mode|default('') }}{% if leg.operator %} · {{ leg.operator }}{% endif %}{% if leg.duration_minutes %} · {{ leg.duration_minutes }} min{% endif %}</div>{% endfor %}</div>{% endif %}
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    {% if budget_breakdown or visa_section or safety_section %}
+      <section class="section"><div class="eyebrow">Trip essentials</div><h2>Before you go</h2><div class="two-col">
+        {% if budget_breakdown %}<div class="avoid-break"><h3>Budget</h3><div class="facts"><div class="fact"><div class="fact-label">Estimated total</div><div class="fact-value">{{ budget_breakdown.currency_code }} {{ budget_breakdown.total_estimated_cost }}</div></div><div class="fact"><div class="fact-label">Assessment</div><div class="fact-value">{{ budget_breakdown.vs_budget_verdict }}</div></div></div>{% if budget_breakdown.cost_saving_tips %}<ul>{% for tip in budget_breakdown.cost_saving_tips %}<li>{{ tip }}</li>{% endfor %}</ul>{% endif %}</div>{% endif %}
+        {% if visa_section %}<div class="avoid-break"><h3>Visa</h3><p>{{ 'Visa required' if visa_section.visa_required else 'Visa not required' }}{% if visa_section.visa_type %} · {{ visa_section.visa_type }}{% endif %}</p>{% if visa_section.processing_timeline %}<p class="small">Processing: {{ visa_section.processing_timeline }}</p>{% endif %}</div>{% endif %}
+        {% if safety_section %}<div class="avoid-break"><h3>Safety</h3><p>{{ safety_section.advisory_level }}</p>{% if safety_section.acclimatization_advice %}<p class="small">{{ safety_section.acclimatization_advice }}</p>{% endif %}</div>{% endif %}
+      </div></section>
+    {% endif %}
+
+    {% if connectivity_summary or language_tips or currency_tips or packing_tips %}
+      <section class="section"><div class="eyebrow">Useful notes</div><h2>Practical details</h2><div class="facts">
+        {% if connectivity_summary %}<div class="fact"><div class="fact-label">Connectivity</div><div class="fact-value">{{ connectivity_summary }}</div></div>{% endif %}
+        {% if language_tips %}<div class="fact"><div class="fact-label">Language</div><div class="fact-value">{{ language_tips }}</div></div>{% endif %}
+        {% if currency_tips %}<div class="fact"><div class="fact-label">Money</div><div class="fact-value">{{ currency_tips }}</div></div>{% endif %}
+        {% if packing_tips %}<div class="fact"><div class="fact-label">Packing list</div><ul>{% for tip in packing_tips %}<li>{{ tip }}</li>{% endfor %}</ul></div>{% endif %}
+      </div></section>
+    {% endif %}
+  </main>
+  <p class="footer-note">Prepared by TravelCopilot. Prices and availability should be confirmed before booking.</p>
+</body>
+</html>

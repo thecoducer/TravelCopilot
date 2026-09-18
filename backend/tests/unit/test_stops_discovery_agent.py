@@ -147,10 +147,23 @@ class TestMultiStopRouteShaping:
         assert len(result["stops_by_day"]) == trip_days
         assert set(result["stops_by_day"].keys()) == set(range(trip_days))
 
+        # An N-day trip has N-1 nights; equalling N would push checkout past the
+        # traveller's return date.
         nights_total = sum(
             stop.nights for stop in result["stops"].values() if stop.stop_kind == "overnight"
         )
-        assert nights_total == trip_days
+        assert nights_total == trip_days - 1
+
+    async def test_route_never_ends_after_the_return_date(self) -> None:
+        agent = StopsDiscoveryAgent(llm=_make_llm(self._route()))
+        state = _base_state()
+        result = await agent(state)
+
+        return_date = state["dates"].return_date
+        overnight = [s for s in result["stops"].values() if s.stop_kind == "overnight"]
+        last_stop = max(overnight, key=lambda s: s.sequence)
+        assert last_stop.departure_date == return_date
+        assert all(stop.departure_date <= return_date for stop in overnight)
 
     async def test_gateway_options_capped_and_one_recommended(self) -> None:
         route = self._route()

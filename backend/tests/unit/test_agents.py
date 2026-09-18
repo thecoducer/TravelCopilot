@@ -146,7 +146,6 @@ class TestGraphCompilation:
             "experiences_raw",
             "reviews_summary",
             "food_recommendations",
-            "token_usage",
         ]
         for key in required_keys:
             assert key in state, f"Missing key: {key}"

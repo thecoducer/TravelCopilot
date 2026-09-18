@@ -16,15 +16,8 @@ from app.models.stops import TripStop
 from app.models.transport import StayOption
 from app.models.user_profile import budget_from_state
 from app.services.cache_service import TTL_HOTELS, cache_service
+from app.services.currency_service import is_valid_currency_code, resolve_trip_currency
 from app.tools.factory import ToolFactory
-
-_CURRENCY_SYMBOL_TO_CODE = {
-    "$": "USD",
-    "€": "EUR",
-    "£": "GBP",
-    "₹": "INR",
-    "¥": "JPY",
-}
 
 
 def _parse_number(value: object, default: float = 0.0) -> float:
@@ -109,16 +102,16 @@ def _extract_rate_lowest(prop: dict[str, Any]) -> object:
     return rate
 
 
-def _extract_currency(prop: dict[str, Any], price_source: object) -> str:
-    explicit = prop.get("currency")
-    if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip().upper()
+def _extract_currency(prop: dict[str, Any], requested_currency: str) -> str:
+    """Trust the provider's explicit code, else the currency the search asked for.
 
-    price_text = str(price_source or "")
-    for symbol, code in _CURRENCY_SYMBOL_TO_CODE.items():
-        if symbol in price_text:
-            return code
-    return "INR"
+    Rates are requested in the trip currency, so inferring a code from a price
+    symbol would only ever disagree with what was actually returned.
+    """
+    explicit = prop.get("currency")
+    if is_valid_currency_code(explicit):
+        return str(explicit).strip().upper()
+    return requested_currency
 
 
 def _extract_coords(prop: dict[str, Any]) -> tuple[float | None, float | None]:
@@ -158,26 +151,34 @@ class StaySearchAgent(AgentClarificationMixin):
         session_id: str = state.get("session_id", "")
 
         log = get_agent_logger("stay_search", session_id, destination=destination)
-        log.info("agent_start")
+        currency = resolve_trip_currency(user_profile, log=log)
+        log.info("agent_start", currency=currency)
 
         stops: dict[str, TripStop] = state.get("stops", {})
         overnight_stops = [s for s in stops.values() if s.stop_kind == "overnight"]
         if state.get("route_discovery_status") == "multi_stop_provisional" and overnight_stops:
             return await self._search_stops(
-                overnight_stops, travelers, user_profile, budget, state.get("route_version", 0), log
+                overnight_stops,
+                travelers,
+                user_profile,
+                budget,
+                state.get("route_version", 0),
+                currency,
+                log,
             )
 
         checkin = dates.departure.isoformat() if dates else ""
         checkout = dates.return_date.isoformat() if dates and dates.return_date else ""
 
         result = await cache_service.get_or_set(
-            cache_service.hotels_key(destination, checkin, checkout),
+            cache_service.hotels_key(destination, checkin, checkout, currency),
             TTL_HOTELS,
             lambda: self._hotel_tool.run(
                 location=destination,
                 check_in=checkin,
                 check_out=checkout,
                 adults=travelers,
+                currency=currency,
                 hotel_style=user_profile.hotel_style if user_profile else None,
                 budget_tier=budget.tier if budget else "mid",
             ),
@@ -185,9 +186,9 @@ class StaySearchAgent(AgentClarificationMixin):
 
         raw_properties: list[dict[str, Any]] = result.get("properties", [])
 
-        stays = self._parse_stays(raw_properties, destination, user_profile, budget, log)
+        stays = self._parse_stays(raw_properties, destination, user_profile, budget, currency, log)
 
-        log.info("agent_done", stays_found=len(stays))
+        log.info("agent_done", stays_found=len(stays), currency=currency)
         return {"stays_raw": stays}
 
     async def _search_stops(
@@ -197,6 +198,7 @@ class StaySearchAgent(AgentClarificationMixin):
         user_profile: Any,
         budget: Any,
         route_version: int,
+        currency: str,
         log: Any,
     ) -> dict[str, Any]:
         """Search accommodation for every overnight stop occurrence in parallel.
@@ -210,19 +212,20 @@ class StaySearchAgent(AgentClarificationMixin):
             checkin = stop.arrival_date.isoformat() if stop.arrival_date else ""
             checkout = stop.departure_date.isoformat() if stop.departure_date else ""
             result = await cache_service.get_or_set(
-                cache_service.hotels_key(stop.name, checkin, checkout),
+                cache_service.hotels_key(stop.name, checkin, checkout, currency),
                 TTL_HOTELS,
                 lambda: self._hotel_tool.run(
                     location=stop.name,
                     check_in=checkin,
                     check_out=checkout,
                     adults=travelers,
+                    currency=currency,
                     hotel_style=user_profile.hotel_style if user_profile else None,
                     budget_tier=budget.tier if budget else "mid",
                 ),
             )
             stays = self._parse_stays(
-                result.get("properties", []), stop.name, user_profile, budget, log
+                result.get("properties", []), stop.name, user_profile, budget, currency, log
             )
             return [
                 s.model_copy(update={"stop_id": stop.stop_id, "route_version": route_version})
@@ -237,6 +240,7 @@ class StaySearchAgent(AgentClarificationMixin):
             "agent_done",
             mode="multi_stop_provisional",
             stops=list(stays_raw_by_stop.keys()),
+            currency=currency,
         )
         return {"stays_raw_by_stop": stays_raw_by_stop}
 
@@ -246,6 +250,7 @@ class StaySearchAgent(AgentClarificationMixin):
         location: str,
         user_profile: Any,
         budget: Any,
+        currency: str,
         log: Any,
     ) -> list[StayOption]:
         """Map SerpAPI property dicts to StayOption models — best-effort, skip invalid."""
@@ -260,7 +265,7 @@ class StaySearchAgent(AgentClarificationMixin):
                 rating = max(0.0, min(5.0, rating))
                 review_count = _parse_int(prop.get("reviews", 0), default=0)
                 lat, lng = _extract_coords(prop)
-                currency_code = _extract_currency(prop, price_source)
+                currency_code = _extract_currency(prop, currency)
 
                 stays.append(
                     StayOption(

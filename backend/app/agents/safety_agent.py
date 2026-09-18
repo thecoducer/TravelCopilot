@@ -18,8 +18,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent, SectionStatus
 from app.models.reports import SafetyReport
 from app.services.cache_service import TTL_TAVILY, cache_service
 from app.tools.factory import ToolFactory
@@ -118,9 +120,10 @@ class SafetyAgent(AgentClarificationMixin):
             if food_names:
                 venue_section += "Food outlets: " + ", ".join(food_names[:20]) + "\n"
 
-        chain = self._llm.with_structured_output(SafetyReport)
         try:
-            report: SafetyReport = await chain.ainvoke(
+            report = await invoke_structured(
+                self._llm,
+                SafetyReport,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
@@ -130,18 +133,28 @@ class SafetyAgent(AgentClarificationMixin):
                             f"{venue_section}"
                         )
                     ),
-                ]
+                ],
+                agent=AgentName.SAFETY,
+                session_id=session_id,
+                log=log,
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+            report = report.model_copy(update={"status": SectionStatus.POPULATED})
+        except StructuredOutputError as exc:
+            log.error(
+                LogEvent.AGENT_DEGRADED,
+                section="safety",
+                truncated=exc.truncated,
+                error=str(exc),
+            )
+            # No placeholder prose: a caller must be able to tell this section apart
+            # from one that genuinely had nothing to report.
             report = SafetyReport(
                 destination=destination,
-                advisory_level="Exercise normal caution",
                 travel_month=month,
-                seasonal_weather_summary="Data unavailable",
+                status=SectionStatus.UNAVAILABLE,
             )
 
-        log.info("agent_done", scams_found=len(report.top_scams))
+        log.info(LogEvent.AGENT_DONE, scams_found=len(report.top_scams), status=report.status)
         return {"safety_report": report}
 
     async def _cached_tavily_search(self, query: str, destination: str, month: str) -> Any:

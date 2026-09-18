@@ -26,6 +26,7 @@ from urllib.parse import quote_plus
 import structlog
 
 from app.config import settings
+from app.models.enums import ConnectivityLevel, LogEvent, SectionStatus
 from app.models.itinerary import (
     MEAL_TYPES,
     SLOT_NAMES,
@@ -58,6 +59,96 @@ from app.models.stops import (
 from app.models.transport import StayOption, TransportRecommendation
 
 logger = structlog.get_logger(__name__)
+
+# Longest single activity that still fits around a same-day transfer.
+_MAX_TRAVEL_DAY_ACTIVITY_HOURS = 3.0
+
+# Phrasing per coverage level, so the note never reads as a provider measurement.
+_CONNECTIVITY_NOTES: dict[ConnectivityLevel, str] = {
+    ConnectivityLevel.RELIABLE: "Mobile data is generally reliable here.",
+    ConnectivityLevel.PATCHY: "Mobile coverage can be patchy — download maps offline.",
+    ConnectivityLevel.LIMITED: (
+        "Expect limited or intermittent mobile coverage at this altitude — "
+        "carry offline maps and share your plan before setting out."
+    ),
+    ConnectivityLevel.NONE: "Assume no mobile coverage. Plan for being offline.",
+}
+
+
+def _connectivity_level(stop: TripStop) -> ConnectivityLevel:
+    """Derive expected coverage from what the route actually knows about the stop."""
+    if stop.altitude_meters is None:
+        return ConnectivityLevel.UNKNOWN
+    if stop.altitude_meters >= settings.connectivity_remote_altitude_meters:
+        return ConnectivityLevel.LIMITED
+    return ConnectivityLevel.RELIABLE
+
+
+def _connectivity_note(stop: TripStop) -> str | None:
+    return _CONNECTIVITY_NOTES.get(_connectivity_level(stop))
+
+
+def _connectivity_summary(days: list[TripDays]) -> str | None:
+    """Name the stops that need offline preparation, or say nothing."""
+    remote = list(
+        dict.fromkeys(
+            day.location
+            for day in days
+            if day.altitude_meters is not None
+            and day.altitude_meters >= settings.connectivity_remote_altitude_meters
+        )
+    )
+    if not remote:
+        return None
+    return (
+        f"Limited mobile coverage expected at {', '.join(remote)} — "
+        "download offline maps and confirm bookings before leaving a connected area."
+    )
+
+
+def _self_drive_permits(self_drive_report: Any) -> list[str]:
+    return list(getattr(self_drive_report, "permits_required", []) or [])
+
+
+def _derived_packing_tips(days: list[TripDays], dates: Any) -> list[str]:
+    """Fall back to tips derivable from the route itself.
+
+    The narrator is told to omit packing tips when it is given no season or
+    weather facts, so a degraded safety agent silently empties the section.
+    Altitude, month and permits are already known here without any LLM.
+    """
+    tips: list[str] = []
+    altitudes = [day.altitude_meters for day in days if day.altitude_meters is not None]
+    if altitudes and max(altitudes) >= settings.connectivity_remote_altitude_meters:
+        tips.append(
+            f"Layers for high altitude — the route reaches about {max(altitudes):,} m, "
+            "where evenings turn cold regardless of the forecast."
+        )
+        tips.append("Offline maps and a power bank for stretches with no mobile coverage.")
+    if any(day.permits_required for day in days):
+        tips.append("Printed ID copies and passport photos for the permits this route needs.")
+    departure = getattr(dates, "departure", None)
+    if departure is not None:
+        tips.append(f"Check a {departure.strftime('%B')} forecast for each stop before packing.")
+    return tips
+
+
+def _with_stop_coordinates(
+    stops: list[TripStop], stays_pick_by_stop: dict[str, Any]
+) -> list[TripStop]:
+    """Borrow each stop's coordinates from its chosen stay.
+
+    Route discovery names stops but never geocodes them, so a client has nothing
+    to place on a map. The selected stay is provider-verified and in the right
+    town, which is accurate enough to centre a stop.
+    """
+    resolved: list[TripStop] = []
+    for stop in stops:
+        stay = stays_pick_by_stop.get(stop.stop_id)
+        lat = stop.lat if stop.lat is not None else getattr(stay, "lat", None)
+        lng = stop.lng if stop.lng is not None else getattr(stay, "lng", None)
+        resolved.append(stop.model_copy(update={"lat": lat, "lng": lng}))
+    return resolved
 
 
 class MissingTripDatesError(ValueError):
@@ -246,7 +337,7 @@ class ItineraryCompilerService:
         route_version: int | None,
     ) -> TripDays:
         day_number = alloc.day_index + 1
-        slots = self._pick_activities(plan, experience_pool, day_number)
+        slots = self._pick_activities(plan, experience_pool, day_number, alloc.is_travel_day)
         food_options = [
             FoodOptions(
                 meal_type=meal_type,
@@ -266,6 +357,7 @@ class ItineraryCompilerService:
             food_options=food_options,
             permits_required=list(stop.permits_required),
             altitude_meters=stop.altitude_meters,
+            connectivity=_connectivity_note(stop),
             drive_notes=stop.notes,
             stop_id=stop_id,
             route_version=route_version,
@@ -275,7 +367,11 @@ class ItineraryCompilerService:
         )
 
     def _pick_activities(
-        self, plan: DayPlan, experience_pool: dict[str, Experience], day_number: int
+        self,
+        plan: DayPlan,
+        experience_pool: dict[str, Experience],
+        day_number: int,
+        is_travel_day: bool = False,
     ) -> dict[str, list[ActivityOption]]:
         slots: dict[str, list[ActivityOption]] = {slot: [] for slot in SLOT_NAMES}
         for pick in plan.activities:
@@ -284,6 +380,18 @@ class ItineraryCompilerService:
             experience = experience_pool.get(pick.experience_name)
             if not experience:
                 continue  # deterministic guard — drop names not in the verified pool
+            # A transfer already consumes most of the day; a half-day excursion on
+            # top of it is not something the traveller can actually do.
+            if is_travel_day and experience.duration_hours > _MAX_TRAVEL_DAY_ACTIVITY_HOURS:
+                logger.info(
+                    LogEvent.SECTION_UNAVAILABLE,
+                    section="activity",
+                    reason="too_long_for_a_transfer_day",
+                    experience=experience.name,
+                    day_number=day_number,
+                    duration_hours=experience.duration_hours,
+                )
+                continue
             slots[pick.slot].append(
                 self._activity_option_from_experience(experience, len(slots[pick.slot]) + 1, pick)
             )
@@ -600,7 +708,7 @@ class ItineraryCompilerService:
     ) -> str | None:
         """Templated from upstream verdicts — never LLM prose."""
         parts: list[str] = []
-        if safety_report:
+        if safety_report and safety_report.status == SectionStatus.POPULATED:
             if safety_report.season_label:
                 parts.append(f"{safety_report.season_label} season")
             if safety_report.crowd_level:
@@ -693,7 +801,11 @@ class ItineraryCompilerService:
             dates=state.get("dates"),
             travelers=state.get("travelers", 1),
             trip_days=days,
-            stops=list(route.stops) if route.is_multi_stop else [],
+            stops=(
+                _with_stop_coordinates(route.stops, state.get("stays_pick_by_stop", {}))
+                if route.is_multi_stop
+                else []
+            ),
             route_legs=sorted(route_legs.values(), key=lambda leg: leg.sequence),
             route_version=state.get("route_version") if route.is_multi_stop else None,
             route_discovery_status=state.get("route_discovery_status"),
@@ -704,9 +816,17 @@ class ItineraryCompilerService:
             self_drive_section=state.get("self_drive_report"),
             budget_breakdown=budget_report,
             reality_banner=self.build_reality_banner(safety_report, budget_report),
-            packing_tips=narrative.packing_tips,
+            packing_tips=narrative.packing_tips or _derived_packing_tips(days, state.get("dates")),
+            connectivity_summary=_connectivity_summary(days),
             permits_required=list(
-                dict.fromkeys(permit for day in days for permit in day.permits_required)
+                dict.fromkeys(
+                    permit
+                    for source in (
+                        (permit for day in days for permit in day.permits_required),
+                        _self_drive_permits(state.get("self_drive_report")),
+                    )
+                    for permit in source
+                )
             ),
             source_query=state.get("query", ""),
         )

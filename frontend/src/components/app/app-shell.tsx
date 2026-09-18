@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-dvh overflow-hidden">
       <div
-        className={`shrink-0 ${sidebarHidden ? "md:w-14" : "md:w-[var(--sidebar-width)]"} max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:transition-transform ${
+        className={`shrink-0 overflow-hidden transition-[width] ease-in-out ${sidebarHidden ? "duration-[450ms] md:w-14" : "duration-300 md:w-[var(--sidebar-width)]"} max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:transition-transform ${
           sidebarOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
         }`}
       >

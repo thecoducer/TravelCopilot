@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import html
 import re
-import time
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -35,6 +34,7 @@ from app.config import settings
 from app.llm import get_llm, structured_llm
 from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
+from app.models.enums import LogEvent
 from app.models.user_profile import (
     BudgetPreference,
     BudgetTier,
@@ -154,6 +154,25 @@ _FOOD_CLARIFICATION_PROMPTS: tuple[ClarificationPrompt, ...] = (
 def _split_food_preference(value: str) -> list[str]:
     """Convert a comma-separated clarification answer to normalized values."""
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _flexibility_prompt() -> ClarificationPrompt:
+    """Date-flexibility question — text, config-driven, always skippable."""
+    return ClarificationPrompt(
+        field=settings.flexibility_days_field,
+        question=settings.flexibility_days_prompt,
+        reason="Widens the fare search window when dates can move",
+        input_type="text",
+        optional=True,
+    )
+
+
+def _parse_flexibility_answer(value: str) -> int | None:
+    """Read a day count from a free-text answer, clamped to the configured maximum."""
+    match = re.search(r"\d+", value)
+    if not match:
+        return None
+    return min(int(match.group()), settings.flexibility_days_max)
 
 
 # ── Structured LLM output ─────────────────────────────────────────────────────
@@ -449,7 +468,6 @@ class OrchestratorAgent(AgentClarificationMixin):
     async def _parse_query(self, query: str, log: Any) -> _ParsedQuery | None:
         """Run the single structured-output parse for this planning session."""
         chain = structured_llm(self._llm, _ParsedQuery)
-        started = time.perf_counter()
         try:
             raw = await chain.ainvoke(
                 [
@@ -461,16 +479,13 @@ class OrchestratorAgent(AgentClarificationMixin):
             log.error(
                 "llm_parse_failed",
                 error=str(exc),
-                latency_ms=round((time.perf_counter() - started) * 1000, 1),
             )
             return None
 
-        latency_ms = round((time.perf_counter() - started) * 1000, 1)
         parsed = raw if isinstance(raw, _ParsedQuery) else _ParsedQuery.model_validate(raw)
         log.info(
             "llm_parse_result",
             query=query[:80],
-            latency_ms=latency_ms,
             parsed=parsed.model_dump(mode="json"),
         )
         return parsed
@@ -531,8 +546,26 @@ class OrchestratorAgent(AgentClarificationMixin):
             return {**base_updates, "pending_clarification_fields": fields}
 
         trip_days = parsed.trip_days
-        if trip_days is None or not parsed.departure_date or not parsed.budget_tier:
+        # Budget is not necessarily a configured clarification field, so it can be
+        # absent without ever having been asked. Defaulting beats hard-stopping with
+        # an empty missing-fields list, which tells the caller nothing.
+        if not parsed.budget_tier:
+            parsed.budget_tier = settings.default_budget_tier
+            log.info(
+                LogEvent.CLARIFICATION_RESOLVED,
+                field="budget",
+                resolution="default",
+                value=parsed.budget_tier,
+            )
+        if trip_days is None or not parsed.departure_date:
             fields = [field for field, _ in _compute_missing(parsed)]
+            log.warning(
+                LogEvent.AGENT_FAILED,
+                reason="required_trip_details_missing",
+                has_trip_days=trip_days is not None,
+                has_departure_date=bool(parsed.departure_date),
+                fields=fields,
+            )
             return {**base_updates, **_hard_stop(_MISSING_DETAILS_ERROR, fields)}
 
         trip_dates = _build_trip_dates(parsed, trip_days)
@@ -630,22 +663,45 @@ async def optional_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
     if ask_food:
         prompts.extend(prompt.model_copy() for prompt in _FOOD_CLARIFICATION_PROMPTS)
 
+    dates = state.get("dates")
+    # Opt-in like every other skippable question: it costs an interrupt/resume cycle.
+    ask_flexibility = dates is not None and settings.enable_optional_clarification
+    if ask_flexibility:
+        prompts.append(_flexibility_prompt())
+
     if not prompts:
         return {}
 
-    log.info("optional_clarification_requested", fields=[prompt.field for prompt in prompts])
+    log.info(
+        LogEvent.CLARIFICATION_REQUESTED,
+        optional=True,
+        fields=[prompt.field for prompt in prompts],
+    )
     answers = ClarificationManager.request_optional(
         prompts, requester="orchestrator", round_number=state.get("clarification_round", 0)
     )
 
     food_fields = {"preferred_cuisines", "dietary_restrictions"}
+    reserved_fields = food_fields | {settings.flexibility_days_field}
     updates: dict[str, Any] = {
         "optional_clarification_answers": {
             field: value
             for field, value in answers.items()
-            if field not in food_fields and value.strip() and value.strip() != "__skip__"
+            if field not in reserved_fields and value.strip() and value.strip() != "__skip__"
         }
     }
+
+    if ask_flexibility and dates is not None:
+        raw = answers.get(settings.flexibility_days_field, "").strip()
+        flexibility = None if raw in ("", "__skip__") else _parse_flexibility_answer(raw)
+        resolved = flexibility if flexibility is not None else settings.flexibility_days_default
+        updates["dates"] = dates.model_copy(update={"flexibility_days": resolved})
+        log.info(
+            LogEvent.CLARIFICATION_RESOLVED,
+            field=settings.flexibility_days_field,
+            value=resolved,
+            resolution="answered" if flexibility is not None else "default",
+        )
 
     if ask_food:
         dietary_answer = answers.get("dietary_restrictions", "").strip()

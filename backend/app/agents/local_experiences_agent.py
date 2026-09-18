@@ -14,8 +14,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, DataSource, LogEvent
 from app.models.itinerary import (
     Experience,
     ExperiencesOutput,
@@ -166,11 +168,15 @@ class LocalExperiencesAgent(AgentClarificationMixin):
         """Generate personalized attraction recommendations with structured LLM output."""
         candidates = await self._retrieve_candidates(location, user_profile)
         if not candidates:
-            log.warning("places_search_empty", location=location)
+            log.warning(
+                LogEvent.SECTION_UNAVAILABLE,
+                section="local_experiences",
+                location=location,
+                reason="places_search_empty",
+            )
             return []
 
-        llm = self._llm or get_llm("local_experiences", session_id)
-        structured_llm = llm.with_structured_output(ExperiencesOutput)
+        llm = self._llm or get_llm(AgentName.LOCAL_EXPERIENCES, session_id)
 
         interests = user_profile.interests if user_profile else []
         travel_style = getattr(user_profile, "travel_style", None) or "balanced"
@@ -198,15 +204,26 @@ class LocalExperiencesAgent(AgentClarificationMixin):
         prompt += "\n".join(f"- {candidate}" for candidate in candidates)
 
         try:
-            response: ExperiencesOutput = await structured_llm.ainvoke(
+            response = await invoke_structured(
+                llm,
+                ExperiencesOutput,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(content=prompt),
-                ]
+                ],
+                agent=AgentName.LOCAL_EXPERIENCES,
+                session_id=session_id,
+                log=log,
             )
             return self._retain_retrieved_experiences(response.experiences, candidates)
-        except Exception as exc:
-            log.warning("local_experiences_llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.warning(
+                LogEvent.AGENT_DEGRADED,
+                section="local_experiences",
+                location=location,
+                truncated=exc.truncated,
+                error=str(exc),
+            )
             return []
 
     async def _retrieve_candidates(self, location: str, user_profile: Any) -> set[str]:
@@ -290,9 +307,14 @@ class LocalExperiencesAgent(AgentClarificationMixin):
         location: str,
         fallback_coords: tuple[float | None, float | None] | None = None,
     ) -> Experience:
-        """Construct a minimal default experience if LLM curation fails to return items."""
+        """Construct a minimal default experience if LLM curation fails to return items.
+
+        Carries no rating or review count — this is a placeholder, and inventing
+        social proof for it is indistinguishable from real provider data.
+        """
         lat = fallback_coords[0] if fallback_coords and fallback_coords[0] else 0.0
         lng = fallback_coords[1] if fallback_coords and fallback_coords[1] else 0.0
+        has_stop_coords = bool(fallback_coords and fallback_coords[0] and fallback_coords[1])
         return Experience(
             name=f"Explore {location}",
             type="tourist_attraction",
@@ -304,8 +326,7 @@ class LocalExperiencesAgent(AgentClarificationMixin):
             lat=lat,
             lng=lng,
             best_time_to_visit="Morning",
-            source="llm",
-            rating=4.5,
-            review_count=500,
+            source=DataSource.FALLBACK,
+            geo_source=DataSource.PROVIDER if has_stop_coords else DataSource.FALLBACK,
             address=location,
         )

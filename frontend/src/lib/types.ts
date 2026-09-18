@@ -92,20 +92,16 @@ export type CompleteEvent = {
   itinerary: Itinerary | null;
 };
 
-export type AgentUsage = {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  cost_usd: number;
-  latency_ms: number;
-};
-
 export type UsageSummaryEvent = {
   session_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
   total_tokens: number;
-  total_cost_usd: number;
-  total_latency_ms: number;
-  per_agent: Record<string, AgentUsage>;
+  cost_usd: number;
+  total_duration_ms?: number;
+  llm_calls: number;
 };
 
 export type ErrorEvent = {

@@ -14,8 +14,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.reports import SelfDriveReport
 from app.tools.factory import ToolFactory
 
@@ -83,9 +85,10 @@ class SelfDriveSearchAgent(AgentClarificationMixin):
         estimated_km_per_day = 80.0
         total_km = estimated_km_per_day * trip_days
 
-        chain = self._llm.with_structured_output(SelfDriveReport)
         try:
-            report: SelfDriveReport = await chain.ainvoke(
+            report = await invoke_structured(
+                self._llm,
+                SelfDriveReport,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(
@@ -97,10 +100,12 @@ class SelfDriveSearchAgent(AgentClarificationMixin):
                             f"Available rentals (JSON):\n{json.dumps(rentals[:6], indent=2)}"
                         )
                     ),
-                ]
+                ],
+                agent=AgentName.SELF_DRIVE_SEARCH,
+                log=log,
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(LogEvent.AGENT_DEGRADED, section="self_drive", error=str(exc))
             report = SelfDriveReport(
                 destination=destination,
                 rental_options=rentals[:6],

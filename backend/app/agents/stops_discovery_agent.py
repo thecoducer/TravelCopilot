@@ -20,10 +20,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.config import settings
 from app.graph.state import TripStateModel
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent, StopKind
 from app.models.stops import (
     SINGLE_STOP_ID,
     SOURCE_STOP_ID,
@@ -115,6 +117,15 @@ def _slugify(name: str) -> str:
     return slug or "stop"
 
 
+# option_id is model-supplied and becomes part of every leg and stop id, so it is
+# slugified and capped rather than interpolated raw.
+_MAX_OPTION_ID_LENGTH = 40
+
+
+def _option_slug(option_id: str) -> str:
+    return _slugify(option_id)[:_MAX_OPTION_ID_LENGTH].strip("_") or "gateway"
+
+
 class _StopIdAllocator:
     """Assigns stable, unique stop_ids per occurrence — repeats get _01/_02/…"""
 
@@ -127,18 +138,22 @@ class _StopIdAllocator:
         return f"{slug}_{self._counts[slug]:02d}"
 
 
-def _normalize_nights(hints: list[int], trip_days: int) -> list[int]:
-    """Scale LLM-provided night counts so they sum exactly to ``trip_days``."""
+def _normalize_nights(hints: list[int], trip_nights: int) -> list[int]:
+    """Scale LLM-provided night counts so they sum exactly to ``trip_nights``.
+
+    An N-day trip contains N-1 nights; scaling to N would push the final stop's
+    checkout one day past the traveller's return date.
+    """
     n = len(hints)
     if n == 0:
         return []
     total_hint = sum(hints) or n
-    scaled = [max(1, round(h * trip_days / total_hint)) for h in hints]
-    diff = trip_days - sum(scaled)
+    scaled = [max(1, round(h * trip_nights / total_hint)) for h in hints]
+    diff = trip_nights - sum(scaled)
     if diff:
         scaled[-1] = max(1, scaled[-1] + diff)
-    if sum(scaled) != trip_days:
-        scaled = _force_total(scaled, trip_days)
+    if sum(scaled) != trip_nights:
+        scaled = _force_total(scaled, trip_nights)
     return scaled
 
 
@@ -171,17 +186,21 @@ def _build_stops_by_day(
     """
     allocations: dict[int, DayAllocation] = {}
     day_index = 0
-    for stop_id, night_count in zip(overnight_ids, nights, strict=True):
-        for offset in range(night_count):
+    last_stop_index = len(overnight_ids) - 1
+    for stop_index, (stop_id, night_count) in enumerate(zip(overnight_ids, nights, strict=True)):
+        # The final stop also owns the return day, which has no night attached.
+        day_count = night_count + 1 if stop_index == last_stop_index else night_count
+        for offset in range(day_count):
             is_first = offset == 0
-            is_last = offset == night_count - 1
+            is_last = offset == day_count - 1
             allocations[day_index] = DayAllocation(
                 day_index=day_index,
                 date=start_date + timedelta(days=day_index),
                 stop_id=stop_id,
                 is_checkin_day=is_first,
                 is_checkout_day=is_last,
-                is_travel_day=is_first or is_last,
+                # Arrival days involve a transfer; so does the journey home.
+                is_travel_day=is_first or (stop_index == last_stop_index and is_last),
             )
             day_index += 1
     return allocations
@@ -229,20 +248,21 @@ def _build_gateway_option(
     last_day_index: int,
     self_drive_intent: bool,
 ) -> GatewayOption:
+    option_slug = _option_slug(option.option_id)
     is_passthrough = _slugify(option.gateway_stop.name) != _slugify(first_stop.name)
 
     if is_passthrough:
         gateway_stop = TripStop(
-            stop_id=f"{option.option_id}_gateway",
+            stop_id=f"{option_slug}_gateway",
             name=option.gateway_stop.name,
             country=option.gateway_stop.country,
-            stop_kind="gateway_transit",
+            stop_kind=StopKind.GATEWAY_TRANSIT,
             sequence=0,
             nights=0,
         )
         entry_legs = [
             _make_leg(
-                f"{option.option_id}_entry_src",
+                f"{option_slug}_entry_src",
                 SOURCE_STOP_ID,
                 gateway_stop.stop_id,
                 LegType.SOURCE_TO_GATEWAY,
@@ -251,7 +271,7 @@ def _build_gateway_option(
                 self_drive_intent,
             ),
             _make_leg(
-                f"{option.option_id}_entry_stop",
+                f"{option_slug}_entry_stop",
                 gateway_stop.stop_id,
                 first_stop.stop_id,
                 LegType.GATEWAY_TO_STOP,
@@ -262,7 +282,7 @@ def _build_gateway_option(
         ]
         exit_legs = [
             _make_leg(
-                f"{option.option_id}_exit_stop",
+                f"{option_slug}_exit_stop",
                 last_stop.stop_id,
                 gateway_stop.stop_id,
                 LegType.STOP_TO_GATEWAY,
@@ -271,7 +291,7 @@ def _build_gateway_option(
                 self_drive_intent,
             ),
             _make_leg(
-                f"{option.option_id}_exit_src",
+                f"{option_slug}_exit_src",
                 gateway_stop.stop_id,
                 SOURCE_STOP_ID,
                 LegType.GATEWAY_TO_SOURCE,
@@ -284,7 +304,7 @@ def _build_gateway_option(
         gateway_stop = first_stop
         entry_legs = [
             _make_leg(
-                f"{option.option_id}_entry_src",
+                f"{option_slug}_entry_src",
                 SOURCE_STOP_ID,
                 first_stop.stop_id,
                 LegType.SOURCE_TO_GATEWAY,
@@ -295,7 +315,7 @@ def _build_gateway_option(
         ]
         exit_legs = [
             _make_leg(
-                f"{option.option_id}_exit_src",
+                f"{option_slug}_exit_src",
                 last_stop.stop_id,
                 SOURCE_STOP_ID,
                 LegType.GATEWAY_TO_SOURCE,
@@ -347,7 +367,7 @@ def _shape_route(
         stop = TripStop(
             stop_id=SINGLE_STOP_ID,
             name=destination,
-            stop_kind="overnight",
+            stop_kind=StopKind.OVERNIGHT,
             sequence=0,
             nights=trip_days,
             arrival_date=dates.departure,
@@ -379,7 +399,7 @@ def _shape_route(
     allocator = _StopIdAllocator()
     overnight_ids = [allocator.next_id(stop.name) for stop in overnight_stops_input]
     nights = _normalize_nights(
-        [max(1, stop.nights_hint) for stop in overnight_stops_input], trip_days
+        [max(1, stop.nights_hint) for stop in overnight_stops_input], max(1, trip_days - 1)
     )
     stops_by_day = _build_stops_by_day(overnight_ids, nights, dates.departure)
     last_day_index = max(stops_by_day)
@@ -389,15 +409,18 @@ def _shape_route(
         zip(overnight_ids, overnight_stops_input, nights, strict=True)
     ):
         day_indices = sorted(d for d, a in stops_by_day.items() if a.stop_id == stop_id)
+        arrival = stops_by_day[day_indices[0]].date
         overnight_stops[stop_id] = TripStop(
             stop_id=stop_id,
             name=stop_input.name,
             country=stop_input.country,
-            stop_kind="overnight",
+            stop_kind=StopKind.OVERNIGHT,
             sequence=i + 1,  # sequence 0 is reserved for a distinct gateway stop, if any
             nights=night_count,
-            arrival_date=stops_by_day[day_indices[0]].date,
-            departure_date=stops_by_day[day_indices[-1]].date + timedelta(days=1),
+            arrival_date=arrival,
+            # Derived from nights rather than the allocated day span: the final stop
+            # owns one extra (night-less) return day.
+            departure_date=arrival + timedelta(days=night_count),
             permits_required=stop_input.permits_required,
             altitude_meters=stop_input.altitude_meters,
             notes=stop_input.notes,
@@ -494,8 +517,9 @@ class StopsDiscoveryAgent(AgentClarificationMixin):
             return _empty_result("single_destination", route_version)
 
         try:
-            chain = self._llm.with_structured_output(_Route)
-            route: _Route = await chain.ainvoke(
+            route = await invoke_structured(
+                self._llm,
+                _Route,
                 [
                     SystemMessage(
                         content=_SYSTEM_PROMPT.format(
@@ -510,10 +534,18 @@ class StopsDiscoveryAgent(AgentClarificationMixin):
                             f"Self-drive intent: {s.self_drive_intent}"
                         )
                     ),
-                ]
+                ],
+                agent=AgentName.STOPS_DISCOVERY,
+                session_id=s.session_id,
+                log=log,
             )
-        except Exception as exc:
-            log.error("route_discovery_llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(
+                LogEvent.AGENT_FAILED,
+                section="route_discovery",
+                truncated=exc.truncated,
+                error=str(exc),
+            )
             return _empty_result("discovery_failed", route_version)
 
         try:

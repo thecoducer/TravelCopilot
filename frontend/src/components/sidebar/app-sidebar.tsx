@@ -37,11 +37,13 @@ export function AppSidebar({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { sessions, refresh } = useSessions();
+  const { sessions, refresh, removeSession } = useSessions();
   const { username, clearUsername } = useCurrentUser();
   const { theme, toggleTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const activeSessionId = pathname?.startsWith("/c/") ? pathname.slice(3) : null;
 
@@ -71,13 +73,21 @@ export function AppSidebar({
     await refresh();
   }
 
-  async function handleDelete(session: SessionSummary) {
-    if (!username || !window.confirm("Delete this chat?")) return;
-    await deleteSession(username, session.session_id);
-    if (activeSessionId === session.session_id) {
+  async function handleDelete() {
+    if (!username || !deleteTarget) return;
+    try {
+      await deleteSession(username, deleteTarget.session_id);
+    } catch {
+      setDeleteError("We could not delete this chat. Please try again.");
+      return;
+    }
+    const deletedSessionId = deleteTarget.session_id;
+    removeSession(deletedSessionId);
+    setDeleteTarget(null);
+    setDeleteError(null);
+    if (activeSessionId === deletedSessionId) {
       router.push("/");
     }
-    await refresh();
   }
 
   function startNewChat() {
@@ -96,7 +106,7 @@ export function AppSidebar({
 
   if (collapsed) {
     return (
-      <aside className="group relative flex h-dvh w-full flex-col items-center border-r border-white/[0.08] bg-black py-4 text-white">
+      <aside className="group relative flex h-dvh w-14 shrink-0 flex-col items-center border-r border-white/[0.08] bg-black py-4 text-white">
         <div className="relative mb-5 size-9">
           <TravelCopilotLogo
             showWordmark={false}
@@ -138,7 +148,7 @@ export function AppSidebar({
   }
 
   return (
-    <aside className="relative flex h-dvh w-full flex-col border-r border-white/[0.08] bg-black text-white">
+    <aside className="relative flex h-dvh w-[var(--sidebar-width)] shrink-0 flex-col border-r border-white/[0.08] bg-black text-white">
       <div className="flex items-center justify-between px-4 pb-4 pt-5">
         <TravelCopilotLogo className="[&>span]:text-white" />
         <div className="flex items-center gap-1">
@@ -189,7 +199,10 @@ export function AppSidebar({
                     active={activeSessionId === session.session_id}
                     onOpen={() => router.push(`/c/${session.session_id}`)}
                     onRename={() => handleRename(session)}
-                    onDelete={() => handleDelete(session)}
+                    onDelete={() => {
+                      setDeleteError(null);
+                      setDeleteTarget(session);
+                    }}
                   />
                 ))}
               </ul>
@@ -232,6 +245,17 @@ export function AppSidebar({
           onQueryChange={setQuery}
           onClose={() => setSearchOpen(false)}
           onOpen={openSession}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <DeleteDialog
+          session={deleteTarget}
+          error={deleteError}
+          onClose={() => {
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }}
+          onConfirm={() => void handleDelete()}
         />
       ) : null}
     </aside>
@@ -398,5 +422,54 @@ function SessionRow({
         ) : null}
       </div>
     </li>
+  );
+}
+
+function DeleteDialog({
+  session,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  session: SessionSummary;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 px-4 pt-[12vh]" onMouseDown={onClose}>
+      <div
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-chat-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-4">
+          <h2 id="delete-chat-title" className="text-[0.95rem] font-semibold text-white">Delete chat?</h2>
+          <button
+            className="inline-flex size-7 items-center justify-center rounded-md text-white/50 hover:bg-white/10 hover:text-white"
+            onClick={onClose}
+            aria-label="Close delete dialog"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div className="space-y-5 p-5">
+          <p className="text-sm leading-6 text-white/65">
+            “{session.title}” and its messages, itinerary, and usage data will be permanently deleted.
+          </p>
+          {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <button className="rounded-lg px-4 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="rounded-lg bg-red-500/90 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500" onClick={onConfirm}>
+              Delete chat
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

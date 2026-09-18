@@ -6,8 +6,8 @@ Emits the following SSE event types while running / resuming the LangGraph:
 
 from __future__ import annotations
 
-import asyncio
 import json
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -16,7 +16,7 @@ from langgraph.types import Command
 
 from app.graph.graph import get_compiled_graph
 from app.graph.state import initial_state
-from app.services import trip_service
+from app.services import trip_service, usage_service
 
 logger = structlog.get_logger(__name__)
 
@@ -197,13 +197,15 @@ async def stream_graph(
     username: str | None = None,
     mode: str = "new",
 ) -> AsyncGenerator[str, None]:
-    from app.llm import reset_active_llm_session_id, set_active_llm_session_id
+    from app.llm import reset_active_llm_run_id, set_active_llm_run_id
     from app.observability.langfuse import get_langfuse_handler
     from app.services import chat_turn_service
     from app.services.cancellation_service import register, unregister
 
     register(session_id)
-    llm_session_token = set_active_llm_session_id(session_id)
+    started_at = time.perf_counter()
+    # One trip_id == one planning run, so usage is tracked per turn, not per session.
+    llm_run_token = set_active_llm_run_id(trip_id)
     is_followup = mode == "followup"
 
     try:
@@ -260,6 +262,7 @@ async def stream_graph(
             compiled=compiled,
             config=config,
             username=username,
+            started_at=started_at,
         ):
             yield event
 
@@ -268,7 +271,7 @@ async def stream_graph(
         yield sse_event("error", {"message": str(exc), "session_id": session_id})
     finally:
         unregister(session_id)
-        reset_active_llm_session_id(llm_session_token)
+        reset_active_llm_run_id(llm_run_token)
 
 
 async def stream_resumed_graph(
@@ -278,12 +281,13 @@ async def stream_resumed_graph(
     query: str,
 ) -> AsyncGenerator[str, None]:
     """Resume a paused graph after the user answers clarification prompts."""
-    from app.llm import reset_active_llm_session_id, set_active_llm_session_id
+    from app.llm import reset_active_llm_run_id, set_active_llm_run_id
     from app.observability.langfuse import get_langfuse_handler
     from app.services.cancellation_service import register, unregister
 
     register(session_id)
-    llm_session_token = set_active_llm_session_id(session_id)
+    started_at = time.perf_counter()
+    llm_run_token = set_active_llm_run_id(trip_id)
 
     try:
         compiled = await get_compiled_graph()
@@ -312,6 +316,7 @@ async def stream_resumed_graph(
             query=query,
             compiled=compiled,
             config=config,
+            started_at=started_at,
         ):
             yield event
 
@@ -320,7 +325,7 @@ async def stream_resumed_graph(
         yield sse_event("error", {"message": str(exc), "session_id": session_id})
     finally:
         unregister(session_id)
-        reset_active_llm_session_id(llm_session_token)
+        reset_active_llm_run_id(llm_run_token)
 
 
 async def emit_completion_events(
@@ -331,6 +336,7 @@ async def emit_completion_events(
     compiled: Any,
     config: dict[str, Any],
     username: str | None = None,
+    started_at: float | None = None,
 ) -> AsyncGenerator[str, None]:
     """Emit ``complete`` and ``usage_summary`` SSE events after the graph finishes."""
     if final_state.get("error") and not final_state.get("itinerary"):
@@ -348,7 +354,9 @@ async def emit_completion_events(
     if itinerary and hasattr(itinerary, "model_copy"):
         itinerary = itinerary.model_copy(update={"id": trip_id})
 
-    usage_summary = await build_usage_summary(final_state=final_state, session_id=session_id)
+    usage_summary = await usage_service.get_run_usage(trip_id)
+    if started_at is not None:
+        usage_summary.total_duration_ms = round((time.perf_counter() - started_at) * 1000, 1)
 
     await trip_service.persist_trip(
         session_id=session_id,
@@ -356,9 +364,10 @@ async def emit_completion_events(
         query=query,
         state=final_state,
         itinerary=itinerary,
-        usage_summary=usage_summary,
+        run_usage=usage_summary,
         username=username,
     )
+    await usage_service.clear_run_usage(trip_id)
 
     from app.services import chat_turn_service
 
@@ -379,91 +388,13 @@ async def emit_completion_events(
             "itinerary": itinerary.model_dump() if itinerary else None,
         },
     )
+    logger.info(
+        "run_usage_summary",
+        session_id=session_id,
+        trip_id=trip_id,
+        **usage_summary.model_dump(),
+    )
     yield sse_event(
         "usage_summary",
-        {
-            "session_id": session_id,
-            "total_tokens": usage_summary["total_tokens"],
-            "total_cost_usd": usage_summary["total_cost_usd"],
-            "total_latency_ms": usage_summary["total_latency_ms"],
-            "per_agent": usage_summary["per_agent"],
-        },
+        {"session_id": session_id, **usage_summary.model_dump()},
     )
-
-
-async def build_usage_summary(final_state: dict[str, Any], session_id: str) -> dict[str, Any]:
-    """Build usage summary from Redis usage cache; fallback to graph state when absent."""
-    from app.llm import flush_usage_events
-
-    await flush_usage_events()
-    per_agent: dict[str, dict[str, Any]] = {}
-    total_tokens = 0
-    total_cost_usd = 0.0
-    total_latency_ms = 0.0
-
-    # Preferred source: live per-agent cache written by UsageLogger callbacks.
-    try:
-        from app.services.cache_service import CacheService
-
-        cache = CacheService()
-        for attempt in range(4):
-            per_agent = {}
-            total_tokens = 0
-            total_cost_usd = 0.0
-            total_latency_ms = 0.0
-
-            for agent in AGENT_LAYERS:
-                row = await cache.get(CacheService.usage_key(session_id, agent))
-                if not row:
-                    continue
-
-                prompt_tokens = int(row.get("prompt_tokens", 0) or 0)
-                completion_tokens = int(row.get("completion_tokens", 0) or 0)
-                agent_total = int(row.get("total_tokens", prompt_tokens + completion_tokens) or 0)
-                cost_usd = float(row.get("cost_usd", 0.0) or 0.0)
-                latency_ms = float(row.get("latency_ms", 0.0) or 0.0)
-
-                per_agent[agent] = {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": agent_total,
-                    "cost_usd": cost_usd,
-                    "latency_ms": latency_ms,
-                }
-                total_tokens += agent_total
-                total_cost_usd += cost_usd
-                total_latency_ms += latency_ms
-
-            if per_agent or attempt == 3:
-                break
-            await asyncio.sleep(0.1)
-    except Exception as exc:
-        logger.warning("usage_cache_read_failed", session_id=session_id, error=str(exc))
-
-    # Fallback source: token_usage reducer in graph state.
-    if not per_agent:
-        token_usage = final_state.get("token_usage", {}) or {}
-        for name, usage in token_usage.items():
-            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-            agent_total = int(
-                getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
-            )
-            cost_usd = float(getattr(usage, "cost_usd", 0.0) or 0.0)
-            per_agent[name] = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": agent_total,
-                "cost_usd": cost_usd,
-                "latency_ms": float(getattr(usage, "latency_ms", 0.0) or 0.0),
-            }
-            total_tokens += agent_total
-            total_cost_usd += cost_usd
-            total_latency_ms += float(getattr(usage, "latency_ms", 0.0) or 0.0)
-
-    return {
-        "total_tokens": total_tokens,
-        "total_cost_usd": total_cost_usd,
-        "total_latency_ms": total_latency_ms,
-        "per_agent": per_agent,
-    }

@@ -5,8 +5,8 @@ partial updates returned by each node; agents MUST only return the keys they
 changed rather than the full state.
 
 Annotated reducers are used for fields that multiple agents write to
-(messages, token_usage, reviews_summary, food_recommendations) so that
-LangGraph merges rather than overwrites them.
+(messages, reviews_summary, food_recommendations) so that LangGraph merges
+rather than overwrites them.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.itinerary import Experience, Itinerary
 from app.models.reports import (
-    AgentTokenUsage,
     BudgetReport,
     ReviewSummary,
     SafetyReport,
@@ -110,7 +109,6 @@ class TripState(TypedDict, total=False):
 
     # ── Output ─────────────────────────────────────────────────────────────
     itinerary: Itinerary | None
-    token_usage: Annotated[dict[str, AgentTokenUsage], operator.or_]
     messages: Annotated[list[BaseMessage], add_messages]
     # Concurrent Layer 1/2 nodes can independently set this in the same superstep;
     # a reducer (keep the first error) avoids InvalidUpdateError from the unguarded
@@ -189,7 +187,6 @@ class TripStateModel(BaseModel):
     budget_report: BudgetReport | None = None
 
     itinerary: Itinerary | None = None
-    token_usage: dict[str, AgentTokenUsage] = Field(default_factory=dict)
     messages: list[BaseMessage] = Field(default_factory=list)
     error: str | None = None
 

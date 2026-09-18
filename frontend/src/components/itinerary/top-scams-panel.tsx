@@ -15,7 +15,7 @@ export function TopScamsPanel({ scams }: TopScamsPanelProps) {
   const visibleScams = expanded ? scams : scams.slice(0, 2);
 
   return (
-    <section className="flex flex-col gap-6 border-b border-border pb-8 pt-4">
+    <section className="flex flex-col gap-6 pb-8 pt-4">
       <header>
         <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-faint">
           Stay alert

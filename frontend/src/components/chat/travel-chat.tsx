@@ -5,7 +5,7 @@ import { ChatComposer } from "@/components/chat/chat-composer";
 import { EmptyState } from "@/components/chat/empty-state";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { ClarificationForm } from "@/components/clarification/clarification-form";
-import { ItineraryResponse } from "@/components/itinerary/itinerary-response";
+import { ItineraryDetails } from "@/components/itinerary/itinerary-details";
 import { MetricsPanel } from "@/components/planning/metrics-panel";
 import { PlanningActivity } from "@/components/planning/planning-activity";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -172,7 +172,7 @@ function TurnView({
           {turn.itinerary ? (
             isLatest ? (
               <div className="mt-8 flex flex-col gap-6">
-                <ItineraryResponse
+                <ItineraryDetails
                   itinerary={turn.itinerary}
                   onDownloadPdf={() => turn.itineraryId && onDownloadPdf(turn.itineraryId)}
                   isPdfDownloading={isDownloading}
@@ -186,7 +186,7 @@ function TurnView({
                   Earlier version — {turn.itinerary.title}
                 </summary>
                 <div className="border-t border-border p-4">
-                  <ItineraryResponse
+                  <ItineraryDetails
                     itinerary={turn.itinerary}
                     onDownloadPdf={() => turn.itineraryId && onDownloadPdf(turn.itineraryId)}
                     isPdfDownloading={isDownloading}

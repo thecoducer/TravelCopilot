@@ -64,9 +64,6 @@ from app.models.itinerary_compilation import (
     TripNarrative as TripNarrative,
 )
 from app.models.reports import (
-    AgentTokenUsage as AgentTokenUsage,
-)
-from app.models.reports import (
     ApplicationCentre as ApplicationCentre,
 )
 from app.models.reports import (
@@ -77,6 +74,9 @@ from app.models.reports import (
 )
 from app.models.reports import (
     ReviewSummary as ReviewSummary,
+)
+from app.models.reports import (
+    RunUsage as RunUsage,
 )
 from app.models.reports import (
     SafetyReport as SafetyReport,

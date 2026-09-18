@@ -17,14 +17,52 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
+from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.config import settings
 from app.graph.state import TripStateModel
 from app.llm import get_llm
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, BudgetVerdict, LogEvent
 from app.models.reports import BudgetReport
+from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
+from app.services.currency_service import resolve_trip_currency
 from app.services.fx_converter_service import FxConverter
 from app.tools.factory import ToolFactory
+
+
+def _all_legs_unpriced(by_leg: dict[str, TransportRecommendation]) -> bool:
+    """True when every discovered leg came back with no usable option."""
+    if not by_leg:
+        return False
+    return all(rec.no_result or rec.total_cost <= 0 for rec in by_leg.values())
+
+
+def _per_day_breakdown(
+    *, trip_days: int, accommodation: float, recurring: float, one_off: float
+) -> list[float]:
+    """Spread costs across days by how they are actually incurred.
+
+    Accommodation is paid per night (one fewer than the day count), day-to-day
+    spending is even, and one-off costs land on the first day. A flat
+    ``total / trip_days`` would report a hotel charge on the checkout day and an
+    identical figure for a travel day and a full sightseeing day.
+    """
+    if trip_days <= 0:
+        return []
+    nights = max(1, trip_days - 1)
+    per_night = accommodation / nights
+    per_day_recurring = recurring / trip_days
+    return [
+        round(
+            per_day_recurring
+            + (per_night if day < nights else 0.0)
+            + (one_off if day == 0 else 0.0),
+            2,
+        )
+        for day in range(trip_days)
+    ]
+
 
 _SYSTEM_PROMPT = """\
 You are a travel budget analyst and cost estimator with deep knowledge of global pricing.
@@ -123,12 +161,15 @@ class BudgetPlannerAgent(AgentClarificationMixin):
                 f"{destination} in {dest_currency} matching the '{tier}' budget tier."
             )
 
-            chain = self._llm.with_structured_output(DestinationCostEstimate)
-            res = await chain.ainvoke(
+            res = await invoke_structured(
+                self._llm,
+                DestinationCostEstimate,
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
                     HumanMessage(content=prompt),
-                ]
+                ],
+                agent=AgentName.BUDGET_PLANNER,
+                log=log,
             )
 
             daily_food = float(getattr(res, "daily_food_per_person", 0.0) or 0.0)
@@ -144,8 +185,13 @@ class BudgetPlannerAgent(AgentClarificationMixin):
                     currency=dest_currency,
                 )
                 return round(food_total, 2), round(activities_total, 2)
-        except Exception as exc:
-            log.warning("llm_cost_estimation_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.warning(
+                LogEvent.AGENT_DEGRADED,
+                section="cost_estimate",
+                truncated=exc.truncated,
+                error=str(exc),
+            )
 
         # Safe fallback baseline if LLM call is unavailable or unparseable
         fallback_daily_activity = settings.fallback_daily_activity_costs.get(
@@ -178,18 +224,21 @@ class BudgetPlannerAgent(AgentClarificationMixin):
         log.info("agent_start")
 
         trip_days = dates.trip_days if dates else settings.default_trip_days
-        preferred_currency = (
-            user_profile and user_profile.preferred_currency
-        ) or settings.default_currency
+        preferred_currency = resolve_trip_currency(user_profile, log=log)
         dest_currency = (
             (transport_rec and transport_rec.currency_code)
             or (stays_pick and stays_pick.currency_code)
-            or settings.default_currency
+            or preferred_currency
         )
 
         # ── Cost components ───────────────────────────────────────────────
         transport_cost = transport_rec.total_cost if transport_rec else 0.0
         transport_currency = transport_rec.currency_code if transport_rec else dest_currency
+        # A route whose legs all came back empty contributes zero cost, which would
+        # otherwise read as a genuinely free journey and skew the verdict.
+        transport_priced = bool(transport_rec) and not _all_legs_unpriced(
+            s.transport_recommendation_by_leg
+        )
 
         # Food & Activities: LLM world-knowledge destination cost estimation
         tier = budget.tier if budget else settings.default_budget_tier
@@ -258,27 +307,40 @@ class BudgetPlannerAgent(AgentClarificationMixin):
         }
 
         total = sum(per_category.values())
-        per_day = [round(total / trip_days, 2)] * trip_days if trip_days else []
+        per_day = _per_day_breakdown(
+            trip_days=trip_days,
+            accommodation=per_category["accommodation"],
+            recurring=per_category["food"] + per_category["activities"],
+            one_off=per_category["transport"] + per_category["visa"] + per_category["self_drive"],
+        )
 
         # Compare against stated budget
         stated_budget = budget.total_budget_inr if budget and budget.total_budget_inr else None
-        if stated_budget:
+        if not transport_priced:
+            verdict = BudgetVerdict.INCOMPLETE
+            log.warning(
+                LogEvent.SECTION_UNAVAILABLE,
+                section="transport_cost",
+                reason="no_priced_transport_options",
+            )
+        elif stated_budget:
             budget_in_dest = await fx_converter.convert(stated_budget, preferred_currency)
             if total > budget_in_dest * settings.budget_over_threshold_multiplier:
-                verdict = "over"
+                verdict = BudgetVerdict.OVER_BUDGET
             elif total < budget_in_dest * settings.budget_under_threshold_multiplier:
-                verdict = "under"
+                verdict = BudgetVerdict.UNDER_BUDGET
             else:
-                verdict = "on-budget"
+                verdict = BudgetVerdict.ON_BUDGET
         else:
-            verdict = "on-budget"  # no budget specified
+            verdict = BudgetVerdict.ON_BUDGET  # no budget specified
 
         # LLM generates cost-saving tips if over budget
         cost_saving_tips: list[str] = []
-        if verdict == "over":
+        if verdict == BudgetVerdict.OVER_BUDGET:
             try:
-                chain = self._llm.with_structured_output(_CostSavingTips)
-                tips_result: _CostSavingTips = await chain.ainvoke(
+                tips_result = await invoke_structured(
+                    self._llm,
+                    _CostSavingTips,
                     [
                         SystemMessage(content="You are a budget travel advisor."),
                         HumanMessage(
@@ -289,11 +351,13 @@ class BudgetPlannerAgent(AgentClarificationMixin):
                                 "Provide 3–5 specific, actionable cost-saving tips."
                             )
                         ),
-                    ]
+                    ],
+                    agent=AgentName.BUDGET_PLANNER,
+                    log=log,
                 )
                 cost_saving_tips = tips_result.tips
-            except Exception as exc:
-                log.warning("tips_llm_failed", error=str(exc))
+            except StructuredOutputError as exc:
+                log.warning(LogEvent.AGENT_DEGRADED, section="cost_saving_tips", error=str(exc))
 
         report = BudgetReport(
             currency_code=dest_currency,

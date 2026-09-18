@@ -12,6 +12,7 @@ from typing import Any
 
 from app.agents.base import AgentClarificationMixin
 from app.logging import get_agent_logger
+from app.models.enums import StopKind
 from app.models.itinerary import FoodOptions, FoodVenue
 from app.models.stops import SINGLE_STOP_ID, DayAllocation, TripStop
 from app.models.user_profile import budget_from_state
@@ -76,13 +77,20 @@ class FoodDiscoveryAgent(AgentClarificationMixin):
         self._places_execution_mode = "replay" if getattr(factory, "is_mock", False) else "live"
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        stops = dict(state.get("stops", {}) or {})
+        all_stops = dict(state.get("stops", {}) or {})
+        # Gateway pass-through stops have no nights, so every venue found for them
+        # is discarded during day assignment — the search is pure API spend.
+        stops = {
+            stop_id: stop
+            for stop_id, stop in all_stops.items()
+            if stop.stop_kind == StopKind.OVERNIGHT
+        } or all_stops
         stops_by_day: dict[int, DayAllocation] = state.get("stops_by_day", {})
         user_profile = state.get("user_profile")
         session_id: str = state.get("session_id", "")
 
         log = get_agent_logger("food_discovery", session_id)
-        log.info("agent_start", stops=list(stops))
+        log.info("agent_start", stops=list(stops), skipped=len(all_stops) - len(stops))
 
         dietary = user_profile.dietary_restrictions if user_profile else []
         preferred_cuisines = user_profile.preferred_cuisines if user_profile else []

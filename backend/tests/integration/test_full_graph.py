@@ -21,7 +21,7 @@ import pytest
 from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
 from app.agents.stay_analyst_agent import _RankingOutput
 from app.agents.stops_discovery_agent import _GatewayOption, _Route, _Stop
-from app.agents.transport_optimizer_agent import _MultiLegOptimiserOutput, _OptimiserOutput
+from app.agents.transport_optimizer_agent import _LegRecommendation, _OptimiserOutput
 from app.agents.transport_search_agent import _HubResult, _RouteCombo
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
@@ -192,7 +192,7 @@ def _make_fake_llm(
             ],
         ),
         VisaReport: VisaReport(
-                nationality="India",
+            passport_country="India",
             destination_country=destination,
             visa_required=is_intl,
             visa_type="tourist" if is_intl else None,
@@ -231,7 +231,9 @@ def _make_fake_llm(
                 ),
             ]
         ),
-        _MultiLegOptimiserOutput: _MultiLegOptimiserOutput(aggregate=_stub_transport_rec()),
+        _LegRecommendation: _LegRecommendation(
+            leg_id="stub_leg", recommendation=_stub_transport_rec()
+        ),
         _RankingOutput: _RankingOutput(
             ranked_indices=[0, 1, 2],
             personalization_reasons=[

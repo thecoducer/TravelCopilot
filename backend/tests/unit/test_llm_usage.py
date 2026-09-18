@@ -1,77 +1,66 @@
-import asyncio
-from datetime import datetime
 from types import SimpleNamespace
 
-from app.llm import UsageLogger, _callback_metadata, extract_llm_usage
+from app.llm import extract_llm_call_usage
 
 
-def test_extracts_litellm_usage_and_response_cost() -> None:
+def test_extracts_langchain_usage_metadata_and_hidden_cost() -> None:
     response = SimpleNamespace(
-        usage=SimpleNamespace(prompt_tokens=12, completion_tokens=8, total_tokens=20),
+        usage_metadata={"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
+        response_metadata={},
         _hidden_params={"response_cost": 0.0042},
     )
 
-    assert extract_llm_usage(response) == {
-        "prompt_tokens": 12,
-        "completion_tokens": 8,
-        "total_tokens": 20,
-        "cost_usd": 0.0042,
-    }
+    usage = extract_llm_call_usage(response, model="openrouter/some-model")
+
+    assert usage["input_tokens"] == 12
+    assert usage["output_tokens"] == 8
+    assert usage["total_tokens"] == 20
+    assert usage["cost_usd"] == 0.0042
 
 
-def test_extracts_langchain_metadata_and_nested_cost() -> None:
+def test_prefers_openrouter_reported_cost_over_hidden_params() -> None:
     response = SimpleNamespace(
         usage_metadata={"input_tokens": 4, "output_tokens": 6, "total_tokens": 10},
-        response_metadata={"response_cost": 0.0015},
+        response_metadata={"token_usage": {"cost": 0.0009}},
+        _hidden_params={"response_cost": 0.0015},
     )
 
-    assert extract_llm_usage(response) == {
-        "prompt_tokens": 4,
-        "completion_tokens": 6,
-        "total_tokens": 10,
-        "cost_usd": 0.0015,
-    }
+    usage = extract_llm_call_usage(response, model="openrouter/some-model")
+
+    assert usage["cost_usd"] == 0.0009
 
 
-def test_extracts_token_usage_dict_from_response_metadata() -> None:
+def test_extracts_reasoning_and_cached_tokens_from_raw_litellm_usage() -> None:
     response = SimpleNamespace(
+        usage_metadata={},
         response_metadata={
             "token_usage": {
-                "prompt_tokens": 7,
-                "completion_tokens": 3,
-                "total_tokens": 10,
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+                "completion_tokens_details": {"reasoning_tokens": 30},
+                "prompt_tokens_details": {"cached_tokens": 20},
             }
-        }
+        },
     )
 
-    assert extract_llm_usage(response)["total_tokens"] == 10
+    usage = extract_llm_call_usage(response, model="openrouter/some-model")
+
+    assert usage["reasoning_tokens"] == 30
+    assert usage["cached_tokens"] == 20
+    assert usage["total_tokens"] == 150
 
 
-def test_reads_metadata_from_litellm_callback_payload() -> None:
-    assert _callback_metadata(
-        {"litellm_params": {"metadata": {"agent_name": "safety", "session_id": "sess"}}}
-    ) == {"agent_name": "safety", "session_id": "sess"}
-
-
-def test_async_usage_callback_queues_usage(monkeypatch) -> None:
-    queued: list[tuple[str, str, dict[str, int | float]]] = []
-    monkeypatch.setattr("app.llm._ensure_usage_worker", lambda: None)
-    monkeypatch.setattr("app.llm._usage_queue.put", queued.append)
-
+def test_falls_back_to_cost_per_token_when_no_reported_cost(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "litellm.cost_per_token",
+        lambda model, prompt_tokens, completion_tokens: (0.001, 0.002),
+    )
     response = SimpleNamespace(
-        usage=SimpleNamespace(prompt_tokens=12, completion_tokens=8, total_tokens=20),
-        _hidden_params={"response_cost": 0.0042},
+        usage_metadata={"input_tokens": 10, "output_tokens": 10, "total_tokens": 20},
+        response_metadata={},
     )
 
-    asyncio.run(
-        UsageLogger().async_log_success_event(
-            {"litellm_params": {"metadata": {"agent_name": "safety", "session_id": "sess"}}},
-            response,
-            datetime.now(),
-            datetime.now(),
-        )
-    )
+    usage = extract_llm_call_usage(response, model="openai/gpt-4o")
 
-    assert queued[0][0:2] == ("safety", "sess")
-    assert queued[0][2]["total_tokens"] == 20
-    assert queued[0][2]["cost_usd"] == 0.0042
+    assert usage["cost_usd"] == 0.003

@@ -29,6 +29,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
+from app.models.enums import DataSource
 from app.models.reports import (
     BudgetReport,
     ReviewSummary,
@@ -135,8 +136,14 @@ class Experience(BaseModel):
         ),
     )
     source: str = Field(
-        default="llm",
+        default=DataSource.LLM,
         description="Source of this experience (e.g. 'llm', 'google_places', 'tavily').",
+    )
+    # Coordinates straight from the model are unverified guesses; consumers must
+    # not render them as map pins without geocoding them first.
+    geo_source: DataSource = Field(
+        default=DataSource.LLM,
+        description="Provenance of lat/lng. Only PROVIDER coordinates are verified.",
     )
     rating: float | None = Field(
         default=None, ge=0.0, le=5.0, description="Visitor rating out of 5."
