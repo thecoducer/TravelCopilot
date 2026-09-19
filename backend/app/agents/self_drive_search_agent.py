@@ -11,28 +11,16 @@ import json
 from contextlib import suppress
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from app.llm import get_llm
+from app.agents.base import AgentClarificationMixin
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.reports import SelfDriveReport
+from app.prompts.self_drive_search_agent_prompts import SELF_DRIVE_REPORT_PROMPT
 from app.tools.factory import ToolFactory
 
-_SYSTEM_PROMPT = """\
-You are a self-drive trip planning expert. Based on the rental options and trip details,
-produce a self-drive report for the traveller.
 
-Rules:
-- ``recommended_vehicle`` should be a specific vehicle type (e.g. "Royal Enfield 350cc").
-- ``total_km_estimate`` should be a realistic estimate for the trip itinerary.
-- ``fuel_cost_estimate`` = total_km / mileage × fuel_price.
-- ``toll_estimate`` = 10–15% of fuel_cost for highway-heavy routes; 0 for mountain roads.
-- ``local_driving_tips`` should include altitude, road condition, permit, and traffic tips.
-- ``permits_required`` should list specific permit names with fees if known.
-"""
-
-
-class SelfDriveSearchAgent:
+class SelfDriveSearchAgent(AgentClarificationMixin):
     """Layer 3 — Conditional: rental options + fuel estimate for self-drive trips."""
 
     def __init__(
@@ -82,24 +70,22 @@ class SelfDriveSearchAgent:
         estimated_km_per_day = 80.0
         total_km = estimated_km_per_day * trip_days
 
-        chain = self._llm.with_structured_output(SelfDriveReport)
         try:
-            report: SelfDriveReport = await chain.ainvoke(
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Destination: {destination}\n"
-                            f"Trip days: {trip_days}\n"
-                            f"Fuel price: ₹{fuel_price}/L\n"
-                            f"Estimated total km: {total_km}\n\n"
-                            f"Available rentals (JSON):\n{json.dumps(rentals[:6], indent=2)}"
-                        )
-                    ),
-                ]
+            report = await invoke_structured(
+                self._llm,
+                SelfDriveReport,
+                SELF_DRIVE_REPORT_PROMPT.format_messages(
+                    destination=destination,
+                    trip_days=trip_days,
+                    fuel_price=fuel_price,
+                    total_km=total_km,
+                    rentals=json.dumps(rentals[:6], indent=2),
+                ),
+                agent=AgentName.SELF_DRIVE_SEARCH,
+                log=log,
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(LogEvent.AGENT_DEGRADED, section="self_drive", error=str(exc))
             report = SelfDriveReport(
                 destination=destination,
                 rental_options=rentals[:6],

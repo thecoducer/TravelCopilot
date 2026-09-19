@@ -25,8 +25,7 @@ class HotelStyle(StrEnum):
 class TripDates(BaseModel):
     departure: date
     return_date: date | None = None
-    flexibility_days: int = 0  # ±N days flexible departure window
-    night_travel_ok: bool = True  # whether overnight trains / buses are acceptable
+    flexibility_days: int = Field(default=0, ge=0)  # ±N days flexible departure window
 
     @property
     def trip_days(self) -> int:
@@ -45,14 +44,9 @@ class UserProfile(BaseModel):
     user_id: str
     username: str | None = None  # auth-free identity; keys the profile across sessions
     display_name: str | None = None
-    home_city: str | None = None
     nationality: str | None = None
-    passport_country: str | None = None
-    preferred_currency: str = "INR"
-    # Concrete budget amounts (BudgetPreference is graph-only and has no endpoint).
-    total_budget: float | None = Field(default=None, ge=0)
-    per_day_budget: float | None = Field(default=None, ge=0)
-    budget_currency: str = "INR"
+    # Unset means "use the configured default"; resolve via services.currency_service.
+    preferred_currency: str | None = None
     dietary_restrictions: list[str] = Field(default_factory=list)
     preferred_cuisines: list[str] = Field(default_factory=list)
     # Distinguishes an explicit "no dietary restrictions" answer from unset preferences.
@@ -62,7 +56,6 @@ class UserProfile(BaseModel):
     preferred_airlines: list[str] = Field(default_factory=list)
     preferred_hotel_chains: list[str] = Field(default_factory=list)
     hotel_style: HotelStyle | None = None
-    budget_tier: BudgetTier = BudgetTier.mid
     travel_style: str | None = None  # "adventure"|"cultural"|"luxury"|"backpacker"|"family"
     fitness_level: str | None = None  # "low"|"moderate"|"high" — affects activity recommendations
     altitude_experience: bool | None = None  # True = has previously travelled above 3,000 m

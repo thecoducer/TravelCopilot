@@ -595,17 +595,6 @@
             ],
             "title": "Display Name"
           },
-          "home_city": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Home City"
-          },
           "nationality": {
             "anyOf": [
               {
@@ -616,17 +605,6 @@
               }
             ],
             "title": "Nationality"
-          },
-          "passport_country": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passport Country"
           },
           "preferred_currency": {
             "type": "string",
@@ -677,10 +655,6 @@
                 "type": "null"
               }
             ]
-          },
-          "budget_tier": {
-            "$ref": "#/components/schemas/BudgetTier",
-            "default": "mid"
           },
           "travel_style": {
             "anyOf": [

@@ -13,30 +13,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
-from app.llm import get_llm
+from app.agents.base import AgentClarificationMixin
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
+from app.models.clarification import ClarificationPrompt
+from app.models.enums import AgentName, LogEvent
 from app.models.reports import VisaReport, VisaSource
+from app.prompts.visa_agent_prompts import VISA_REPORT_PROMPT
+from app.services.clarification_manager import ClarificationManager
 from app.tools.factory import ToolFactory
 
-_SYSTEM_PROMPT = """\
-You are an expert visa and immigration adviser. Based on the search results below,
-produce a complete visa report.
 
-Critical rules:
-- ``application_process`` must be a numbered ordered list of concrete steps.
-- Include ``disclaimer`` reminding travellers to verify with the official consulate.
-- If search results are insufficient, lean conservative: flag uncertainty in
-  ``validity_notes``.
-- Decide which cited sources are official based on their content and provenance,
-    not a fixed domain allowlist. Set ``confidence`` to "high" only when at least
-    one source is official, "medium" when sources exist but none are official,
-    and "low" when no reliable source supports the report.
-"""
-
-
-class VisaAgent:
+class VisaAgent(AgentClarificationMixin):
     """Layer 1 — Visa requirements, embassy, and application centre details."""
 
     def __init__(
@@ -57,8 +47,24 @@ class VisaAgent:
         destination: str = state.get("destination", "")
         session_id: str = state.get("session_id", "")
         user_profile = state.get("user_profile")
-        passport_country = (user_profile.passport_country if user_profile else None) or "Unknown"
-        home_city = (user_profile.home_city if user_profile else None) or "Unknown"
+        passport_country = (user_profile.nationality if user_profile else None) or "Unknown"
+        application_city = state.get("visa_application_city")
+        if not application_city:
+            answers = ClarificationManager.request(
+                [
+                    ClarificationPrompt(
+                        field="visa_application_city",
+                        question="Which city will you apply for the visa from?",
+                        reason="Needed to find the correct visa centre and embassy.",
+                        input_type="text",
+                    )
+                ],
+                requester="visa",
+                round_number=state.get("clarification_round", 0),
+            )
+            application_city = answers.get("visa_application_city", "").strip()
+            if not application_city:
+                return {"error": "A visa application city is required for visa lookup."}
         destination_country = destination
 
         log = get_agent_logger("visa", session_id, destination=destination)
@@ -76,12 +82,12 @@ class VisaAgent:
         centre_task = self._visa_centre.run(
             passport_country=passport_country,
             destination_country=destination_country,
-            home_city=home_city,
+            application_city=application_city,
         )
         embassy_task = self._embassy.run(
             passport_country=passport_country,
             destination_country=destination_country,
-            home_city=home_city,
+            application_city=application_city,
         )
 
         tavily_result: dict[str, Any] | BaseException
@@ -147,6 +153,7 @@ class VisaAgent:
         if not sources:
             log.warning("no_visa_sources", forcing_confidence_low=True)
             return {
+                "visa_application_city": application_city,
                 "visa_report": VisaReport(
                     passport_country=passport_country,
                     destination_country=destination_country,
@@ -155,22 +162,20 @@ class VisaAgent:
                     validity_notes=(
                         "No grounded sources found — verify directly with consulate before booking."
                     ),
-                )
+                ),
             }
 
-        chain = self._llm.with_structured_output(VisaReport)
         try:
-            report: VisaReport = await chain.ainvoke(
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Passport country: {passport_country}\n"
-                            f"Destination country: {destination_country}\n\n"
-                            f"Search results:\n{context}"
-                        )
-                    ),
-                ]
+            report = await invoke_structured(
+                self._llm,
+                VisaReport,
+                VISA_REPORT_PROMPT.format_messages(
+                    passport_country=passport_country,
+                    destination_country=destination_country,
+                    search_results=[HumanMessage(content=context)],
+                ),
+                agent=AgentName.VISA,
+                log=log,
             )
             report = report.model_copy(
                 update={
@@ -180,8 +185,8 @@ class VisaAgent:
                     "destination_country": destination_country,
                 }
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.error(LogEvent.AGENT_DEGRADED, section="visa", error=str(exc))
             report = VisaReport(
                 passport_country=passport_country,
                 destination_country=destination_country,
@@ -197,4 +202,4 @@ class VisaAgent:
             confidence=report.confidence,
             sources=len(report.sources),
         )
-        return {"visa_report": report}
+        return {"visa_application_city": application_city, "visa_report": report}

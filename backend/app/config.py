@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.logging import log_configuration_validation_errors
 
 # Shared tool-runtime constants. Keeping these values here makes provider adapters
 # configurable without scattering protocol names, statuses, or retention policy.
@@ -145,28 +148,6 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "info"
 
-    # LLM — swap provider+model with two env vars, zero code changes
-    # Examples:
-    #   openai      / gpt-4o                              (default)
-    #   anthropic   / claude-3-5-sonnet-20241022
-    #   gemini      / gemini-1.5-pro
-    #   groq        / llama3-70b-8192
-    #   openrouter  / nvidia/nemotron-3-ultra-550b-a55b:free
-    #   ollama      / llama3                              (local)
-    llm_provider: str = "openai"
-    llm_model: str = "gpt-4o"
-
-    # Provider API keys — LiteLLM reads these as env vars automatically;
-    # declare them here so pydantic-settings can validate + populate from .env
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
-    google_api_key: str = ""  # Gemini / Vertex AI
-    groq_api_key: str = ""  # Groq (fast Llama inference)
-    openrouter_api_key: str = ""  # reads OPEN_ROUTER_API_KEY; LiteLLM expects OPENROUTER_API_KEY
-
-    # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
-    llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama
-
     # Execution mode switch: real invokes provider adapters; mock replays recordings only.
     mock_external_apis: bool = True
 
@@ -229,10 +210,10 @@ class Settings(BaseSettings):
     open_exchange_rates_latest_url: str = "https://openexchangerates.org/api/latest.json"
 
     # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/travelcopilot"
+    database_url: str = Field(..., min_length=1)
 
     # Redis
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = Field(..., min_length=1)
 
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
@@ -244,15 +225,34 @@ class Settings(BaseSettings):
     otel_service_name: str = "travelcopilot-backend"
 
     # Clarification gate
-    clarification_required_fields: str = "source,destination,dates,trip_days,travelers"
+    # Values live in the env file; a missing key must fail loudly at startup rather
+    # than silently defaulting to ""/0, which disables the gate entirely.
+    clarification_required_fields: str = "source,destination,dates,trip_days,travelers,budget"
     # Per-field confidence thresholds (comma-separated field:threshold pairs).
     # Falls back to parse_confidence_threshold for fields not listed.
     clarification_field_thresholds: str = (
-        "source:0.3,destination:0.7,dates:0.6,trip_days:0.7,travelers:0.4"
+        "source:0.3,destination:0.7,dates:0.6,trip_days:0.7,travelers:0.4,budget:0.7"
     )
-    parse_confidence_threshold: float = 0.6
+    clarification_allowed_fields: str = (
+        "source,destination,dates,trip_days,travelers,budget,query,"
+        "preferred_cuisines,dietary_restrictions,visa_application_city,flexibility_days"
+    )
+    clarification_max_questions: int = Field(default=6, ge=1)
+    clarification_max_optional_questions: int = Field(default=3, ge=1)
+    clarification_max_prompt_length: int = Field(default=500, ge=1)
+    parse_confidence_threshold: float = Field(default=0.6, gt=0.0, le=1.0)
     # Maximum clarification rounds before proceeding with best-effort defaults
-    max_clarification_rounds: int = 3
+    max_clarification_rounds: int = Field(default=3, ge=1)
+    # Skippable questions cost an extra interrupt/resume cycle, so they are opt-in.
+    enable_optional_clarification: bool = False
+    # Date-flexibility question asked through the optional clarification node.
+    flexibility_days_field: str = "flexibility_days"
+    flexibility_days_prompt: str = (
+        "How flexible are your travel dates? Answer in days either side "
+        "(for example 0, 2 or 3), or skip to keep the dates fixed."
+    )
+    flexibility_days_max: int = 7
+    flexibility_days_default: int = 0
 
     # StopsDiscoveryAgent — max candidate access-gateway options to surface per route
     max_gateway_options: int = 2
@@ -271,6 +271,11 @@ class Settings(BaseSettings):
     fallback_daily_activity_cost_luxury: float = 4000.0
     fallback_daily_food_ratio: float = 0.35
 
+    # Connectivity + permits enrichment (ItineraryCompilerAgent)
+    # Above this elevation a stop is treated as remote for connectivity purposes.
+    connectivity_remote_altitude_meters: int = 2000
+    permits_lookup_enabled: bool = True
+
     # ItineraryCompilerAgent — quality-gate limits and narrative constraints
     itinerary_max_gate_iterations: int = 3
     itinerary_max_activities_per_slot: int = 2
@@ -278,7 +283,6 @@ class Settings(BaseSettings):
     itinerary_max_title_length: int = 140
     itinerary_max_scams_in_briefing: int = 3
     # Above this elevation an arrival/travel day carries an acclimatization warning.
-    high_altitude_warning_meters: int = 3000
 
     @property
     def fallback_daily_activity_costs(self) -> dict[str, float]:
@@ -306,6 +310,10 @@ class Settings(BaseSettings):
                     result[field.strip()] = float(val.strip())
         return result
 
+    @property
+    def clarification_allowed_field_names(self) -> list[str]:
+        return [field.strip() for field in self.clarification_allowed_fields.split(",")]
+
     def missing_real_provider_credentials(self) -> dict[str, str]:
         if self.mock_external_apis:
             return {}
@@ -322,4 +330,12 @@ class Settings(BaseSettings):
         }
 
 
-settings = Settings()
+def _load_settings() -> Settings:
+    try:
+        return Settings()
+    except ValidationError as exc:
+        log_configuration_validation_errors(exc.errors())
+        raise
+
+
+settings = _load_settings()

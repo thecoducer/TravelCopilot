@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   clarifyTrip,
   cancelTripPlanning,
   downloadItineraryPdf,
   getSessionItinerary,
   getSessionTurns,
+  getTripUsage,
   planTrip,
 } from "@/lib/api";
 import { parseSseStream, toTripStreamEvent } from "@/lib/sse";
@@ -26,11 +27,18 @@ export type PlannerTurn = {
   startedAt: string;
   status: TurnStatus;
   completedAgents: CompletedAgentActivity[];
+  /** Agents the backend has reported as started but not yet finished. */
+  activeAgents: string[];
   planningStartedAt: number | null;
+  /** Elapsed ms accumulated across running windows, excluding paused time. */
+  activeElapsedMs: number;
+  /** Timestamp the current running window began; null while paused/stopped. */
+  runningSince: number | null;
   itinerary: Itinerary | null;
   itineraryId: string | null;
   usage: UsageSummaryEvent | null;
   clarificationPrompts: ClarificationPrompt[];
+  clarificationRequestId: string | null;
   clarificationRound: number;
   agentStartedAt: Record<string, number>;
   errorMessage: string | null;
@@ -43,7 +51,7 @@ export type TripPlannerState = {
   pdfError: string | null;
 };
 
-const initialState: TripPlannerState = {
+export const initialState: TripPlannerState = {
   sessionId: null,
   turns: [],
   isDownloading: false,
@@ -57,19 +65,34 @@ function newTurn(prompt: string): PlannerTurn {
     startedAt: new Date().toISOString(),
     status: "planning",
     completedAgents: [],
+    activeAgents: [],
     planningStartedAt: Date.now(),
+    activeElapsedMs: 0,
+    runningSince: Date.now(),
     itinerary: null,
     itineraryId: null,
     usage: null,
     clarificationPrompts: [],
+    clarificationRequestId: null,
     clarificationRound: 0,
     agentStartedAt: {},
     errorMessage: null,
   };
 }
 
+/** Folds a turn's running window into `activeElapsedMs` and stops the clock. */
+function pauseTiming(turn: PlannerTurn): Pick<PlannerTurn, "activeElapsedMs" | "runningSince"> {
+  if (turn.runningSince === null) {
+    return { activeElapsedMs: turn.activeElapsedMs, runningSince: null };
+  }
+  return {
+    activeElapsedMs: turn.activeElapsedMs + (Date.now() - turn.runningSince),
+    runningSince: null,
+  };
+}
+
 type Action =
-  | { type: "turn_started"; prompt: string }
+  | { type: "turn_started"; prompt: string; sessionId: string }
   | { type: "clarification_submitted" }
   | { type: "planning_cancelled" }
   | { type: "hydrated"; sessionId: string; turns: PlannerTurn[] }
@@ -92,22 +115,29 @@ function patchLastTurn(
   return { ...state, turns };
 }
 
-function reducer(state: TripPlannerState, action: Action): TripPlannerState {
+export function reducer(state: TripPlannerState, action: Action): TripPlannerState {
   switch (action.type) {
     case "turn_started":
-      return { ...state, pdfError: null, turns: [...state.turns, newTurn(action.prompt)] };
+      return {
+        ...state,
+        sessionId: action.sessionId,
+        pdfError: null,
+        turns: [...state.turns, newTurn(action.prompt)],
+      };
 
     case "clarification_submitted":
       return patchLastTurn(state, (turn) => ({
         ...turn,
         status: "planning",
+        runningSince: Date.now(),
         clarificationPrompts: [],
+        clarificationRequestId: null,
       }));
 
     case "planning_cancelled":
       return patchLastTurn(state, (turn) =>
-        turn.status === "planning"
-          ? { ...turn, status: "error", errorMessage: "Planning stopped." }
+        (turn.status === "planning" || turn.status === "awaiting_clarification")
+          ? { ...turn, ...pauseTiming(turn), status: "error", errorMessage: "Planning stopped." }
           : turn,
       );
 
@@ -120,7 +150,12 @@ function reducer(state: TripPlannerState, action: Action): TripPlannerState {
     case "stream_ended_unexpectedly":
       return patchLastTurn(state, (turn) =>
         turn.status === "planning"
-          ? { ...turn, status: "error", errorMessage: "Connection closed unexpectedly." }
+          ? {
+              ...turn,
+              ...pauseTiming(turn),
+              status: "error",
+              errorMessage: "Connection closed unexpectedly.",
+            }
           : turn,
       );
 
@@ -147,6 +182,9 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
           ...turn,
           planningStartedAt: turn.planningStartedAt ?? Date.now(),
           agentStartedAt: { ...turn.agentStartedAt, [event.data.agent]: Date.now() },
+          activeAgents: turn.activeAgents.includes(event.data.agent)
+            ? turn.activeAgents
+            : [...turn.activeAgents, event.data.agent],
         }),
       );
 
@@ -161,7 +199,11 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
           layer: event.data.layer,
           elapsedMs: Date.now() - startedAt,
         };
-        return { ...turn, completedAgents: [...turn.completedAgents, entry] };
+        return {
+          ...turn,
+          completedAgents: [...turn.completedAgents, entry],
+          activeAgents: turn.activeAgents.filter((agent) => agent !== event.data.agent),
+        };
       });
     }
 
@@ -170,8 +212,10 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
         { ...state, sessionId: event.data.session_id },
         (turn) => ({
           ...turn,
+          ...pauseTiming(turn),
           status: "awaiting_clarification",
           clarificationPrompts: event.data.prompts,
+          clarificationRequestId: event.data.request_id,
           clarificationRound: event.data.round,
         }),
       );
@@ -181,6 +225,7 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
         { ...state, sessionId: event.data.session_id },
         (turn) => ({
           ...turn,
+          ...pauseTiming(turn),
           status: "complete",
           itinerary: event.data.itinerary,
           itineraryId: event.data.itinerary_id,
@@ -193,6 +238,7 @@ function applyStreamEvent(state: TripPlannerState, event: TripStreamEvent): Trip
     case "error":
       return patchLastTurn(state, (turn) => ({
         ...turn,
+        ...pauseTiming(turn),
         status: "error",
         errorMessage: event.data.message,
       }));
@@ -238,6 +284,7 @@ async function consumeTripStream(
 function buildHydratedTurns(
   storedTurns: { role: string; content: string; trip_id: string | null; created_at: string }[],
   itinerary: Itinerary | null,
+  usage: UsageSummaryEvent | null,
 ): PlannerTurn[] {
   const userTurns = storedTurns.filter((turn) => turn.role === "user");
   if (userTurns.length === 0) {
@@ -249,8 +296,11 @@ function buildHydratedTurns(
         ...newTurn(""),
         status: "complete",
         planningStartedAt: null,
+        activeElapsedMs: 0,
+        runningSince: null,
         itinerary,
         itineraryId: itinerary.id,
+        usage,
       },
     ];
   }
@@ -262,8 +312,11 @@ function buildHydratedTurns(
       startedAt: turn.created_at,
       status: "complete",
       planningStartedAt: null,
+      activeElapsedMs: 0,
+      runningSince: null,
       itinerary: isLast ? itinerary : null,
       itineraryId: isLast ? (itinerary?.id ?? null) : null,
+      usage: isLast ? usage : null,
     };
   });
 }
@@ -271,14 +324,17 @@ function buildHydratedTurns(
 type UseTripPlannerOptions = {
   username?: string | null;
   initialSessionId?: string;
-  onSessionCreated?: (sessionId: string) => void;
+  onSessionCreated?: (sessionId: string, title: string, createdAt: string) => void;
+  onItineraryTitle?: (sessionId: string, title: string) => void;
 };
 
 export function useTripPlanner(options: UseTripPlannerOptions = {}) {
-  const { username, initialSessionId, onSessionCreated } = options;
+  const { username, initialSessionId, onSessionCreated, onItineraryTitle } = options;
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [isHydrating, setIsHydrating] = useState(Boolean(initialSessionId));
   const abortRef = useRef<AbortController | null>(null);
   const notifiedSessionRef = useRef<string | null>(null);
+  const notifiedItineraryTitleRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
@@ -288,9 +344,22 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
   useEffect(() => {
     if (state.sessionId && notifiedSessionRef.current !== state.sessionId) {
       notifiedSessionRef.current = state.sessionId;
-      onSessionCreated?.(state.sessionId);
+      const firstTurn = state.turns[0];
+      const prompt = firstTurn?.prompt.trim() ?? "";
+      const title = prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt || "New trip";
+      onSessionCreated?.(state.sessionId, title, firstTurn?.startedAt ?? new Date().toISOString());
     }
-  }, [state.sessionId, onSessionCreated]);
+  }, [state.sessionId, state.turns, onSessionCreated]);
+
+  useEffect(() => {
+    const itinerary = state.turns.at(-1)?.itinerary;
+    const title = itinerary?.title?.trim();
+    if (!state.sessionId || !title || notifiedItineraryTitleRef.current === title) {
+      return;
+    }
+    notifiedItineraryTitleRef.current = title;
+    onItineraryTitle?.(state.sessionId, title);
+  }, [state.sessionId, state.turns, onItineraryTitle]);
 
   // Hydrate a saved session when navigating directly to /c/[sessionId].
   useEffect(() => {
@@ -300,16 +369,23 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
     notifiedSessionRef.current = initialSessionId;
     let cancelled = false;
     void (async () => {
-      const [itinerary, storedTurns] = await Promise.all([
-        getSessionItinerary(initialSessionId).catch(() => null),
-        getSessionTurns(initialSessionId).catch(() => []),
-      ]);
-      if (!cancelled) {
-        dispatch({
-          type: "hydrated",
-          sessionId: initialSessionId,
-          turns: buildHydratedTurns(storedTurns, itinerary),
-        });
+      try {
+        const [itinerary, storedTurns] = await Promise.all([
+          getSessionItinerary(initialSessionId).catch(() => null),
+          getSessionTurns(initialSessionId).catch(() => []),
+        ]);
+        const usage = itinerary?.id ? await getTripUsage(itinerary.id).catch(() => null) : null;
+        if (!cancelled) {
+          dispatch({
+            type: "hydrated",
+            sessionId: initialSessionId,
+            turns: buildHydratedTurns(storedTurns, itinerary, usage),
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setIsHydrating(false);
+        }
       }
     })();
     return () => {
@@ -318,7 +394,8 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
   }, [initialSessionId]);
 
   const lastTurn = state.turns.at(-1) ?? null;
-  const isBusy = lastTurn?.status === "planning";
+  const isBusy =
+    lastTurn?.status === "planning" || lastTurn?.status === "awaiting_clarification";
 
   const submitPrompt = useCallback(
     (prompt: string) => {
@@ -330,7 +407,15 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
       abortRef.current = controller;
 
       const isFollowup = Boolean(state.sessionId && lastTurn?.itinerary);
-      dispatch({ type: "turn_started", prompt });
+      const sessionId = isFollowup ? state.sessionId! : crypto.randomUUID();
+      const startedAt = new Date().toISOString();
+      dispatch({ type: "turn_started", prompt, sessionId });
+
+      if (!isFollowup) {
+        const title = prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt || "New trip";
+        notifiedSessionRef.current = sessionId;
+        onSessionCreated?.(sessionId, title, startedAt);
+      }
 
       void (async () => {
         try {
@@ -338,7 +423,7 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
             {
               query: prompt,
               username: username ?? undefined,
-              session_id: isFollowup ? state.sessionId ?? undefined : undefined,
+              session_id: sessionId,
               mode: isFollowup ? "followup" : "new",
             },
             controller.signal,
@@ -355,13 +440,14 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
         }
       })();
     },
-    [username, state.sessionId, lastTurn, isBusy],
+    [username, state.sessionId, lastTurn, isBusy, onSessionCreated],
   );
 
   const submitClarification = useCallback(
     (answers: Record<string, string>) => {
       const sessionId = state.sessionId;
-      if (!sessionId) {
+      const requestId = lastTurn?.clarificationRequestId;
+      if (!sessionId || !requestId) {
         return;
       }
 
@@ -373,7 +459,11 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
 
       void (async () => {
         try {
-          const response = await clarifyTrip(sessionId, { answers }, controller.signal);
+          const response = await clarifyTrip(
+            sessionId,
+            { request_id: requestId, answers },
+            controller.signal,
+          );
           await consumeTripStream(response, dispatch);
         } catch (error) {
           if (controller.signal.aborted) {
@@ -386,7 +476,7 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
         }
       })();
     },
-    [state.sessionId],
+    [state.sessionId, lastTurn?.clarificationRequestId],
   );
 
   const cancelPlanning = useCallback(async () => {
@@ -416,7 +506,7 @@ export function useTripPlanner(options: UseTripPlannerOptions = {}) {
     }
   }, []);
 
-  return { state, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf };
+  return { state, isHydrating, isBusy, submitPrompt, submitClarification, cancelPlanning, downloadPdf };
 }
 
 function triggerBrowserDownload(blob: Blob, filename: string): void {

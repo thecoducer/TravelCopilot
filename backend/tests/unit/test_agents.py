@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.agents.base import request_optional_clarification
 from app.agents.food_discovery_agent import FoodDiscoveryAgent
 from app.agents.local_experiences_agent import LocalExperiencesAgent
 from app.agents.orchestrator import OrchestratorAgent, quick_extract_days
@@ -29,6 +30,7 @@ from app.agents.transport_search_agent import TransportSearchAgent
 from app.agents.visa_agent import VisaAgent
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
+from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import Experience
 from app.models.reports import (
     BudgetReport,
@@ -36,8 +38,10 @@ from app.models.reports import (
     ScamEntry,
     VisaReport,
 )
+from app.models.stops import DayAllocation, TripStop
 from app.models.transport import StayOption
 from app.models.user_profile import BudgetPreference, TripDates, UserProfile
+from app.services.clarification_manager import ClarificationManager
 from app.tools.factory import ToolFactory
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -69,6 +73,37 @@ def _make_llm(return_value: Any) -> MagicMock:
     mock_llm = MagicMock()
     mock_llm.with_structured_output = MagicMock(return_value=mock_chain)
     return mock_llm
+
+
+async def _drive_orchestrator(
+    agent: Any,
+    state: dict[str, Any],
+    answers: dict[str, str] | None = None,
+) -> tuple[dict[str, Any], list[dict]]:
+    """Run orchestrator + clarification nodes the way the graph wires them.
+
+    Returns the final orchestrator update and every interrupt payload raised.
+    """
+    from app.agents.orchestrator import orchestrator_clarification_node
+    from app.config import settings
+
+    payloads: list[dict] = []
+
+    def fake_interrupt(payload: dict) -> dict:
+        payloads.append(payload)
+        fields = {prompt["field"] for prompt in payload["prompts"]}
+        return {f: v for f, v in (answers or {}).items() if f in fields}
+
+    working = dict(state)
+    result: dict[str, Any] = {}
+    with patch("app.services.clarification_manager.interrupt", side_effect=fake_interrupt):
+        for _ in range(settings.max_clarification_rounds + 1):
+            result = await agent(working)
+            working.update(result)
+            if not result.get("pending_clarification_fields"):
+                break
+            working.update(await orchestrator_clarification_node(working))
+    return result, payloads
 
 
 class _StaticTool:
@@ -111,7 +146,6 @@ class TestGraphCompilation:
             "experiences_raw",
             "reviews_summary",
             "food_recommendations",
-            "token_usage",
         ]
         for key in required_keys:
             assert key in state, f"Missing key: {key}"
@@ -123,14 +157,14 @@ class TestGraphCompilation:
 class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_domestic_route_returns_correct_keys(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Leh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Leh", confidence=0.95),
             departure_date="2026-07-15",
             trip_days=5,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -152,18 +186,18 @@ class TestOrchestratorAgent:
         assert "needs_clarification" not in result
 
     @pytest.mark.asyncio
-    async def test_self_drive_keyword_detected(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+    async def test_self_drive_intent_comes_from_structured_parser(self) -> None:
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Mumbai", confidence=0.9),
-            destination=_FieldConfidence(value="Goa", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Mumbai", confidence=0.9),
+            destination=FieldConfidence(value="Goa", confidence=0.95),
             departure_date="2026-08-01",
             trip_days=4,
-            travelers=_FieldConfidence(value="1", confidence=0.9),
+            travelers=FieldConfidence(value="1", confidence=0.9),
             budget_tier="mid",
             is_international=False,
-            self_drive_intent=False,  # LLM misses it — keyword should catch it
+            self_drive_intent=True,
             dates_confidence=0.9,
             confidence=0.8,
         )
@@ -178,15 +212,15 @@ class TestOrchestratorAgent:
         """When required fields are missing, the orchestrator calls interrupt()
         with a payload containing the clarification prompts.
         """
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
         from app.config import settings
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="unknown", confidence=0.3),
-            destination=_FieldConfidence(value=None, confidence=0.0),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="unknown", confidence=0.3),
+            destination=FieldConfidence(value=None, confidence=0.0),
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value=None, confidence=0.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -195,36 +229,43 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        call_args: list[dict] = []
+        with patch.object(settings, "max_clarification_rounds", 1):
+            _, payloads = await _drive_orchestrator(
+                agent, {"query": "plan a trip", "session_id": "s3"}
+            )
 
-        def mock_interrupt(val: dict) -> dict:
-            call_args.append(val)
-            return {}  # empty answers — loop continues until max rounds
-
-        with (
-            patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 1),
-        ):
-            await agent({"query": "plan a trip", "session_id": "s3"})
-
-        assert len(call_args) >= 1, "interrupt() was not called"
-        payload = call_args[0]
-        assert "prompts" in payload
-        fields = [p["field"] for p in payload["prompts"]]
+        assert len(payloads) >= 1, "interrupt() was not called"
+        fields = [p["field"] for p in payloads[0]["prompts"]]
         assert "destination" in fields
+
+    @pytest.mark.asyncio
+    async def test_clarification_requests_all_missing_trip_fields(self) -> None:
+        from app.agents.orchestrator import ParsedQuery
+        from app.config import settings
+
+        agent = OrchestratorAgent(llm=_make_llm(ParsedQuery()))
+
+        with patch.object(settings, "max_clarification_rounds", 1):
+            result, payloads = await _drive_orchestrator(
+                agent, {"query": "plan a trip", "session_id": "s_all_missing"}
+            )
+
+        fields = {prompt["field"] for prompt in payloads[0]["prompts"]}
+        assert fields == set(settings.clarification_fields)
+        assert result["error"] == "Required trip details are still missing."
 
     @pytest.mark.asyncio
     async def test_clarification_triggered_when_trip_days_unstated(self) -> None:
         """A query with no stated or implied duration must be clarified, never defaulted to 3."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Goa", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Goa", confidence=0.95),
             departure_date="2026-11-01",
             trip_days=None,
             trip_days_confidence=0.0,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -232,31 +273,28 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        call_args: list[dict] = []
+        result, payloads = await _drive_orchestrator(
+            agent,
+            {"query": "trip to Goa from Kolkata", "session_id": "s_days"},
+            {"trip_days": "4"},
+        )
 
-        def mock_interrupt(val: dict) -> dict:
-            call_args.append(val)
-            return {"trip_days": "4"}
-
-        with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
-            result = await agent({"query": "trip to Goa from Kolkata", "session_id": "s_days"})
-
-        assert len(call_args) >= 1, "interrupt() was not called"
-        fields = [p["field"] for p in call_args[0]["prompts"]]
+        assert len(payloads) >= 1, "interrupt() was not called"
+        fields = [p["field"] for p in payloads[0]["prompts"]]
         assert "trip_days" in fields
         assert result["dates"].trip_days == 4
 
     @pytest.mark.asyncio
     async def test_fully_specified_query_no_clarification(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Osaka", confidence=0.98),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Osaka", confidence=0.98),
             departure_date="2026-10-14",
             return_date="2026-10-17",
             trip_days=3,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=True,
             self_drive_intent=False,
@@ -271,6 +309,79 @@ class TestOrchestratorAgent:
         assert result.get("destination") == "Osaka"
         assert result.get("source") == "Kolkata"
 
+    @pytest.mark.asyncio
+    async def test_unstable_llm_parse_does_not_reask_answered_fields(self) -> None:
+        """A disagreeing second parse must not restart the clarification loop."""
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
+
+        first = ParsedQuery(
+            source=FieldConfidence(value=None, confidence=0.0),
+            destination=FieldConfidence(value="Sikkim", confidence=0.95),
+            departure_date=None,
+            trip_days=8,
+            trip_days_confidence=1.0,
+            travelers=FieldConfidence(value=None, confidence=0.0),
+            budget_tier=None,
+            dates_confidence=0.0,
+            destination_country="India",
+        )
+        drifted = first.model_copy(
+            update={"destination": FieldConfidence(value="Sikkim", confidence=0.1)}
+        )
+
+        chain = MagicMock()
+        chain.ainvoke = AsyncMock(side_effect=[first, drifted, drifted])
+        llm = MagicMock()
+        llm.with_structured_output = MagicMock(return_value=chain)
+
+        agent = OrchestratorAgent(llm=llm)
+        result, payloads = await _drive_orchestrator(
+            agent,
+            {"query": "Plan a trip to sikkim for eight days", "session_id": "s_unstable"},
+            {"source": "Kolkata", "dates": "2026-11-01", "travelers": "2", "budget": "mid"},
+        )
+
+        assert len(payloads) == 1, "all missing fields must be asked in one round"
+        assert chain.ainvoke.await_count == 1, "the parse must not re-run per round"
+        asked = [p["field"] for payload in payloads for p in payload["prompts"]]
+        assert sorted(asked) == sorted(set(asked)), f"a field was asked twice: {asked}"
+        assert result.get("source") == "Kolkata"
+        assert result.get("destination") == "Sikkim"
+        assert result.get("is_international") is False
+        assert result["dates"].trip_days == 8
+
+    @pytest.mark.asyncio
+    async def test_optional_clarification_is_opt_in(self) -> None:
+        from app.agents.orchestrator import optional_clarification_node
+        from app.config import settings
+        from app.models.user_profile import UserProfile
+
+        # Food preference prompts are folded into this node but always ask unless
+        # already configured; isolate the opt-in catalogue by pre-configuring food.
+        food_done = UserProfile(user_id="s_opt", food_preferences_configured=True)
+
+        with patch("app.services.clarification_manager.interrupt") as interrupt_mock:
+            assert (
+                await optional_clarification_node(
+                    {"session_id": "s_opt", "user_profile": food_done}
+                )
+                == {}
+            )
+        interrupt_mock.assert_not_called()
+
+        with (
+            patch.object(settings, "enable_optional_clarification", True),
+            patch(
+                "app.services.clarification_manager.interrupt",
+                return_value={"optional_pace": "relaxed", "optional_must_see": "__skip__"},
+            ),
+        ):
+            result = await optional_clarification_node(
+                {"session_id": "s_opt", "user_profile": food_done}
+            )
+
+        assert result["optional_clarification_answers"] == {"optional_pace": "relaxed"}
+
     def test_quick_extract_days(self) -> None:
         assert quick_extract_days("3 days trip to Goa") == 3
         assert quick_extract_days("10 day vacation") == 10
@@ -283,17 +394,48 @@ class TestOrchestratorAgent:
         assert quick_extract_days("summer holiday") is None
 
     @pytest.mark.asyncio
+    async def test_structured_travelers_value_is_used(self) -> None:
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
+
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Arunachal Pradesh", confidence=0.95),
+            departure_date="2026-11-11",
+            trip_days=5,
+            travelers=FieldConfidence(value="2", confidence=1.0),
+            budget_tier="mid",
+            is_international=False,
+            dates_confidence=0.95,
+        )
+        agent = OrchestratorAgent(llm=_make_llm(mock_response))
+        result = await agent(
+            {
+                "query": (
+                    "Plan a trip to Arunachal Pradesh from Kolkata for 5 days. "
+                    "We are 2 people. Start date is 11th November this year."
+                ),
+                "session_id": "s_arunachal",
+            }
+        )
+
+        assert result["travelers"] == 2
+        assert result["source"] == "Kolkata"
+        assert result["destination"] == "Arunachal Pradesh"
+        assert result["dates"].departure == date(2026, 11, 11)
+        assert result["dates"].trip_days == 5
+
+    @pytest.mark.asyncio
     async def test_deterministic_duration_override_from_query(self) -> None:
         """Query duration '6 days' deterministically overrides LLM default trip_days=3."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
         # Mock LLM returns default trip_days=3, missing the 'for 6 days' in query
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Ladakh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Ladakh", confidence=0.95),
             departure_date=None,
             trip_days=3,  # LLM failed to extract 6
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -302,16 +444,14 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        def mock_interrupt(val: dict) -> dict:
-            return {"dates": "2026-10-28"}
-
-        with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
-            result = await agent(
-                {
-                    "query": "I want to visit Ladakh from Kolkata for 6 days.",
-                    "session_id": "s_6day_test",
-                }
-            )
+        result, _ = await _drive_orchestrator(
+            agent,
+            {
+                "query": "I want to visit Ladakh from Kolkata for 6 days.",
+                "session_id": "s_6day_test",
+            },
+            {"dates": "2026-10-28"},
+        )
 
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Ladakh"
@@ -324,15 +464,15 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_clarification_interrupt_contains_input_type(self) -> None:
         """Interrupt payload prompts include input_type for frontend rendering."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
         from app.config import settings
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.9),
-            destination=_FieldConfidence(value=None, confidence=0.0),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.9),
+            destination=FieldConfidence(value=None, confidence=0.0),
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -341,20 +481,13 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        call_args: list[dict] = []
+        with patch.object(settings, "max_clarification_rounds", 1):
+            _, payloads = await _drive_orchestrator(
+                agent, {"query": "trip somewhere", "session_id": "s5"}
+            )
 
-        def mock_interrupt(val: dict) -> dict:
-            call_args.append(val)
-            return {}
-
-        with (
-            patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 1),
-        ):
-            await agent({"query": "trip somewhere", "session_id": "s5"})
-
-        assert len(call_args) >= 1
-        prompts = call_args[0]["prompts"]
+        assert len(payloads) >= 1
+        prompts = payloads[0]["prompts"]
         destination_prompt = next(p for p in prompts if p["field"] == "destination")
         assert destination_prompt["input_type"] == "text"
         dates_prompt = next((p for p in prompts if p["field"] == "dates"), None)
@@ -362,17 +495,16 @@ class TestOrchestratorAgent:
             assert dates_prompt["input_type"] == "date"
 
     @pytest.mark.asyncio
-    async def test_userprofile_prefill_skips_source_clarification(self) -> None:
-        """When UserProfile.home_city is set, source is pre-filled without interrupt."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+    async def test_missing_source_requires_clarification(self) -> None:
+        """A missing source is never inferred from a user profile."""
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        # LLM returns source as missing, but profile has home_city
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value=None, confidence=0.0),
-            destination=_FieldConfidence(value="Leh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value=None, confidence=0.0),
+            destination=FieldConfidence(value="Leh", confidence=0.95),
             departure_date="2026-07-15",
             trip_days=4,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -383,24 +515,117 @@ class TestOrchestratorAgent:
         state = {
             "query": "4 days in Leh in July",
             "session_id": "s6",
-            "user_profile": UserProfile(user_id="u1", home_city="Kolkata"),
         }
-        # Should NOT raise NodeInterrupt (source pre-filled from profile)
-        result = await agent(state)
+        result, _ = await _drive_orchestrator(agent, state, {"source": "Kolkata"})
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Leh"
+
+    def test_is_international_is_derived_not_asked(self) -> None:
+        """An unresolved international flag is derived from countries, never clarified."""
+        from app.agents.orchestrator import (
+            _compute_missing,
+            _derive_is_international,
+            FieldConfidence,
+            ParsedQuery,
+        )
+
+        parsed = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=1.0),
+            destination=FieldConfidence(value="Darjeeling", confidence=0.95),
+            trip_days=5,
+            trip_days_confidence=1.0,
+            travelers=FieldConfidence(value="3", confidence=1.0),
+            budget_tier="mid",
+            departure_date="2026-10-01",
+            dates_confidence=1.0,
+            is_international=None,
+            source_country="India",
+            destination_country="India",
+        )
+
+        missing = dict(_compute_missing(parsed))
+
+        assert "source" not in missing
+        assert "is_international" not in missing
+        assert _derive_is_international(parsed, MagicMock()) is False
+
+        crossing = parsed.model_copy(update={"destination_country": "Japan"})
+        assert _derive_is_international(crossing, MagicMock()) is True
+
+    def test_clarification_manager_wraps_request_metadata(self) -> None:
+        prompt = ClarificationPrompt(
+            field="source",
+            question="Where are you departing from?",
+            reason="Required for route planning",
+        )
+        with patch(
+            "app.services.clarification_manager.interrupt",
+            return_value={"source": "Kolkata"},
+        ) as mocked_interrupt:
+            answers = ClarificationManager.request(
+                [prompt], requester="orchestrator", round_number=2
+            )
+
+        assert answers == {"source": "Kolkata"}
+        payload = mocked_interrupt.call_args.args[0]
+        assert payload["requester"] == "orchestrator"
+        assert payload["round"] == 2
+        assert payload["request_id"]
+        assert payload["prompts"][0]["field"] == "source"
+
+    def test_clarification_manager_rejects_unsupported_field(self) -> None:
+        prompt = ClarificationPrompt(
+            field="unsupported",
+            question="What else?",
+            reason="test",
+        )
+        with pytest.raises(ValueError, match="Unsupported clarification field"):
+            ClarificationManager.request([prompt], requester="test", round_number=0)
+
+    def test_clarification_manager_allows_skippable_llm_question(self) -> None:
+        prompt = ClarificationPrompt(
+            field="optional_activity_pace",
+            question="Do you prefer a relaxed or packed itinerary?",
+            reason="Helps balance the daily schedule",
+            optional=True,
+        )
+        with patch(
+            "app.services.clarification_manager.interrupt",
+            return_value={"optional_activity_pace": "__skip__"},
+        ):
+            answers = ClarificationManager.request(
+                [prompt], requester="orchestrator", round_number=0
+            )
+
+        assert answers["optional_activity_pace"] == "__skip__"
+
+    def test_any_agent_can_request_optional_clarification(self) -> None:
+        prompt = ClarificationPrompt(
+            field="optional_accessibility_needs",
+            question="Should we account for any accessibility needs?",
+            reason="Helps select suitable activities",
+        )
+        with patch(
+            "app.services.clarification_manager.interrupt",
+            return_value={"optional_accessibility_needs": "__skip__"},
+        ):
+            answers = request_optional_clarification(
+                [prompt], requester="local_experiences", round_number=1
+            )
+
+        assert answers["optional_accessibility_needs"] == "__skip__"
 
     @pytest.mark.asyncio
     async def test_date_clarification_preserves_parsed_trip_days(self) -> None:
         """A single calendar date preserves the parsed trip duration."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Ladakh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Ladakh", confidence=0.95),
             departure_date=None,
             trip_days=5,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -409,16 +634,14 @@ class TestOrchestratorAgent:
         )
         agent = OrchestratorAgent(llm=_make_llm(mock_response))
 
-        def mock_interrupt(val: dict) -> dict:
-            return {"dates": "2026-10-14"}
-
-        with patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt):
-            result = await agent(
-                {
-                    "query": "I want to go to ladakh from kolkata for 5 days",
-                    "session_id": "s_clarify",
-                }
-            )
+        result, _ = await _drive_orchestrator(
+            agent,
+            {
+                "query": "I want to go to ladakh from kolkata for 5 days",
+                "session_id": "s_clarify",
+            },
+            {"dates": "2026-10-14"},
+        )
 
         assert result.get("source") == "Kolkata"
         assert result.get("destination") == "Ladakh"
@@ -456,42 +679,36 @@ class TestOrchestratorAgent:
         assert conf == 0.0
 
     @pytest.mark.asyncio
-    async def test_max_clarification_rounds_exhausted_proceeds_with_defaults(self) -> None:
-        """After max_clarification_rounds, orchestrator proceeds with best-effort defaults."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+    async def test_max_clarification_rounds_exhausted_stops_without_defaults(self) -> None:
+        """After max clarification rounds, required fields remain unresolved."""
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
         from app.config import settings
 
-        ambiguous_response = _ParsedQuery(
-            source_city=_FieldConfidence(value="unknown", confidence=0.1),
-            destination=_FieldConfidence(value=None, confidence=0.0),
+        ambiguous_response = ParsedQuery(
+            source=FieldConfidence(value="unknown", confidence=0.3),
+            destination=FieldConfidence(value=None, confidence=0.0),
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value=None, confidence=0.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
             dates_confidence=0.0,
-            confidence=0.1,
+            confidence=0.3,
         )
         agent = OrchestratorAgent(llm=_make_llm(ambiguous_response))
 
-        call_count = 0
-
-        def mock_interrupt(val: dict) -> dict:
-            nonlocal call_count
-            call_count += 1
-            return {}  # return empty answers — fields remain missing
-
-        with (
-            patch("app.agents.orchestrator.interrupt", side_effect=mock_interrupt),
-            patch.object(settings, "max_clarification_rounds", 2),
-        ):
-            result = await agent({"query": "plan a trip", "session_id": "s7"})
+        with patch.object(settings, "max_clarification_rounds", 2):
+            result, payloads = await _drive_orchestrator(
+                agent, {"query": "plan a trip", "session_id": "s7"}
+            )
 
         # interrupt() should have been called exactly max_clarification_rounds times
-        assert call_count == 2
-        # Orchestrator should have applied defaults and returned a usable state
-        assert "destination" in result  # may be "unknown destination" but key must exist
+        assert len(payloads) == 2
+        assert result["error"] == "Required trip details are still missing."
+        assert "destination" in result["missing_required_fields"]
+        # The single parse is reused across rounds instead of re-running the LLM.
+        assert agent._llm.with_structured_output.call_count == 1
 
 
 # ── SafetyAgent ───────────────────────────────────────────────────────────────
@@ -574,9 +791,9 @@ class TestVisaAgent:
             "is_international": True,
             "user_profile": UserProfile(
                 user_id="u1",
-                passport_country="India",
-                home_city="Mumbai",
+                nationality="India",
             ),
+            "visa_application_city": "Mumbai",
         }
         result = await agent(state)
 
@@ -594,11 +811,11 @@ class TestTransportSearchAgent:
     async def test_returns_transport_legs_raw(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        from app.agents.transport_search_agent import _HubResult, _RouteCombo
+        from app.agents.transport_search_agent import HubResult, RouteCombo
 
-        mock_hubs = _HubResult(
+        mock_hubs = HubResult(
             route_combinations=[
-                _RouteCombo(origin="KOL", destination="IXL", mode="flight"),
+                RouteCombo(origin="KOL", destination="IXL", mode="flight"),
             ]
         )
         agent = TransportSearchAgent(
@@ -623,11 +840,11 @@ class TestTransportSearchAgent:
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
         """Should use a direct flight when the LLM returns no routes."""
-        from app.agents.transport_search_agent import _HubResult
+        from app.agents.transport_search_agent import HubResult
 
         agent = TransportSearchAgent(
             tool_factory=mock_tool_factory,
-            llm=_make_llm(_HubResult(route_combinations=[])),
+            llm=_make_llm(HubResult(route_combinations=[])),
         )
         result = await agent({**base_state, "source": "", "destination": ""})
         assert "transport_legs_raw" in result
@@ -637,12 +854,12 @@ class TestTransportSearchAgent:
     async def test_dispatches_taxi_and_transit_modes(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        from app.agents.transport_search_agent import _HubResult, _RouteCombo
+        from app.agents.transport_search_agent import HubResult, RouteCombo
 
-        mock_hubs = _HubResult(
+        mock_hubs = HubResult(
             route_combinations=[
-                _RouteCombo(origin="KOL", destination="DEL", mode="train"),
-                _RouteCombo(origin="DEL", destination="LEH", mode="taxi"),
+                RouteCombo(origin="KOL", destination="DEL", mode="train"),
+                RouteCombo(origin="DEL", destination="LEH", mode="taxi"),
                 {"origin": "KOL", "destination": "LEH", "mode": "other"},
             ]
         )
@@ -844,9 +1061,9 @@ class TestStayAnalystAgent:
                 review_count=120,
             ),
         ]
-        from app.agents.stay_analyst_agent import _RankingOutput
+        from app.agents.stay_analyst_agent import RankingOutput
 
-        mock_result = _RankingOutput(
+        mock_result = RankingOutput(
             ranked_indices=[0, 1, 2],
             personalization_reasons=[
                 "Best rating for mid-range travellers.",
@@ -920,9 +1137,15 @@ class TestFoodDiscoveryAgent:
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
         agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
-        result = await agent(base_state)
+        state = {
+            **base_state,
+            "stops": {"0": TripStop(stop_id="0", name="Leh", sequence=0)},
+            "stops_by_day": {0: DayAllocation(day_index=0, date=date(2026, 7, 15), stop_id="0")},
+        }
+        result = await agent(state)
 
         assert "food_recommendations" in result
+        assert "food_recommendations_by_stop" in result
         recs = result["food_recommendations"]
         assert isinstance(recs, dict)
         # Should have at least 1 day of recommendations
@@ -933,7 +1156,16 @@ class TestFoodDiscoveryAgent:
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
         agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
-        result = await agent({**base_state, "experiences_raw": []})
+        result = await agent(
+            {
+                **base_state,
+                "experiences_raw": [],
+                "stops": {"0": TripStop(stop_id="0", name="Leh", sequence=0)},
+                "stops_by_day": {
+                    0: DayAllocation(day_index=0, date=date(2026, 7, 15), stop_id="0")
+                },
+            }
+        )
         # Should still try to find restaurants at the destination
         assert "food_recommendations" in result
 
@@ -943,24 +1175,61 @@ class TestFoodDiscoveryAgent:
     ) -> None:
         agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
         agent._places_tool.run = AsyncMock(return_value={"places": []})
-        agent._tavily_tool.run = AsyncMock(return_value={"results": []})
         profile = UserProfile(
             user_id="u1",
             preferred_cuisines=["Japanese"],
             dietary_restrictions=["vegetarian"],
-            budget_tier="luxury",
             food_preferences_configured=True,
         )
 
-        await agent({**base_state, "user_profile": profile, "experiences_raw": []})
+        await agent(
+            {
+                **base_state,
+                "user_profile": profile,
+                "budget": {"tier": "luxury"},
+                "experiences_raw": [],
+                "stops": {"0": TripStop(stop_id="0", name="Leh", sequence=0)},
+                "stops_by_day": {
+                    0: DayAllocation(day_index=0, date=date(2026, 7, 15), stop_id="0")
+                },
+            }
+        )
 
         places_query = agent._places_tool.run.await_args.kwargs["query"]
         assert "Japanese" in places_query
         assert "vegetarian" in places_query
         assert "luxury" in places_query
-        tavily_queries = [call.kwargs["query"] for call in agent._tavily_tool.run.await_args_list]
-        assert any("Japanese" in query for query in tavily_queries)
-        assert any("vegetarian" in query for query in tavily_queries)
+
+        places_call = agent._places_tool.run.await_args
+        assert places_call.kwargs["location"] == "Leh"
+        assert agent._places_tool.run.await_count == 1
+        assert not hasattr(agent, "_tavily_tool")
+
+    @pytest.mark.asyncio
+    async def test_searches_google_places_once_at_destination(
+        self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
+    ) -> None:
+        agent = FoodDiscoveryAgent(tool_factory=mock_tool_factory)
+        agent._places_tool.run = AsyncMock(return_value={"places": []})
+        wrong_address_experience = Experience(
+            name="Activity", description="An activity", address="United States"
+        )
+
+        await agent(
+            {
+                **base_state,
+                "experiences_raw": [wrong_address_experience],
+                "stops": {"0": TripStop(stop_id="0", name="Leh", sequence=0)},
+                "stops_by_day": {
+                    0: DayAllocation(day_index=0, date=date(2026, 7, 15), stop_id="0")
+                },
+            }
+        )
+
+        places_call = agent._places_tool.run.await_args
+        assert places_call.kwargs["location"] == "Leh"
+        assert "Leh" in places_call.kwargs["query"]
+        assert agent._places_tool.run.await_count == 1
 
 
 # ── get_llm factory ───────────────────────────────────────────────────────────
@@ -979,11 +1248,11 @@ class TestGetLLM:
         assert llm.metadata["session_id"] == "sess_123"
 
     def test_model_string_uses_provider_and_model(self) -> None:
-        from app.config import settings
         from app.llm import get_llm
+        from app.llm.config import llm_settings
 
         llm = get_llm("orchestrator")
-        expected = f"{settings.llm_provider}/{settings.llm_model}"
+        expected = f"{llm_settings.provider}/{llm_settings.model}"
         assert llm.model == expected
 
 
@@ -1028,7 +1297,7 @@ class TestTransportOptimizerAgent:
     ) -> None:
         from datetime import UTC, datetime
 
-        from app.agents.transport_optimizer_agent import _OptimiserOutput
+        from app.agents.transport_optimizer_agent import OptimiserOutput
         from app.models.transport import RouteLeg, RouteWaypoint, TransportRecommendation
 
         rec = TransportRecommendation(
@@ -1055,7 +1324,7 @@ class TestTransportOptimizerAgent:
                 RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
             ],
         )
-        mock_out = _OptimiserOutput(recommended=rec, alternatives=[])
+        mock_out = OptimiserOutput(recommended=rec, alternatives=[])
         from app.agents.transport_optimizer_agent import TransportOptimizerAgent
 
         agent = TransportOptimizerAgent(llm=_make_llm(mock_out))
@@ -1074,7 +1343,7 @@ class TestTransportOptimizerAgent:
     ) -> None:
         from datetime import UTC, datetime
 
-        from app.agents.transport_optimizer_agent import _OptimiserOutput
+        from app.agents.transport_optimizer_agent import OptimiserOutput
         from app.models.transport import RouteLeg, RouteWaypoint, TransportRecommendation
 
         leg = RouteLeg(
@@ -1100,7 +1369,7 @@ class TestTransportOptimizerAgent:
                 RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
             ],
         )
-        mock_out = _OptimiserOutput(recommended=rec, alternatives=[])
+        mock_out = OptimiserOutput(recommended=rec, alternatives=[])
         from app.agents.transport_optimizer_agent import TransportOptimizerAgent
 
         agent = TransportOptimizerAgent(llm=_make_llm(mock_out))
@@ -1157,11 +1426,11 @@ class TestReviewsAgent:
         ]
 
         def _mock_side_effect(schema: Any) -> MagicMock:
-            from app.agents.reviews_agent import _PlaceSummary
+            from app.agents.reviews_agent import PlaceSummary
 
             chain = MagicMock()
             chain.ainvoke = AsyncMock(
-                return_value=_PlaceSummary(
+                return_value=PlaceSummary(
                     pros=["Good location", "Clean rooms"],
                     cons=["Noisy street"],
                     sentiment="positive",
@@ -1531,8 +1800,6 @@ class TestItineraryCompilerContract:
             assert day.stay_options.options == [stay]
             assert day.stay_options.recommended is stay
             assert day.stay_options.check_in == "2:00 PM"
-            assert day.safety_briefing.advisory_level == "Exercise increased caution"
-            assert day.safety_briefing.top_scams == safety.top_scams
         assert itinerary.safety_section is safety
 
     @pytest.mark.asyncio

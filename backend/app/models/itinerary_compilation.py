@@ -16,11 +16,9 @@ from functools import cached_property
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.stops import DayAllocation, TripStop
+from app.models.stops import SINGLE_STOP_ID, DayAllocation, TripStop
 
-# Numeric stop identity for single-destination trips, which are modelled as a
-# one-stop route so both trip shapes share the same compilation path.
-SINGLE_STOP_ID = "0"
+__all__ = ["SINGLE_STOP_ID"]
 
 
 class ActivityPick(BaseModel):

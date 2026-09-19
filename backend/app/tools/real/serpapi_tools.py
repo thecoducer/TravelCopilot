@@ -34,12 +34,13 @@ class FlightSearchTool:
         departure_date: str = "",
         return_date: str = "",
         adults: int | None = None,
-        currency: str = "USD",
+        currency: str = "",
         language: str | None = None,
         **kwargs: object,
     ) -> dict[str, Any]:
         adults = settings.serpapi_default_adults if adults is None else adults
         language = language or settings.serpapi_default_language
+        currency = (currency or settings.default_currency).strip().upper()
         empty_result: dict[str, Any] = {"best_flights": [], "other_flights": []}
         if not origin or not destination or not departure_date:
             return invalid_request_result(
@@ -132,12 +133,13 @@ class HotelSearchTool:
         check_in: str = "",
         check_out: str = "",
         adults: int | None = None,
-        currency: str = "USD",
+        currency: str = "",
         language: str | None = None,
         **kwargs: object,
     ) -> dict[str, Any]:
         adults = settings.serpapi_default_hotel_adults if adults is None else adults
         language = language or settings.serpapi_default_language
+        currency = (currency or settings.default_currency).strip().upper()
         empty_result: dict[str, Any] = {"properties": []}
         if not location or not check_in or not check_out:
             return invalid_request_result(

@@ -3,10 +3,12 @@ import type { ReactNode } from "react";
 type SectionCardProps = {
   title?: string;
   subtitle?: string;
+  headerContent?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   defaultOpen?: boolean;
   collapsible?: boolean;
+  flat?: boolean;
 };
 
 const cardClass =
@@ -19,24 +21,32 @@ const subtitleClass = "mt-1 text-[0.82rem] text-muted";
 export function SectionCard({
   title,
   subtitle,
+  headerContent,
   actions,
   children,
   defaultOpen = true,
   collapsible = true,
+  flat = false,
 }: SectionCardProps) {
+  const sectionClass = flat ? "rounded-lg border border-border bg-surface" : cardClass;
+
   if (!collapsible) {
     if (!title) {
-      return <section className={`${cardClass} p-5`}>{children}</section>;
+      return <section className={`${sectionClass} p-5`}>{children}</section>;
     }
 
     return (
-      <section className={cardClass}>
+      <section className={sectionClass}>
         <header className={headerClass}>
-          <div>
-            <h3 className={titleClass}>{title}</h3>
-            {subtitle ? <p className={subtitleClass}>{subtitle}</p> : null}
-          </div>
-          {actions}
+          {headerContent ?? (
+            <>
+              <div>
+                <h3 className={titleClass}>{title}</h3>
+                {subtitle ? <p className={subtitleClass}>{subtitle}</p> : null}
+              </div>
+              {actions}
+            </>
+          )}
         </header>
         <div className="px-5 pb-5">{children}</div>
       </section>
@@ -44,13 +54,17 @@ export function SectionCard({
   }
 
   return (
-    <details className={cardClass} open={defaultOpen}>
+    <details className={sectionClass} open={defaultOpen}>
       <summary className={`${headerClass} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}>
-        <div>
-          {title ? <span className={titleClass}>{title}</span> : null}
-          {subtitle ? <p className={subtitleClass}>{subtitle}</p> : null}
-        </div>
-        {actions}
+        {headerContent ?? (
+          <>
+            <div>
+              {title ? <span className={titleClass}>{title}</span> : null}
+              {subtitle ? <p className={subtitleClass}>{subtitle}</p> : null}
+            </div>
+            {actions}
+          </>
+        )}
       </summary>
       <div className="px-5 pb-5">{children}</div>
     </details>

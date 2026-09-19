@@ -29,11 +29,11 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
+from app.models.enums import DataSource
 from app.models.reports import (
     BudgetReport,
     ReviewSummary,
     SafetyReport,
-    ScamEntry,
     SelfDriveReport,
     VisaReport,
 )
@@ -136,8 +136,14 @@ class Experience(BaseModel):
         ),
     )
     source: str = Field(
-        default="llm",
+        default=DataSource.LLM,
         description="Source of this experience (e.g. 'llm', 'google_places', 'tavily').",
+    )
+    # Coordinates straight from the model are unverified guesses; consumers must
+    # not render them as map pins without geocoding them first.
+    geo_source: DataSource = Field(
+        default=DataSource.LLM,
+        description="Provenance of lat/lng. Only PROVIDER coordinates are verified.",
     )
     rating: float | None = Field(
         default=None, ge=0.0, le=5.0, description="Visitor rating out of 5."
@@ -235,23 +241,6 @@ class TransportOptions(BaseModel):
     no_result: bool = False  # search returned nothing bookable
 
 
-class DaySafetyBriefing(BaseModel):
-    """Day-scoped safety context, copied verbatim from ``SafetyReport``."""
-
-    summary: str
-    advisory_level: str | None = None
-    seasonal_weather_summary: str | None = None
-    crowd_level: str | None = None
-    seasonal_risks: list[str] = Field(default_factory=list)
-    altitude_meters: int | None = None
-    altitude_warning: str | None = None  # e.g. "Acclimatization day — avoid exertion"
-    acclimatization_advice: str | None = None
-    top_scams: list[ScamEntry] = Field(default_factory=list)
-    emergency_contacts: dict[str, str] = Field(default_factory=dict)
-    women_safety_notes: str | None = None
-    medical_facilities: str | None = None
-
-
 # ── The day ───────────────────────────────────────────────────────────────────
 
 
@@ -274,12 +263,10 @@ class TripDays(BaseModel):
     food_options: list[FoodOptions] = Field(default_factory=list)  # one entry per meal type
     stay_options: StayOptions | None = None
     transport_options: list[TransportOptions] = Field(default_factory=list)
-    safety_briefing: DaySafetyBriefing | None = None
     review_highlights: list[ReviewSummary] = Field(default_factory=list)
 
     permits_required: list[str] = Field(default_factory=list)  # e.g. ["Inner Line Permit"]
     altitude_meters: int | None = None
-    altitude_warning: str | None = None  # e.g. "Acclimatization day — avoid exertion"
     connectivity: str | None = None  # e.g. "No BSNL signal beyond Diskit"
     drive_notes: str | None = None  # road conditions, approx drive duration
 
@@ -331,8 +318,6 @@ class Itinerary(BaseModel):
     id: str | None = None
     title: str
     source: str = Field(description="Origin or departure city for the trip")
-    destination: str  # primary / final destination label
-    destinations: list[str] = Field(default_factory=list)  # all stops in visit order
     dates: TripDates | None = None
     travelers: int = Field(default=1, ge=1)
 

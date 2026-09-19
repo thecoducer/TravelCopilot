@@ -10,33 +10,25 @@ import asyncio
 import re
 from typing import Any, NamedTuple
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage
 
-from app.llm import get_llm
+from app.agents.base import AgentClarificationMixin
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent, Sentiment
+from app.models.output.reviews_agent_output import PlaceSummary
 from app.models.reports import ReviewSummary
+from app.prompts.reviews_agent_prompts import REVIEW_SUMMARY_PROMPT
+from app.services.cache_service import TTL_PLACES, cache_service
 from app.tools.factory import ToolFactory
 
 # Keep review synthesis bounded so one slow provider call cannot stall the full graph.
 _REVIEW_SUMMARY_TIMEOUT_SECONDS = 60
 
-_SYSTEM_PROMPT = """\
-You are a travel reviewer. Given the raw place details and reviews below, synthesise a
-concise reviewer summary for a traveller.
 
-Rules:
-- ``pros`` should list 2–4 concrete positives mentioned by multiple reviewers.
-- ``cons`` should list 1–3 genuine negatives (skip if the place has near-perfect reviews).
-- ``sentiment`` must be one of: "positive" | "mixed" | "negative".
-- Keep each pro/con to a single short sentence.
-"""
-
-
-class _PlaceSummary(BaseModel):
-    pros: list[str] = Field(default_factory=list)
-    cons: list[str] = Field(default_factory=list)
-    sentiment: str = "positive"
+# Returned whenever no review text reached the model, so downstream consumers can
+# tell "no evidence" apart from "reviewers were positive".
+_NO_EVIDENCE_SUMMARY = PlaceSummary(pros=[], cons=[], sentiment=Sentiment.UNKNOWN)
 
 
 class _ReviewTarget(NamedTuple):
@@ -70,7 +62,7 @@ def _review_key(route_version: int, target: _ReviewTarget) -> str:
     return f"{route_version}:{target.stop_id or 'unknown'}:{place_key}"
 
 
-class ReviewsAgent:
+class ReviewsAgent(AgentClarificationMixin):
     """Layer 4 — Reviews and photos for selected accommodation and experiences."""
 
     def __init__(
@@ -102,17 +94,36 @@ class ReviewsAgent:
         )
 
         log.info(
-            "agent_start",
+            LogEvent.AGENT_START,
             targets=len(targets),
             mode="multi_stop_provisional" if multi_stop else "single_destination",
         )
         if not targets:
             return {"reviews_summary": {}}
 
+        # Two targets can be the same physical place (e.g. a landmark revisited on a
+        # later stop) — fetch/summarise each unique place once and reuse the result
+        # for every occurrence instead of duplicating the place_details + LLM calls.
+        physical_keys = {
+            id(target): target.place_id or _fallback_place_key(target.name, target.lat, target.lng)
+            for target in targets
+        }
+        place_tasks: dict[str, asyncio.Task[Any]] = {}
+        for target in targets:
+            physical_key = physical_keys[id(target)]
+            if physical_key not in place_tasks:
+                place_tasks[physical_key] = asyncio.create_task(
+                    self._fetch_and_summarise_place(target, log)
+                )
+
         results = await asyncio.gather(
             *[
-                self._fetch_and_summarise(t, route_version if multi_stop else None, log)
-                for t in targets
+                self._build_review_summary(
+                    target,
+                    place_tasks[physical_keys[id(target)]],
+                    route_version if multi_stop else None,
+                )
+                for target in targets
             ],
             return_exceptions=True,
         )
@@ -120,12 +131,18 @@ class ReviewsAgent:
         reviews_summary: dict[str, ReviewSummary] = {}
         for r in results:
             if isinstance(r, BaseException):
-                log.warning("review_fetch_failed", error=str(r))
+                log.warning(LogEvent.TOOL_CALL_FAILED, tool="place_details", error=str(r))
                 continue
             key, summary = r
             reviews_summary[key] = summary
 
-        log.info("agent_done", reviewed=len(reviews_summary))
+        evidenced = sum(1 for s in reviews_summary.values() if s.sentiment != Sentiment.UNKNOWN)
+        log.info(
+            LogEvent.AGENT_DONE,
+            reviewed=len(reviews_summary),
+            evidenced=evidenced,
+            without_evidence=len(reviews_summary) - evidenced,
+        )
         return {"reviews_summary": reviews_summary}
 
     @staticmethod
@@ -163,72 +180,81 @@ class ReviewsAgent:
             ]
         return targets
 
-    async def _fetch_and_summarise(
-        self, target: _ReviewTarget, route_version: int | None, log: Any
-    ) -> tuple[str, ReviewSummary]:
-        details = await self._place_details.run(place_id=target.place_id, name=target.name)
-
+    async def _fetch_and_summarise_place(
+        self, target: _ReviewTarget, log: Any
+    ) -> tuple[dict[str, Any], PlaceSummary]:
+        """Network + LLM work for one physical place, independent of how many stops visit it."""
+        physical_key = target.place_id or _fallback_place_key(target.name, target.lat, target.lng)
+        details = await cache_service.get_or_set(
+            cache_service.place_key(physical_key),
+            TTL_PLACES,
+            lambda: self._place_details.run(place_id=target.place_id, name=target.name),
+        )
         reviews_text = "\n".join(
             f"- {r.get('author', 'Guest')} ({r.get('rating', '?')}★): {r.get('text', '')}"
             for r in details.get("reviews", [])[:5]
         )
-        photos = _photo_urls(details.get("photos", []))
-        maps_url = details.get("google_maps_url")
-        rating = details.get("rating")
-        review_count = details.get("review_count")
-
-        key = _review_key(route_version, target) if route_version is not None else target.name
-        stop_id = target.stop_id if route_version is not None else None
-
         if not reviews_text:
-            return key, ReviewSummary(
-                place_name=target.name,
-                rating=rating,
-                review_count=review_count,
-                photos=photos,
-                google_maps_url=maps_url,
-                sentiment="positive",
-                stop_id=stop_id,
-                review_key=key if route_version is not None else None,
-                route_version=route_version,
+            log.info(
+                LogEvent.SECTION_UNAVAILABLE,
+                section="reviews",
+                place=target.name,
+                place_id=target.place_id or None,
+                reason="no_review_text_from_provider",
             )
+            return details, _NO_EVIDENCE_SUMMARY
 
-        chain = self._llm.with_structured_output(_PlaceSummary)
         try:
-            summary: _PlaceSummary = await asyncio.wait_for(
-                chain.ainvoke(
-                    [
-                        SystemMessage(content=_SYSTEM_PROMPT),
-                        HumanMessage(
-                            content=(
-                                f"Place: {target.name}\n"
-                                f"Rating: {rating}/5 ({review_count} reviews)\n\n"
-                                f"Reviews:\n{reviews_text}"
-                            )
-                        ),
-                    ]
+            summary: PlaceSummary = await asyncio.wait_for(
+                invoke_structured(
+                    self._llm,
+                    PlaceSummary,
+                    REVIEW_SUMMARY_PROMPT.format_messages(
+                        place_name=target.name,
+                        rating=details.get("rating"),
+                        review_count=details.get("review_count"),
+                        reviews=[HumanMessage(content=reviews_text)],
+                    ),
+                    agent=AgentName.REVIEWS,
+                    log=log,
                 ),
                 timeout=_REVIEW_SUMMARY_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             log.warning(
-                "llm_timeout", place=target.name, timeout_seconds=_REVIEW_SUMMARY_TIMEOUT_SECONDS
+                LogEvent.AGENT_DEGRADED,
+                reason="llm_timeout",
+                place=target.name,
+                timeout_seconds=_REVIEW_SUMMARY_TIMEOUT_SECONDS,
             )
-            summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")
-        except Exception as exc:
-            log.warning("llm_failed", place=target.name, error=str(exc))
-            summary = _PlaceSummary(pros=[], cons=[], sentiment="positive")
+            summary = _NO_EVIDENCE_SUMMARY
+        except StructuredOutputError as exc:
+            log.warning(LogEvent.AGENT_DEGRADED, reason=str(exc), place=target.name)
+            summary = _NO_EVIDENCE_SUMMARY
+        return details, summary
 
+    async def _build_review_summary(
+        self,
+        target: _ReviewTarget,
+        place_task: asyncio.Task[Any],
+        route_version: int | None,
+    ) -> tuple[str, ReviewSummary]:
+        """Assemble this target's (per-stop) keyed summary from the shared place fetch."""
+        details, summary = await place_task
+        photos = _photo_urls(details.get("photos", []))
+        key = _review_key(route_version, target) if route_version is not None else target.name
+        stop_id = target.stop_id if route_version is not None else None
         return key, ReviewSummary(
             place_name=target.name,
-            rating=rating,
-            review_count=review_count,
+            rating=details.get("rating"),
+            review_count=details.get("review_count"),
             pros=summary.pros,
             cons=summary.cons,
             sentiment=summary.sentiment,
             photos=photos,
-            google_maps_url=maps_url,
+            google_maps_url=details.get("google_maps_url"),
             stop_id=stop_id,
+            place_id=target.place_id or details.get("place_id") or None,
             review_key=key if route_version is not None else None,
             route_version=route_version,
         )

@@ -5,8 +5,8 @@ partial updates returned by each node; agents MUST only return the keys they
 changed rather than the full state.
 
 Annotated reducers are used for fields that multiple agents write to
-(messages, token_usage, reviews_summary, food_recommendations) so that
-LangGraph merges rather than overwrites them.
+(messages, reviews_summary, food_recommendations) so that LangGraph merges
+rather than overwrites them.
 """
 
 from __future__ import annotations
@@ -18,10 +18,8 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.clarification import ClarificationPrompt
 from app.models.itinerary import Experience, Itinerary
 from app.models.reports import (
-    AgentTokenUsage,
     BudgetReport,
     ReviewSummary,
     SafetyReport,
@@ -51,12 +49,17 @@ class TripState(TypedDict, total=False):
     user_profile: UserProfile | None
     is_international: bool  # set by OrchestratorAgent
     self_drive_intent: bool  # set by OrchestratorAgent
+    visa_application_city: str | None
+    optional_clarification_answers: dict[str, str]
 
     # ── Clarification gate (F) ─────────────────────────────────────────────
-    needs_clarification: bool  # kept for backward-compat; no longer written by orchestrator
-    clarification_prompts: list[ClarificationPrompt]  # kept for backward-compat
+    missing_required_fields: list[str]
     parse_confidence: dict[str, float]  # field → confidence score 0–1
     clarification_round: int  # number of completed clarification rounds
+    # Serialized orchestrator parse, reused across rounds so the LLM runs once per session.
+    parsed_query: dict[str, Any] | None
+    clarification_answers: dict[str, str]  # accumulated answers, keyed by field
+    pending_clarification_fields: list[str]  # fields the clarification node must ask next
 
     # ── Layer 1: Destination Intelligence ─────────────────────────────────
     safety_report: SafetyReport | None
@@ -106,9 +109,11 @@ class TripState(TypedDict, total=False):
 
     # ── Output ─────────────────────────────────────────────────────────────
     itinerary: Itinerary | None
-    token_usage: Annotated[dict[str, AgentTokenUsage], operator.or_]
     messages: Annotated[list[BaseMessage], add_messages]
-    error: str | None
+    # Concurrent Layer 1/2 nodes can independently set this in the same superstep;
+    # a reducer (keep the first error) avoids InvalidUpdateError from the unguarded
+    # last-value-wins default while keeping the value a plain string.
+    error: Annotated[str | None, lambda left, right: left or right]
 
 
 class TripStateModel(BaseModel):
@@ -136,10 +141,13 @@ class TripStateModel(BaseModel):
     is_international: bool = False
     self_drive_intent: bool = False
 
-    needs_clarification: bool = False
-    clarification_prompts: list[ClarificationPrompt] = Field(default_factory=list)
+    missing_required_fields: list[str] = Field(default_factory=list)
     parse_confidence: dict[str, float] = Field(default_factory=dict)
     clarification_round: int = 0
+    parsed_query: dict[str, Any] | None = None
+    clarification_answers: dict[str, str] = Field(default_factory=dict)
+    pending_clarification_fields: list[str] = Field(default_factory=list)
+    optional_clarification_answers: dict[str, str] = Field(default_factory=dict)
 
     safety_report: SafetyReport | None = None
     visa_report: VisaReport | None = None
@@ -179,7 +187,6 @@ class TripStateModel(BaseModel):
     budget_report: BudgetReport | None = None
 
     itinerary: Itinerary | None = None
-    token_usage: dict[str, AgentTokenUsage] = Field(default_factory=dict)
     messages: list[BaseMessage] = Field(default_factory=list)
     error: str | None = None
 

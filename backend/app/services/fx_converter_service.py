@@ -7,7 +7,7 @@ from typing import Any
 
 import structlog
 
-from app.config import TOOL_RESPONSE_ERROR_KEY
+from app.config import TOOL_RESPONSE_ERROR_KEY, settings
 from app.models.reports import FxRateEntry
 from app.tools.factory import ToolFactory
 
@@ -19,18 +19,18 @@ class FxConverter:
 
     def __init__(
         self,
-        target_currency: str = "INR",
+        target_currency: str = "",
         fx_tool: Any | None = None,
         tool_factory: ToolFactory | None = None,
     ) -> None:
         """Initialise FxConverter.
 
         Args:
-            target_currency: Default target/quote currency for conversions.
+            target_currency: Default target/quote currency; falls back to the configured default.
             fx_tool: Pre-instantiated FX tool, such as a real adapter or test double.
             tool_factory: ToolFactory instance to resolve the FX tool if `fx_tool` is not provided.
         """
-        self.target_currency = target_currency
+        self.target_currency = (target_currency or settings.default_currency).strip().upper()
         if fx_tool is not None:
             self._fx_tool = fx_tool
         else:

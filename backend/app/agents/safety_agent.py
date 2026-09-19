@@ -12,37 +12,22 @@ Inputs consumed from state:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
-from app.llm import get_llm
+from app.agents.base import AgentClarificationMixin
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent, SectionStatus
 from app.models.reports import SafetyReport
+from app.prompts.safety_agent_prompts import SAFETY_REPORT_PROMPT
+from app.services.cache_service import TTL_TAVILY, cache_service
 from app.tools.factory import ToolFactory
 
-_SYSTEM_PROMPT = """\
-You are a travel safety analyst. Based on the search results and venue list below, produce a
-structured safety report for travellers visiting the given destination.
 
-Rules:
-- ``crowd_level`` must be exactly one of: Low, Moderate, High, Extreme. Include concrete
-    ``crowd_notes`` for the travel month.
-- Set ``altitude_meters`` only for destinations above 1500 m and provide ``acclimatization_advice``
-    when relevant. Include concrete ``seasonal_risks`` and ``seasonal_weather_summary``.
-- ``advisory_level`` should reflect official government guidance: "Exercise normal caution" |
-  "Exercise increased caution" | "Reconsider travel" | "Do not travel".
-- ``top_scams`` should include 2–5 specific, actionable scam entries with how-to-avoid advice.
-  Where a scam is associated with a venue or neighbourhood listed in the traveller's actual
-  itinerary (see Venues section), mention that venue by name so the warning is immediately useful.
-- ``safe_areas`` should name specific neighbourhoods or districts travellers can rely on.
-- ``emergency_contacts`` must include police, ambulance, and tourist helpline numbers if available.
-- ``women_safety_notes`` and ``medical_facilities`` should only be populated with concrete, useful
-  information — leave null if nothing specific is known.
-"""
-
-
-class SafetyAgent:
+class SafetyAgent(AgentClarificationMixin):
     """Layer 4 — Destination context, scam warnings, and emergency contacts.
 
     Runs after FoodDiscoveryAgent so ``experiences_raw`` and ``food_recommendations``
@@ -70,15 +55,15 @@ class SafetyAgent:
 
         import asyncio
 
+        # Two broad queries instead of five narrow ones: the LLM extracts each
+        # sub-topic (scams, crowds, altitude, seasonal) from the combined results.
         queries = [
-            f"tourist scams {destination} 2026 how to avoid",
-            f"safety tips {destination} travel advisory",
-            f"{destination} crowded {month} {year} tourist season",
-            f"{destination} altitude elevation risks acclimatization",
-            f"{destination} seasonal risks weather {month} travel advisory",
+            f"tourist scams and safety tips {destination} travel advisory 2026",
+            f"{destination} {month} {year} crowd levels altitude elevation risks"
+            " seasonal weather travel advisory",
         ]
         results = await asyncio.gather(
-            *[self._tavily.run(query=q, destination=destination) for q in queries],
+            *[self._cached_tavily_search(q, destination, month) for q in queries],
             return_exceptions=True,
         )
 
@@ -115,28 +100,42 @@ class SafetyAgent:
             if food_names:
                 venue_section += "Food outlets: " + ", ".join(food_names[:20]) + "\n"
 
-        chain = self._llm.with_structured_output(SafetyReport)
         try:
-            report: SafetyReport = await chain.ainvoke(
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Destination: {destination}\n\n"
-                            f"Search results:\n{context}"
-                            f"{venue_section}"
-                        )
-                    ),
-                ]
+            report = await invoke_structured(
+                self._llm,
+                SafetyReport,
+                SAFETY_REPORT_PROMPT.format_messages(
+                    destination=destination,
+                    search_results=[HumanMessage(content=context)],
+                    venue_context=([HumanMessage(content=venue_section)] if venue_section else []),
+                ),
+                agent=AgentName.SAFETY,
+                session_id=session_id,
+                log=log,
             )
-        except Exception as exc:
-            log.error("llm_failed", error=str(exc))
+            report = report.model_copy(update={"status": SectionStatus.POPULATED})
+        except StructuredOutputError as exc:
+            log.error(
+                LogEvent.AGENT_DEGRADED,
+                section="safety",
+                truncated=exc.truncated,
+                error=str(exc),
+            )
+            # No placeholder prose: a caller must be able to tell this section apart
+            # from one that genuinely had nothing to report.
             report = SafetyReport(
                 destination=destination,
-                advisory_level="Exercise normal caution",
                 travel_month=month,
-                seasonal_weather_summary="Data unavailable",
+                status=SectionStatus.UNAVAILABLE,
             )
 
-        log.info("agent_done", scams_found=len(report.top_scams))
+        log.info(LogEvent.AGENT_DONE, scams_found=len(report.top_scams), status=report.status)
         return {"safety_report": report}
+
+    async def _cached_tavily_search(self, query: str, destination: str, month: str) -> Any:
+        """Tavily results rarely change within a day — cache by destination/month/query."""
+        query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
+        key = cache_service.tavily_key(destination, month, query_hash)
+        return await cache_service.get_or_set(
+            key, TTL_TAVILY, lambda: self._tavily.run(query=query, destination=destination)
+        )

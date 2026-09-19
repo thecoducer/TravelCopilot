@@ -1,9 +1,10 @@
 import type { TripDays } from "@/lib/types";
+import { formatPlaceCategory } from "@/lib/place-categories";
 import Image from "next/image";
+import { memo } from "react";
 
 type ItineraryDayCardProps = {
   day: TripDays;
-  dayNumbers?: number[];
   /** Multi-night stays repeat the same hotel each day; render it only once per stop. */
   showStay?: boolean;
 };
@@ -36,40 +37,39 @@ function OptionImage({ src, alt }: { src?: string; alt: string }) {
   if (!src) return null;
   return (
     <Image
-      className="h-[82px] w-24 shrink-0 object-cover"
+      className="h-[82px] w-24 shrink-0 rounded-md border border-border object-cover"
       src={src}
       alt={alt}
       width={96}
       height={82}
+      sizes="96px"
+      loading="lazy"
+      decoding="async"
       unoptimized
     />
   );
 }
 
-const slotLabelClass = "text-[0.72rem] font-bold uppercase tracking-wide text-faint";
+const slotLabelClass = "text-[0.72rem] font-bold uppercase tracking-wide text-chat-blue";
 const sectionHeadingClass = "font-display text-[0.8rem] font-bold uppercase tracking-[0.14em] text-muted";
 const noteClass = "text-xs text-faint";
 const reasonClass = "text-xs text-muted";
 const linkClass = "text-xs font-semibold text-chat-blue hover:text-chat-blue-hover hover:underline";
 
 /** Renders the route, activities, food, and stay recommendations for one day. */
-export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay = true }: ItineraryDayCardProps) {
-  const dayLabel = dayNumbers.length > 1
-    ? `Day ${dayNumbers.slice(0, -1).join(", ")} and ${dayNumbers.at(-1)}`
-    : `Day ${day.day_number}`;
-
+function ItineraryDayCardContent({ day, showStay = true }: ItineraryDayCardProps) {
   return (
     <article className="flex flex-col gap-7 pb-6 pt-6">
       <header className="flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
         <h5 className="font-display text-[clamp(1.35rem,2.5vw,1.85rem)] font-bold leading-tight tracking-tight text-fg">
-          {dayLabel} — {day.location}
+          Day {day.day_number} — {day.location}
         </h5>
         <time className="font-mono text-base font-medium tabular-nums text-fg sm:text-lg">
           {formatDate(day.date)}
         </time>
       </header>
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[0.82rem] leading-relaxed text-muted sm:text-[0.9rem]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[0.82rem] leading-relaxed text-meta-gold sm:text-[0.9rem]">
         {day.is_travel_day ? <Badge>Travel day</Badge> : null}
         {day.is_checkin_day ? (
           <Badge>Check-in · {formatDate(day.stay_options?.check_in) ?? formatDate(day.date)}</Badge>
@@ -77,15 +77,8 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
         {day.is_checkout_day ? (
           <Badge>Check-out · {formatDate(day.stay_options?.check_out) ?? formatDate(day.date)}</Badge>
         ) : null}
-        {day.estimated_cost ? (
-          <Badge>
-            ~{Math.round(day.estimated_cost).toLocaleString()} {day.currency_code}
-          </Badge>
-        ) : null}
       </div>
       {day.summary ? <p className="text-sm leading-relaxed text-muted">{day.summary}</p> : null}
-      {day.altitude_warning ? <p className="text-sm text-danger">{day.altitude_warning}</p> : null}
-
       {day.transport_options.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h6 className={sectionHeadingClass}>How you can get there</h6>
@@ -126,13 +119,12 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
                   >
                     <OptionImage src={option.place.photos?.[0]} alt={option.place.name} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
                         <h6 className="text-[0.92rem] font-semibold text-fg">{option.place.name}</h6>
-                        <span className="font-mono text-xs font-bold text-faint">#{option.rank}</span>
                       </div>
                       <p className="text-sm leading-relaxed text-muted">{option.place.description}</p>
                       <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted">
-                        <span>{option.place.category}</span>
+                        <span>{formatPlaceCategory(option.place.category)}</span>
                         <span>{option.place.price_range}</span>
                         {option.place.rating ? <span>★ {option.place.rating.toFixed(1)}</span> : null}
                         {formatDuration(option.estimated_duration_minutes ?? option.place.duration_minutes) ? (
@@ -172,7 +164,7 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {day.food_options.map((meal) => (
               <div key={meal.meal_type} className="flex flex-col gap-1">
-                <h6 className="text-[0.85rem] font-semibold capitalize text-fg">{meal.meal_type}</h6>
+                <h6 className="text-[0.78rem] font-bold uppercase tracking-wide text-chat-blue">{meal.meal_type}</h6>
                 {meal.notes ? <p className="text-xs text-muted">{meal.notes}</p> : null}
                 {meal.options.map((venue) => (
                   <article key={venue.name} className="flex gap-3 border-t border-border py-2 first:border-t-0">
@@ -206,7 +198,9 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
                 <div className="min-w-0">
                   <strong className="text-sm text-fg">{stay.name}</strong>
                   <p className="text-xs text-muted">
-                    {stay.price_per_night?.toLocaleString()} {stay.currency_code}/night
+                    {stay.price_per_night
+                      ? `${stay.price_per_night.toLocaleString()} ${stay.currency_code ?? ""}/night`
+                      : "Price not found — check on web for price"}
                     {stay.rating ? ` · ★ ${stay.rating.toFixed(1)}` : ""}
                   </p>
                   <small className="block text-xs text-faint">{stay.address}</small>
@@ -227,9 +221,11 @@ export function ItineraryDayCard({ day, dayNumbers = [day.day_number], showStay 
   );
 }
 
+export const ItineraryDayCard = memo(ItineraryDayCardContent);
+
 function Badge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-3 font-medium text-muted before:size-1 before:rounded-full before:bg-accent/60 first:before:hidden">
+    <span className="inline-flex items-center gap-3 font-medium text-meta-gold before:size-1 before:rounded-full before:bg-meta-gold/60 first:before:hidden">
       {children}
     </span>
   );

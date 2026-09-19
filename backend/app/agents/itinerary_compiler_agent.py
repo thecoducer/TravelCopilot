@@ -31,60 +31,53 @@ Pipeline:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
+from app.agents.base import AgentClarificationMixin
 from app.config import settings
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
+from app.models.enums import AgentName, LogEvent
 from app.models.itinerary import MEAL_TYPES, SLOT_NAMES, Experience, TripDays
-from app.models.itinerary_compilation import DayPlan, RoutePlan, TripNarrative
+from app.models.itinerary_compilation import DayPlan, FoodPick, RoutePlan, TripNarrative
 from app.models.stops import DayAllocation, TripStop
+from app.prompts.itinerary_compiler_agent_prompts import (
+    DAY_PLAN_CHAT_PROMPT,
+    NARRATIVE_CHAT_PROMPT,
+)
 from app.services.itinerary_compiler_service import ItineraryCompilerService, MissingTripDatesError
 from app.tools.factory import ToolFactory
 
-_DAY_PLAN_PROMPT = """\
-You are assembling {day_count} day(s) at {stop_name} for a traveller.
 
-You are a SELECTOR and an EXPLAINER, never a source of facts. Research agents have
-already found every place and venue worth considering. Your only job is to choose
-among the candidates below, spread them across the days, and say why.
+def _fallback_day_plan(day_count: int, food_candidates: list[str]) -> DayPlan:
+    """Assign meals round-robin when the planning call fails.
 
-You MUST:
-- Pick up to {max_activities_per_day} ranked activities per day, spread across
-  morning/afternoon/evening.
-- Pick one food venue per meal type ({meal_types}) per day.
-- Copy ``experience_name`` and ``venue_name`` EXACTLY from the candidate lists.
-  Anything that does not match verbatim is discarded before the user sees it.
-- Use the ``day_number`` values given in the candidate list — never renumber days.
-- Ground ``recommendation_reason`` and ``best_for`` only in the candidate details
-  and the traveller's stated preferences.
-
-You MUST NOT:
-- Invent a place, venue, hotel, operator or route that is not listed.
-- State or change any price, rating, distance, duration, opening time or date.
-- Comment on safety, visas, permits, budget or bookings — other agents own those,
-  and their findings are attached to the itinerary separately.
-"""
-
-_NARRATIVE_PROMPT = """\
-You write short framing text for an itinerary that is already fully planned.
-
-- ``title``: evocative, names the destination(s) and the day count.
-- ``day_summaries``: one sentence per day, describing that day using only the places
-  already scheduled for it in the input.
-- ``packing_tips``: up to 6 short items, derived strictly from the season, weather
-  and altitude facts supplied in the input. Omit entirely if no such facts are given.
-
-Never introduce a place, price, rating, time, route or warning that is absent from
-the input. Never give safety, visa, budget or booking advice.
-"""
+    Venue selection is a lookup, not a judgement, so discarding an already-fetched
+    venue pool because the activity plan failed leaves days with no meals at all.
+    """
+    if not food_candidates:
+        return DayPlan()
+    picks: list[FoodPick] = []
+    cursor = 0
+    for day_number in range(1, day_count + 1):
+        for meal_type in MEAL_TYPES:
+            picks.append(
+                FoodPick(
+                    day_number=day_number,
+                    meal_type=meal_type,
+                    venue_name=food_candidates[cursor % len(food_candidates)],
+                )
+            )
+            cursor += 1
+    return DayPlan(food=picks)
 
 
-class ItineraryCompilerAgent:
+class ItineraryCompilerAgent(AgentClarificationMixin):
     """Layer 5 — absorbs upstream agent output into a day-wise itinerary.
 
     Owns the LLM calls and the tool-calling quality-gate loop. Every deterministic
@@ -149,13 +142,19 @@ class ItineraryCompilerAgent:
     async def _compile_all_stops(
         self, route: RoutePlan, state: dict[str, Any], log: Any
     ) -> list[TripDays]:
-        """Compile every stop that has at least one allocated day."""
-        days: list[TripDays] = []
-        for stop in route.stops:
-            allocations = route.allocations_for(stop.stop_id)
-            if allocations:
-                days.extend(await self._compile_stop_days(stop, allocations, route, state, log))
-        return days
+        """Compile every stop that has at least one allocated day, in parallel."""
+        stops_with_days = [
+            (stop, allocations)
+            for stop in route.stops
+            if (allocations := route.allocations_for(stop.stop_id))
+        ]
+        results = await asyncio.gather(
+            *(
+                self._compile_stop_days(stop, allocations, route, state, log)
+                for stop, allocations in stops_with_days
+            )
+        )
+        return [day for stop_days in results for day in stop_days]
 
     async def _compile_stop_days(
         self,
@@ -238,33 +237,32 @@ class ItineraryCompilerAgent:
         if not any(c["experiences"] for c in day_candidates) and not food_candidates:
             return DayPlan()
 
-        chain = self._llm.with_structured_output(DayPlan)
         try:
-            return cast(
+            return await invoke_structured(
+                self._llm,
                 DayPlan,
-                await chain.ainvoke(
-                    [
-                        SystemMessage(
-                            content=_DAY_PLAN_PROMPT.format(
-                                day_count=day_count,
-                                stop_name=stop.name,
-                                max_activities_per_day=settings.itinerary_max_activities_per_day,
-                                meal_types="/".join(MEAL_TYPES),
-                            )
-                        ),
-                        HumanMessage(
-                            content=(
-                                f"Candidate experiences by day:\n"
-                                f"{json.dumps(day_candidates, indent=2)}\n\n"
-                                f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
-                            )
-                        ),
-                    ]
+                DAY_PLAN_CHAT_PROMPT.format_messages(
+                    day_count=day_count,
+                    stop_name=stop.name,
+                    max_activities_per_day=settings.itinerary_max_activities_per_day,
+                    meal_types="/".join(MEAL_TYPES),
+                    day_candidates=json.dumps(day_candidates, indent=2),
+                    food_candidates=json.dumps(food_candidates, indent=2),
                 ),
+                agent=AgentName.ITINERARY_COMPILER,
+                log=log,
             )
-        except Exception as exc:
-            log.warning("day_plan_llm_failed", stop_id=stop.stop_id, error=str(exc))
-            return DayPlan()
+        except StructuredOutputError as exc:
+            log.warning(
+                LogEvent.AGENT_DEGRADED,
+                section="day_plan",
+                stop_id=stop.stop_id,
+                truncated=exc.truncated,
+                error=str(exc),
+            )
+            # Food assignment needs no reasoning, so it must survive a failed plan
+            # rather than leaving the stop with no meals at all.
+            return _fallback_day_plan(day_count, food_candidates)
 
     # ── Deterministic quality gate (tool calls stay here; logic lives in the service) ──
 
@@ -298,10 +296,9 @@ class ItineraryCompilerAgent:
     def _enrich(
         self, days: list[TripDays], route: RoutePlan, state: dict[str, Any]
     ) -> tuple[Any, list[TripDays]]:
-        """Copy stays, transport, safety, budget and reviews from upstream state onto each day."""
+        """Copy stays, transport, budget and reviews from upstream state onto each day."""
         days = self._compiler.inject_stays(days, state)
         transport_section, days = self._compiler.inject_transport(days, state)
-        days = self._compiler.inject_safety(days, state.get("safety_report"), route.stops_by_id)
         days = self._compiler.inject_budget(days, state.get("budget_report"))
         days = self._compiler.inject_reviews(days, state.get("reviews_summary", {}))
         return transport_section, days
@@ -313,17 +310,18 @@ class ItineraryCompilerAgent:
     ) -> TripNarrative:
         if not days:
             return TripNarrative()
-        chain = self._llm.with_structured_output(TripNarrative)
         try:
-            return cast(
+            return await invoke_structured(
+                self._llm,
                 TripNarrative,
-                await chain.ainvoke(
-                    [
-                        SystemMessage(content=_NARRATIVE_PROMPT),
-                        HumanMessage(content=self._compiler.build_narrative_context(state, days)),
+                NARRATIVE_CHAT_PROMPT.format_messages(
+                    narrative_context=[
+                        HumanMessage(content=self._compiler.build_narrative_context(state, days))
                     ]
                 ),
+                agent=AgentName.ITINERARY_COMPILER,
+                log=log,
             )
-        except Exception as exc:
-            log.warning("narrative_failed", error=str(exc))
+        except StructuredOutputError as exc:
+            log.warning(LogEvent.AGENT_DEGRADED, section="narrative", error=str(exc))
             return TripNarrative()

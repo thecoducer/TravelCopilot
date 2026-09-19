@@ -1,9 +1,4 @@
-"""PDF generation service using WeasyPrint + Jinja2.
-
-``render_pdf(itinerary_data)`` renders the itinerary.html.j2 template and
-converts it to PDF bytes via WeasyPrint.  Falls back to a plain-text stub
-if WeasyPrint is not installed (avoids crashing the API in dev environments).
-"""
+"""PDF generation service using WeasyPrint + Jinja2."""
 
 from __future__ import annotations
 
@@ -14,7 +9,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-_TEMPLATE_DIR = pathlib.Path(__file__).parent / "templates"
+_TEMPLATE_DIR = pathlib.Path(__file__).parent.parent / "templates"
 
 
 async def render_pdf(itinerary_data: dict[str, Any] | str) -> bytes:
@@ -46,11 +41,8 @@ def _render_html(data: dict[str, Any]) -> str:
         )
         template = env.get_template("itinerary.html.j2")
         return template.render(**data)
-    except ImportError:
-        # Jinja2 not installed — render minimal HTML
-        title = data.get("title", "Itinerary")
-        dest = data.get("destination", "")
-        return f"<html><body><h1>{title}</h1><p>{dest}</p></body></html>"
+    except ImportError as exc:
+        raise RuntimeError("Jinja2 is required for itinerary PDF generation") from exc
 
 
 def _html_to_pdf(html: str) -> bytes:
@@ -59,29 +51,9 @@ def _html_to_pdf(html: str) -> bytes:
         from weasyprint import HTML
 
         return bytes(HTML(string=html).write_pdf())
-    except ImportError:
+    except ImportError as exc:
         logger.warning(
             "weasyprint_not_installed",
             hint="pip install weasyprint",
         )
-        # Return a minimal valid PDF stub (1-page blank PDF)
-        return _minimal_pdf_stub()
-
-
-def _minimal_pdf_stub() -> bytes:
-    """Return the smallest valid PDF as a stub when WeasyPrint is absent."""
-    # Minimal PDF 1.4 with a single blank page
-    stub = (
-        b"%PDF-1.4\n"
-        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
-        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n"
-        b"xref\n0 4\n"
-        b"0000000000 65535 f \n"
-        b"0000000009 00000 n \n"
-        b"0000000052 00000 n \n"
-        b"0000000101 00000 n \n"
-        b"trailer<</Size 4/Root 1 0 R>>\n"
-        b"startxref\n173\n%%EOF"
-    )
-    return stub
+        raise RuntimeError("WeasyPrint is required for itinerary PDF generation") from exc

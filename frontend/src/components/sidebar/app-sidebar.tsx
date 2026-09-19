@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
   LogOut,
+  History,
   MessageSquarePlus,
   MoreHorizontal,
   Moon,
   PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Search,
   Sun,
@@ -24,14 +26,24 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/hooks/use-theme";
 import { TravelCopilotLogo } from "@/components/brand/travel-copilot-logo";
 
-export function AppSidebar({ onHide }: { onHide: () => void }) {
+export function AppSidebar({
+  collapsed = false,
+  onHide,
+  onShow,
+}: {
+  collapsed?: boolean;
+  onHide: () => void;
+  onShow: () => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
-  const { sessions, refresh } = useSessions();
+  const { sessions, refresh, removeSession } = useSessions();
   const { username, clearUsername } = useCurrentUser();
   const { theme, toggleTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const activeSessionId = pathname?.startsWith("/c/") ? pathname.slice(3) : null;
 
@@ -61,13 +73,21 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
     await refresh();
   }
 
-  async function handleDelete(session: SessionSummary) {
-    if (!username || !window.confirm("Delete this chat?")) return;
-    await deleteSession(username, session.session_id);
-    if (activeSessionId === session.session_id) {
+  async function handleDelete() {
+    if (!username || !deleteTarget) return;
+    try {
+      await deleteSession(username, deleteTarget.session_id);
+    } catch {
+      setDeleteError("We could not delete this chat. Please try again.");
+      return;
+    }
+    const deletedSessionId = deleteTarget.session_id;
+    removeSession(deletedSessionId);
+    setDeleteTarget(null);
+    setDeleteError(null);
+    if (activeSessionId === deletedSessionId) {
       router.push("/");
     }
-    await refresh();
   }
 
   function startNewChat() {
@@ -84,8 +104,51 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
     router.push(`/c/${sessionId}`);
   }
 
+  if (collapsed) {
+    return (
+      <aside className="group relative flex h-dvh w-14 shrink-0 flex-col items-center border-r border-white/[0.08] bg-black py-4 text-white">
+        <div className="relative mb-5 size-9">
+          <TravelCopilotLogo
+            showWordmark={false}
+            className="absolute inset-0 transition-[opacity,transform] duration-300 ease-out group-hover:scale-95 group-hover:opacity-0"
+          />
+          <RailButton
+            icon={<PanelLeftOpen size={18} />}
+            label="Expand sidebar"
+            onClick={onShow}
+            className="absolute inset-0 opacity-0 transition-[opacity,transform] duration-300 ease-out group-hover:scale-100 group-hover:opacity-100"
+          />
+        </div>
+        <div className="flex flex-col items-center gap-3">
+          <RailButton icon={<MessageSquarePlus size={18} />} label="New chat" onClick={startNewChat} />
+          <RailButton icon={<History size={18} />} label="Recent chats" onClick={onShow} />
+          <RailButton icon={<Search size={18} />} label="Search chats" onClick={() => setSearchOpen(true)} />
+        </div>
+        <div className="mt-auto flex flex-col items-center gap-3">
+          <button
+            className="inline-flex size-7 items-center justify-center rounded-full bg-[#9b59b6] text-[0.65rem] font-bold text-white transition-transform hover:scale-105"
+            onClick={() => router.push("/profile")}
+            aria-label="Open settings"
+            title="Open settings"
+          >
+            {username ? username.charAt(0).toUpperCase() : <User size={14} />}
+          </button>
+        </div>
+        {searchOpen ? (
+          <SearchDialog
+            query={query}
+            results={filtered}
+            onQueryChange={setQuery}
+            onClose={() => setSearchOpen(false)}
+            onOpen={openSession}
+          />
+        ) : null}
+      </aside>
+    );
+  }
+
   return (
-    <aside className="relative flex h-dvh w-[var(--sidebar-width)] flex-col border-r border-white/[0.08] bg-[#141719] text-white">
+    <aside className="relative flex h-dvh w-[var(--sidebar-width)] shrink-0 flex-col border-r border-white/[0.08] bg-black text-white">
       <div className="flex items-center justify-between px-4 pb-4 pt-5">
         <TravelCopilotLogo className="[&>span]:text-white" />
         <div className="flex items-center gap-1">
@@ -107,9 +170,9 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
           </button>
         </div>
       </div>
-      <div className="px-3 pb-4">
+      <div className="px-3 pb-4 pt-3">
         <button
-          className="group inline-flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/[0.13] px-3 py-2.5 text-left text-[0.85rem] font-semibold text-white shadow-sm transition-colors hover:bg-white/[0.19]"
+          className="group inline-flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[0.85rem] font-semibold text-white transition-colors hover:bg-white/[0.1]"
           onClick={startNewChat}
         >
           <span className="inline-flex size-6 items-center justify-center rounded-md bg-white text-black transition-transform group-hover:scale-105">
@@ -136,7 +199,10 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
                     active={activeSessionId === session.session_id}
                     onOpen={() => router.push(`/c/${session.session_id}`)}
                     onRename={() => handleRename(session)}
-                    onDelete={() => handleDelete(session)}
+                    onDelete={() => {
+                      setDeleteError(null);
+                      setDeleteTarget(session);
+                    }}
                   />
                 ))}
               </ul>
@@ -149,7 +215,7 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
         <button
           className="flex flex-1 items-center gap-2 rounded-lg p-2 text-left hover:bg-white/10"
           onClick={() => router.push("/profile")}
-          aria-label="Open profile"
+          aria-label="Open settings"
         >
           <span className="inline-flex size-7 items-center justify-center rounded-full bg-[#9b59b6] text-[0.72rem] font-bold text-white">
             {username ? username.charAt(0).toUpperCase() : <User size={16} />}
@@ -181,7 +247,41 @@ export function AppSidebar({ onHide }: { onHide: () => void }) {
           onOpen={openSession}
         />
       ) : null}
+      {deleteTarget ? (
+        <DeleteDialog
+          session={deleteTarget}
+          error={deleteError}
+          onClose={() => {
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }}
+          onConfirm={() => void handleDelete()}
+        />
+      ) : null}
     </aside>
+  );
+}
+
+function RailButton({
+  icon,
+  label,
+  onClick,
+  className,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      className={`inline-flex size-9 items-center justify-center rounded-lg text-white/75 transition-colors hover:bg-white/10 hover:text-white ${className ?? ""}`}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {icon}
+    </button>
   );
 }
 
@@ -201,7 +301,7 @@ function SearchDialog({
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 px-4 pt-[12vh]" onMouseDown={onClose}>
       <div
-        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-[#1e2226] shadow-2xl"
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-label="Search chats"
@@ -322,5 +422,54 @@ function SessionRow({
         ) : null}
       </div>
     </li>
+  );
+}
+
+function DeleteDialog({
+  session,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  session: SessionSummary;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 px-4 pt-[12vh]" onMouseDown={onClose}>
+      <div
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-chat-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-4">
+          <h2 id="delete-chat-title" className="text-[0.95rem] font-semibold text-white">Delete chat?</h2>
+          <button
+            className="inline-flex size-7 items-center justify-center rounded-md text-white/50 hover:bg-white/10 hover:text-white"
+            onClick={onClose}
+            aria-label="Close delete dialog"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div className="space-y-5 p-5">
+          <p className="text-sm leading-6 text-white/65">
+            “{session.title}” and its messages, itinerary, and usage data will be permanently deleted.
+          </p>
+          {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <button className="rounded-lg px-4 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="rounded-lg bg-red-500/90 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500" onClick={onConfirm}>
+              Delete chat
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

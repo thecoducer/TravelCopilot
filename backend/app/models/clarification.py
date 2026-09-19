@@ -19,3 +19,11 @@ class ClarificationPrompt(BaseModel):
     input_type: str = "text"  # "text" | "date" | "number" | "select"
     options: list[str] = Field(default_factory=list)  # for "select" only
     extracted_value: str | None = None  # LLM's low-confidence guess (shown as placeholder)
+    optional: bool = False
+    skip_label: str = "Skip"
+
+
+class OptionalClarificationOutput(BaseModel):
+    """Structured optional questions any agent may propose."""
+
+    prompts: list[ClarificationPrompt] = Field(default_factory=list)

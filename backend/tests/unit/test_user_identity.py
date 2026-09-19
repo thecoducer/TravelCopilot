@@ -64,11 +64,9 @@ class TestPhotoHelpers:
 
 
 class TestModelExtensions:
-    def test_user_profile_has_username_and_budget(self) -> None:
-        profile = UserProfile(user_id="u", username="alice", total_budget=1500, per_day_budget=200)
+    def test_user_profile_has_username_without_trip_budget(self) -> None:
+        profile = UserProfile(user_id="u", username="alice")
         assert profile.username == "alice"
-        assert profile.total_budget == 1500
-        assert profile.per_day_budget == 200
 
     def test_plan_request_defaults_to_new_mode(self) -> None:
         assert PlanRequest(query="a trip please").mode == "new"

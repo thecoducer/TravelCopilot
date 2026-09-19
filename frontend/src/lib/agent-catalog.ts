@@ -1,8 +1,9 @@
 /**
- * Static catalog of graph nodes shown to the user, and the phase grouping used
- * to infer which agents are currently active (the backend does not yet emit a
- * per-node `agent_start`, so "in progress" is derived from graph topology plus
- * the `agent_done` events actually received).
+ * Static catalog of graph nodes shown to the user: labels, descriptions, and
+ * the canonical display order. Which agents are active/done comes from SSE
+ * `agent_start`/`agent_done` events (see use-trip-planner.ts), not this file
+ * — agents the backend skips (e.g. visa, self_drive_search) never post
+ * `agent_start` and so never appear.
  */
 
 export type AgentInfo = {
@@ -13,7 +14,7 @@ export type AgentInfo = {
 export const AGENT_CATALOG: Record<string, AgentInfo> = {
   orchestrator: {
     label: "Understanding your request",
-    description: "Reading your trip request and filling in the essentials",
+    description: "Extracting the essentials from your request",
   },
   stops_discovery: {
     label: "Building the route",
@@ -28,12 +29,12 @@ export const AGENT_CATALOG: Record<string, AgentInfo> = {
     description: "Looking for flights, trains, and transit routes",
   },
   stay_search: {
-    label: "Comparing places to stay",
-    description: "Gathering hotel and stay options",
+    label: "Finding places to stay",
+    description: "Gathering stays that fit your trip",
   },
   local_experiences: {
-    label: "Finding local experiences",
-    description: "Discovering attractions and things to do",
+    label: "Finding things to do",
+    description: "Discovering attractions and local experiences",
   },
   transport_optimizer: {
     label: "Optimizing your route",
@@ -66,19 +67,7 @@ export const AGENT_CATALOG: Record<string, AgentInfo> = {
   itinerary_compiler: {
     label: "Assembling the itinerary",
     description: "Putting the full itinerary together",
-  },
-  route_clarification: {
-    label: "Confirming your route",
-    description: "Needs a bit more detail about your route",
-  },
-  food_clarification: {
-    label: "Confirming food preferences",
-    description: "Needs a bit more detail about food preferences",
-  },
-  discovery_failed_end: {
-    label: "Needs more information",
-    description: "Couldn't build a route with the details given",
-  },
+  }
 };
 
 export type PlanningPhase = {
@@ -126,21 +115,10 @@ export function titleizeAgentId(agent: string): string {
     .join(" ");
 }
 
-/** Agents from the current phase that have not yet posted `agent_done`. */
-export function activeAgentsFor(completedAgents: ReadonlySet<string>): string[] {
-  for (const phase of PLANNING_PHASES) {
-    const pending = phase.agents.filter((agent) => !completedAgents.has(agent));
-    if (pending.length > 0) {
-      return pending;
-    }
-  }
-  return [];
-}
-
 /** Canonical execution order of every agent shown in the task timeline. */
 export const AGENT_PIPELINE: string[] = PLANNING_PHASES.flatMap((phase) => phase.agents);
 
-export type AgentTaskStatus = "done" | "active" | "pending";
+export type AgentTaskStatus = "done" | "active" | "paused" | "pending";
 
 export type AgentTask = {
   agent: string;
@@ -158,22 +136,20 @@ type CompletedAgentSummary = {
 };
 
 /**
- * Builds the ordered todo-style task list for the timeline: every pipeline
- * agent plus any that completed off-pipeline, tagged done / active / pending.
+ * Builds the ordered todo-style task list for the timeline from the allowlisted
+ * pipeline agents, tagged done / active / pending.
  * Once planning stops, unreached pipeline agents are dropped so the list shows
  * only what actually ran.
  */
 export function buildAgentTasks(
   completed: readonly CompletedAgentSummary[],
   activeAgents: readonly string[],
-  isPlanning: boolean,
+  pausedAgents: readonly string[] = [],
 ): AgentTask[] {
   const completedByAgent = new Map(completed.map((entry) => [entry.agent, entry]));
   const activeSet = new Set(activeAgents);
-  const ordered = [
-    ...AGENT_PIPELINE,
-    ...completed.map((entry) => entry.agent).filter((agent) => !AGENT_PIPELINE.includes(agent)),
-  ];
+  const pausedSet = new Set(pausedAgents);
+  const ordered = AGENT_PIPELINE;
 
   const tasks: AgentTask[] = [];
   const seen = new Set<string>();
@@ -188,9 +164,11 @@ export function buildAgentTasks(
       ? "done"
       : activeSet.has(agent)
         ? "active"
+        : pausedSet.has(agent)
+          ? "paused"
         : "pending";
 
-    if (status === "pending" && !isPlanning) {
+    if (status === "pending") {
       continue;
     }
 

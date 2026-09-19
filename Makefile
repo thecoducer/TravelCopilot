@@ -33,7 +33,7 @@ dev-logs: ## Tail backend and frontend logs
 
 test: ## Run backend test suite
 	$(call banner,Running backend test suite)
-	cd $(BACKEND_DIR) && uv run pytest tests/ -v --cov=app --cov-report=term-missing
+	cd $(BACKEND_DIR) && uv run python -m pytest tests/ -v --cov=app --cov-report=term-missing
 
 format: ## Auto-format code with ruff
 	cd $(BACKEND_DIR) && uv run ruff format app/ tests/
@@ -43,7 +43,7 @@ format-check: ## Check formatting without modifying files (used in CI)
 
 lint: ## Run ruff linter + mypy type checker
 	$(call banner,Linting backend (ruff + mypy))
-	cd $(BACKEND_DIR) && uv run ruff check app/ tests/ && uv run mypy app/
+	cd $(BACKEND_DIR) && uv run ruff check app/ tests/ && uv run python -m mypy app/
 
 lint-fix: ## Auto-fix ruff lint issues where possible
 	cd $(BACKEND_DIR) && uv run ruff check --fix app/ tests/
@@ -57,10 +57,10 @@ migrate: ## Run database migrations against local postgres
 	docker compose exec -T postgres psql -U postgres -d travelcopilot -f /dev/stdin < $(BACKEND_DIR)/migrations/002_user_identity_and_turns.sql
 
 evals: ## Run Langfuse evals (requires LANGFUSE_* env vars)
-	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m "not golden"
+	cd $(BACKEND_DIR) && uv run python -m pytest tests/evals/ -v -m "not golden"
 
 evals-golden: ## Run golden-set evals
-	cd $(BACKEND_DIR) && uv run pytest tests/evals/ -v -m golden
+	cd $(BACKEND_DIR) && uv run python -m pytest tests/evals/ -v -m golden
 
 package: ## Build backend Python wheel and source distribution
 	cd $(BACKEND_DIR) && uv build --clear

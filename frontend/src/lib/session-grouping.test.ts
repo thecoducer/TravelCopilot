@@ -11,6 +11,15 @@ function session(id: string, ageDays: number, now: number): SessionSummary {
   };
 }
 
+function sessionAt(id: string, createdAt: string): SessionSummary {
+  return {
+    session_id: id,
+    title: `Trip ${id}`,
+    created_at: createdAt,
+    has_itinerary: true,
+  };
+}
+
 describe("groupSessions", () => {
   const now = Date.UTC(2026, 0, 15, 12, 0, 0);
 
@@ -34,6 +43,17 @@ describe("groupSessions", () => {
     const groups = groupSessions([session("a", 0.1, now)], now);
     expect(groups).toHaveLength(1);
     expect(groups[0]?.label).toBe("Today");
+  });
+
+  it("uses calendar dates at midnight boundaries", () => {
+    const now = new Date(2026, 8, 19, 0, 1, 0).getTime();
+    const groups = groupSessions(
+      [sessionAt("yesterday", new Date(2026, 8, 18, 23, 59, 0).toISOString())],
+      now,
+    );
+
+    expect(groups.map((group) => group.label)).toEqual(["Yesterday"]);
+    expect(groups[0]?.sessions[0]?.session_id).toBe("yesterday");
   });
 
   it("returns nothing for an empty list", () => {

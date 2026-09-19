@@ -3,17 +3,20 @@
 Responsibilities:
   1. Parse the free-text user query into structured trip parameters, each with
      a ``parse_confidence`` score (0–1).
-  2. Detect ``is_international`` (compares source vs destination country).
-  3. Detect ``self_drive_intent`` from keywords.
+    2. Derive ``is_international`` from the parsed source/destination countries.
+    3. Detect ``self_drive_intent`` from the structured parser output.
   4. Load ``UserProfile`` from DB by session_id (best-effort, non-blocking).
-  5. **UserProfile pre-fill**: silently resolve missing fields (source city,
-     budget tier) from the user's saved profile before triggering clarification.
-  6. **Clarification gate**: if required fields remain missing or low-confidence
-     after profile pre-fill, use LangGraph ``interrupt()`` to pause the graph
-     and await structured answers from the client.  The graph resumes via
-     ``POST /api/trip/{session_id}/clarify`` — no full re-POST needed.
-     Up to ``settings.max_clarification_rounds`` rounds are attempted; after
-     that the agent proceeds with best-effort defaults.
+    5. Identify missing or low-confidence fields for the clarification manager.
+  6. **Clarification gate**: the node itself never interrupts. It records the
+     fields it still needs in ``pending_clarification_fields``; the separate
+     ``orchestrator_clarification`` node performs the LangGraph ``interrupt()``
+     and loops back. Keeping the interrupt out of this node matters because
+     LangGraph re-executes a node from the top on every resume — with the pause
+     inline, the LLM parse would re-run (and could return a different result)
+     on every clarification round.
+
+The parse is cached in ``parsed_query`` state, so the LLM runs once per
+planning session regardless of how many clarification rounds are needed.
 """
 
 from __future__ import annotations
@@ -23,14 +26,15 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.types import interrupt
-from pydantic import BaseModel, Field
+from pydantic import ValidationError
 
+from app.agents.base import AgentClarificationMixin
 from app.config import settings
-from app.llm import get_llm
+from app.llm import get_llm, structured_llm
 from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
+from app.models.enums import LogEvent
+from app.models.output.orchestrator_agent_output import FieldConfidence, ParsedQuery
 from app.models.user_profile import (
     BudgetPreference,
     BudgetTier,
@@ -38,6 +42,14 @@ from app.models.user_profile import (
     UserProfile,
     budget_to_state,
 )
+from app.prompts.orchestrator_agent_prompts import (
+    FIELD_META,
+    FOOD_CLARIFICATION_PROMPTS,
+    OPTIONAL_CLARIFICATION_PROMPTS,
+    QUERY_PARSE_PROMPT,
+)
+from app.services.clarification_manager import ClarificationManager
+from app.services.user_profile_service import upsert_user_profile
 
 # ── Security: prompt injection patterns ──────────────────────────────────────
 _INJECTION_PATTERNS = re.compile(
@@ -46,171 +58,33 @@ _INJECTION_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# ── Domestic city set (for is_international heuristic) ──────────────────────
-_INDIAN_CITIES: frozenset[str] = frozenset(
-    [
-        "mumbai",
-        "delhi",
-        "bangalore",
-        "bengaluru",
-        "kolkata",
-        "chennai",
-        "hyderabad",
-        "pune",
-        "ahmedabad",
-        "jaipur",
-        "lucknow",
-        "kanpur",
-        "nagpur",
-        "indore",
-        "bhopal",
-        "goa",
-        "leh",
-        "srinagar",
-        "amritsar",
-        "varanasi",
-        "agra",
-        "kerala",
-        "rajasthan",
-        "himachal",
-        "uttarakhand",
-        "sikkim",
-        "assam",
-        "kochi",
-        "udaipur",
-        "jodhpur",
-        "mysore",
-        "coimbatore",
-        "madurai",
-        "nashik",
-        "aurangabad",
-        "chandigarh",
-        "shimla",
-        "manali",
-        "mcleod ganj",
-        "darjeeling",
-        "gangtok",
-        "pondicherry",
-        "guwahati",
-        "bhubaneswar",
-        "patna",
-        "ranchi",
-        "raipur",
-        "visakhapatnam",
-        "vijayawada",
-    ]
-)
-
-_SELF_DRIVE_KEYWORDS = frozenset(
-    [
-        "rent a bike",
-        "rent bike",
-        "scooter",
-        "self-drive",
-        "self drive",
-        "motorcycle",
-        "hire a car",
-        "hire car",
-        "rent a car",
-        "road trip",
-        "road-trip",
-        "motorbike",
-        "two-wheeler",
-    ]
-)
 
 # ── Field metadata for contextual clarification prompts ───────────────────────
-_FIELD_META: dict[str, dict[str, Any]] = {
-    "destination": {
-        "input_type": "text",
-        "options": [],
-        "generic": "Where would you like to travel? Please name the city or region.",
-        "contextual": "You mentioned '{value}' — which city or region specifically?",
-    },
-    "dates": {
-        "input_type": "date",
-        "options": [],
-        "generic": "What is the start date of your trip?",
-        "contextual": "When would you like to start your trip to '{value}'?",
-    },
-    "travelers": {
-        "input_type": "number",
-        "options": [],
-        "generic": "How many people are travelling? (including yourself)",
-        "contextual": "How many people are travelling? (including yourself)",
-    },
-    "trip_days": {
-        "input_type": "number",
-        "options": [],
-        "generic": "How many days is your trip?",
-        "contextual": "You mentioned '{value}' days — is that the total length of your trip?",
-    },
-    "source": {
-        "input_type": "text",
-        "options": [],
-        "generic": "What city will you be departing from?",
-        "contextual": (
-            "We guessed you're departing from '{value}' — is that right?"
-            " If not, please provide your departure city."
-        ),
-    },
-}
+def _split_food_preference(value: str) -> list[str]:
+    """Convert a comma-separated clarification answer to normalized values."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _flexibility_prompt() -> ClarificationPrompt:
+    """Date-flexibility question — text, config-driven, always skippable."""
+    return ClarificationPrompt(
+        field=settings.flexibility_days_field,
+        question=settings.flexibility_days_prompt,
+        reason="Widens the fare search window when dates can move",
+        input_type="text",
+        optional=True,
+    )
+
+
+def _parse_flexibility_answer(value: str) -> int | None:
+    """Read a day count from a free-text answer, clamped to the configured maximum."""
+    match = re.search(r"\d+", value)
+    if not match:
+        return None
+    return min(int(match.group()), settings.flexibility_days_max)
 
 
 # ── Structured LLM output ─────────────────────────────────────────────────────
-
-
-class _FieldConfidence(BaseModel):
-    value: str | None = None
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-
-
-class _ParsedQuery(BaseModel):
-    """Structured output from the orchestrator's LLM call."""
-
-    source_city: _FieldConfidence = Field(
-        default_factory=lambda: _FieldConfidence(value="unknown", confidence=0.5)
-    )
-    destination: _FieldConfidence = Field(
-        default_factory=lambda: _FieldConfidence(value=None, confidence=0.0)
-    )
-    departure_date: str | None = Field(
-        default=None, description="ISO-8601 departure date, null if not mentioned"
-    )
-    return_date: str | None = None
-    # None means the query did not state or imply a duration — the compiler must
-    # never guess this, so it is a first-class clarification field like ``dates``.
-    trip_days: int | None = Field(
-        default=None,
-        ge=1,
-        description="Total duration of the trip in days (e.g. 6 for 'for 6 days', 7 for '1 week')",
-    )
-    trip_days_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    travelers: _FieldConfidence = Field(
-        default_factory=lambda: _FieldConfidence(value="1", confidence=0.8)
-    )
-    budget_tier: str = Field(default="mid", description="budget | mid | luxury")
-    interests: list[str] = Field(default_factory=list)
-    is_international: bool = False
-    self_drive_intent: bool = False
-    dates_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-
-
-_SYSTEM_PROMPT = """\
-You are a travel query parser. Extract structured fields from the user's trip request.
-For each field that has ambiguity, set a lower confidence score.
-
-Rules:
-- If the departure date is relative (e.g. "next month"), resolve to ISO-8601 assuming today is {today}.
-- If no date is mentioned at all, set departure_date=null and dates_confidence=0.0.
-- trip_days: extract the duration of the trip in days (e.g. "6 days" -> 6, "10-day trip" -> 10, "1 week" -> 7, "weekend" -> 2). If no duration is mentioned or implied at all, set trip_days=null and trip_days_confidence=0.0 — never guess a number.
-- Set is_international=true only when source and destination are clearly in different countries.
-- Set self_drive_intent=true when the user explicitly mentions renting a vehicle or driving.
-- budget_tier: "budget" for hostel/cheapest/backpacker; "luxury" for five-star/premium; else "mid".
-- For interests, extract: food, nightlife, history, adventure, photography, wellness, nature, art.
-- Confidence rules (dates_confidence, trip_days_confidence): 1.0 = explicitly stated; 0.7 = strongly implied; 0.5 = inferred; 0.0 = absent.
-- For travelers: confidence=1.0 if explicitly stated, 0.8 if implied solo (no mention), 0.5 if ambiguous.
-"""  # noqa: E501
 
 
 # ── Clarification helper functions ────────────────────────────────────────────
@@ -222,7 +96,7 @@ def _is_blank(value: str | None) -> bool:
 
 def _build_clarification_prompt(field: str, extracted_value: str | None) -> ClarificationPrompt:
     """Build a contextual ClarificationPrompt for a missing/low-confidence field."""
-    meta = _FIELD_META.get(
+    meta = FIELD_META.get(
         field,
         {
             "input_type": "text",
@@ -245,33 +119,33 @@ def _build_clarification_prompt(field: str, extracted_value: str | None) -> Clar
     )
 
 
-def _apply_profile_prefill(parsed: _ParsedQuery, user_profile: UserProfile | None) -> None:
-    """Silently fill missing fields from the user's saved profile (idempotent)."""
-    if not user_profile:
-        return
-    if _is_blank(parsed.source_city.value) and user_profile.home_city:
-        parsed.source_city = _FieldConfidence(value=user_profile.home_city, confidence=1.0)
-    # Only override budget tier when LLM used the default "mid" — not when explicitly detected
-    if parsed.budget_tier == "mid" and user_profile.budget_tier:
-        parsed.budget_tier = str(user_profile.budget_tier)
-
-
-def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
-    """Return list of (field, extracted_value_or_None) for fields needing clarification."""
-    field_values: dict[str, str | None] = {
+def _field_values(parsed: ParsedQuery) -> dict[str, str | None]:
+    """Map each clarification field to the value currently parsed for it."""
+    return {
         "destination": parsed.destination.value,
-        "source": parsed.source_city.value,
+        "source": parsed.source.value,
         "travelers": parsed.travelers.value,
         "dates": parsed.departure_date,
         "trip_days": str(parsed.trip_days) if parsed.trip_days is not None else None,
+        "budget": parsed.budget_tier,
     }
-    field_confidences: dict[str, float] = {
+
+
+def _field_confidences(parsed: ParsedQuery) -> dict[str, float]:
+    return {
         "destination": parsed.destination.confidence,
-        "source": parsed.source_city.confidence,
+        "source": parsed.source.confidence,
         "travelers": parsed.travelers.confidence,
         "dates": parsed.dates_confidence,
         "trip_days": parsed.trip_days_confidence,
+        "budget": 1.0 if parsed.budget_tier else 0.0,
     }
+
+
+def _compute_missing(parsed: ParsedQuery) -> list[tuple[str, str | None]]:
+    """Return list of (field, extracted_value_or_None) for fields needing clarification."""
+    field_values = _field_values(parsed)
+    field_confidences = _field_confidences(parsed)
     thresholds = settings.field_thresholds
     fallback = settings.parse_confidence_threshold
 
@@ -285,6 +159,67 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
             extracted = None if _is_blank(val) else str(val)
             missing.append((field, extracted))
     return missing
+
+
+def _derive_is_international(parsed: ParsedQuery, log: Any) -> bool:
+    """Resolve cross-border travel from the parsed countries instead of asking the user."""
+    source_country = (parsed.source_country or "").strip().lower()
+    destination_country = (parsed.destination_country or "").strip().lower()
+    if source_country and destination_country:
+        return source_country != destination_country
+    if parsed.is_international is not None:
+        return parsed.is_international
+    log.warning(
+        "is_international_defaulted_domestic",
+        source_country=parsed.source_country,
+        destination_country=parsed.destination_country,
+    )
+    return False
+
+
+def _restore_parsed(payload: Any) -> ParsedQuery | None:
+    """Rebuild the cached parse from state, or None when absent/incompatible."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ParsedQuery.model_validate(payload)
+    except ValidationError:
+        return None
+
+
+def _confidence_map(parsed: ParsedQuery) -> dict[str, float]:
+    return {
+        "destination": parsed.destination.confidence,
+        "source": parsed.source.confidence,
+        "travelers": parsed.travelers.confidence,
+        "dates": parsed.dates_confidence,
+        "trip_days": parsed.trip_days_confidence,
+    }
+
+
+_MISSING_DETAILS_ERROR = "Required trip details are still missing."
+
+
+def _hard_stop(message: str, fields: list[str]) -> dict[str, Any]:
+    """Stop planning rather than fabricating required trip details."""
+    return {
+        "error": message,
+        "missing_required_fields": fields,
+        "pending_clarification_fields": [],
+    }
+
+
+def _build_trip_dates(parsed: ParsedQuery, trip_days: int) -> TripDates:
+    span = timedelta(days=max(0, trip_days - 1))
+    try:
+        departure = date.fromisoformat(parsed.departure_date or "")
+        return_date = (
+            date.fromisoformat(parsed.return_date) if parsed.return_date else departure + span
+        )
+    except ValueError:
+        departure = date.today() + timedelta(days=30)
+        return_date = departure + span
+    return TripDates(departure=departure, return_date=return_date)
 
 
 def _parse_date_answer(dates_str: str) -> tuple[str | None, str | None, float]:
@@ -314,16 +249,16 @@ def _parse_date_answer(dates_str: str) -> tuple[str | None, str | None, float]:
     return None, None, 0.0
 
 
-def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
+def _apply_answers(parsed: ParsedQuery, answers: dict[str, str]) -> None:
     """Inject user's clarification answers directly into ``parsed`` at confidence=1.0."""
     if dest := answers.get("destination", "").strip():
-        parsed.destination = _FieldConfidence(value=dest, confidence=1.0)
+        parsed.destination = FieldConfidence(value=dest, confidence=1.0)
     if source := answers.get("source", "").strip():
-        parsed.source_city = _FieldConfidence(value=source, confidence=1.0)
+        parsed.source = FieldConfidence(value=source, confidence=1.0)
     if travelers_str := answers.get("travelers", "").strip():
         try:
             int(travelers_str)  # validate it's a number
-            parsed.travelers = _FieldConfidence(value=travelers_str, confidence=1.0)
+            parsed.travelers = FieldConfidence(value=travelers_str, confidence=1.0)
         except ValueError:
             pass
     if trip_days_str := answers.get("trip_days", "").strip():
@@ -332,197 +267,133 @@ def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
             parsed.trip_days_confidence = 1.0
         except ValueError:
             pass
+    if (budget := answers.get("budget", "").strip().lower()) and budget in {
+        tier.value for tier in BudgetTier
+    }:
+        parsed.budget_tier = budget
+    if trip_type := answers.get("is_international", "").strip().lower():
+        if trip_type in {"international", "international trip"}:
+            parsed.is_international = True
+        elif trip_type in {"domestic", "domestic trip"}:
+            parsed.is_international = False
     if dates_str := answers.get("dates", "").strip():
         dep_iso, ret_iso, conf = _parse_date_answer(dates_str)
+        # An unparseable answer must not clear a date the parser already resolved.
         if dep_iso:
             parsed.departure_date = dep_iso
             if ret_iso:
                 parsed.return_date = ret_iso
-        parsed.dates_confidence = conf
+            parsed.dates_confidence = conf
 
 
-def _apply_defaults(parsed: _ParsedQuery) -> None:
-    """Fallback: set reasonable defaults for still-missing fields after max rounds."""
-    if _is_blank(parsed.destination.value):
-        parsed.destination = _FieldConfidence(value="unknown destination", confidence=0.5)
-    if parsed.trip_days is None:
-        parsed.trip_days = settings.default_trip_days
-        parsed.trip_days_confidence = 0.5
-    if not parsed.departure_date:
-        dep = date.today() + timedelta(days=30)
-        parsed.departure_date = dep.isoformat()
-        parsed.return_date = (dep + timedelta(days=max(0, parsed.trip_days - 1))).isoformat()
-        parsed.dates_confidence = 0.5
-    if _is_blank(parsed.travelers.value) or parsed.travelers.confidence < 0.4:
-        parsed.travelers = _FieldConfidence(value="1", confidence=0.8)
-
-
-class OrchestratorAgent:
+class OrchestratorAgent(AgentClarificationMixin):
     def __init__(self, llm: Any | None = None) -> None:
         self._llm = llm or get_llm("orchestrator")
 
+    async def _parse_query(self, query: str, log: Any) -> ParsedQuery | None:
+        """Run the single structured-output parse for this planning session."""
+        chain = structured_llm(self._llm, ParsedQuery)
+        try:
+            raw = await chain.ainvoke(
+                QUERY_PARSE_PROMPT.partial(today=date.today().isoformat()).format_messages(
+                    query=query
+                )
+            )
+        except Exception as exc:
+            log.error(
+                "llm_parse_failed",
+                error=str(exc),
+            )
+            return None
+
+        parsed = raw if isinstance(raw, ParsedQuery) else ParsedQuery.model_validate(raw)
+        log.info(
+            "llm_parse_result",
+            query=query[:80],
+            parsed=parsed.model_dump(mode="json"),
+        )
+        return parsed
+
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        raw_query: str = state.get("query", "")
         session_id: str = state.get("session_id", "")
         clarification_round: int = state.get("clarification_round", 0)
-        user_profile: UserProfile | None = state.get("user_profile")
-
-        query = html.unescape(raw_query).strip()[:500]
+        answers: dict[str, str] = dict(state.get("clarification_answers") or {})
         log = get_agent_logger("orchestrator", session_id)
-        log.info("agent_start", query=query[:80])
 
-        # Fast-path keyword check (re-evaluated if query changes via interrupt answer)
-        self_drive_kw = any(kw in query.lower() for kw in _SELF_DRIVE_KEYWORDS)
+        restated = html.unescape(answers.get("query", "")).strip()[:500]
+        query = restated or html.unescape(state.get("query", "")).strip()[:500]
+        log.info("agent_start", query=query[:80], round=clarification_round)
 
-        parsed: _ParsedQuery | None = None
-        rounds_taken = 0
+        rounds_left = clarification_round < settings.max_clarification_rounds
 
-        for _round in range(settings.max_clarification_rounds):
-            # ── Injection check ──────────────────────────────────────────────
-            if _INJECTION_PATTERNS.search(query):
-                log.warning("prompt_injection_detected", session_id=session_id)
-                prompts = [
-                    ClarificationPrompt(
-                        field="query",
-                        question=(
-                            "Your request contains disallowed patterns."
-                            " Please describe your trip normally."
-                        ),
-                        reason="Prompt injection detected",
-                        input_type="text",
-                    )
-                ]
-                answers: dict[str, str] = interrupt(
-                    {"prompts": [p.model_dump() for p in prompts], "round": _round}
-                )
-                new_q = html.unescape(answers.get("query", "")).strip()[:500]
-                if new_q:
-                    query = new_q
-                    self_drive_kw = any(kw in query.lower() for kw in _SELF_DRIVE_KEYWORDS)
-                parsed = None  # force re-parse with cleaned query
-                rounds_taken += 1
-                continue
+        if _INJECTION_PATTERNS.search(query):
+            log.warning("prompt_injection_detected")
+            if not rounds_left:
+                return _hard_stop("Your request could not be parsed safely.", ["query"])
+            return {"parsed_query": None, "pending_clarification_fields": ["query"]}
 
-            # ── LLM parse (only on first pass or after query change) ─────────
-            if parsed is None:
-                today = date.today().isoformat()
-                chain = self._llm.with_structured_output(_ParsedQuery)
-                try:
-                    parsed = await chain.ainvoke(
-                        [
-                            SystemMessage(content=_SYSTEM_PROMPT.format(today=today)),
-                            HumanMessage(content=f"User query: {query}"),
-                        ]
-                    )
-                except Exception as exc:
-                    log.error("llm_parse_failed", error=str(exc))
-                    prompts = [
-                        ClarificationPrompt(
-                            field="query",
-                            question=(
-                                "Could you describe your trip in more detail?"
-                                " (e.g. 'I want to go to Leh from Kolkata"
-                                " for 5 days in July')"
-                            ),
-                            reason="LLM parsing failed",
-                            input_type="text",
-                        )
-                    ]
-                    answers = interrupt(
-                        {"prompts": [p.model_dump() for p in prompts], "round": _round}
-                    )
-                    new_q = html.unescape(answers.get("query", "")).strip()[:500]
-                    if new_q:
-                        query = new_q
-                        self_drive_kw = any(kw in query.lower() for kw in _SELF_DRIVE_KEYWORDS)
-                    rounds_taken += 1
-                    continue
-
-            # Deterministic override for trip duration if explicitly stated in query
-            extracted_days = quick_extract_days(query)
-            if extracted_days is not None and parsed is not None:
-                parsed.trip_days = extracted_days
-                parsed.trip_days_confidence = 1.0
-
-            # ── UserProfile pre-fill (idempotent) ────────────────────────────
-            _apply_profile_prefill(parsed, user_profile)
-
-            # ── Compute missing / low-confidence fields ──────────────────────
-            missing = _compute_missing(parsed)
-            if not missing:
-                break  # all required fields satisfied
-
-            # ── Interrupt: pause graph and await client answers ──────────────
-            log.info(
-                "clarification_required",
-                fields=[f for f, _ in missing],
-                round=_round,
-            )
-            prompts = [_build_clarification_prompt(f, ev) for f, ev in missing]
-            answers = interrupt({"prompts": [p.model_dump() for p in prompts], "round": _round})
-            _apply_answers(parsed, answers)
-            rounds_taken += 1
-
-        else:
-            # Max rounds exhausted — proceed with best-effort defaults
-            log.warning(
-                "max_clarification_rounds_exhausted",
-                rounds=settings.max_clarification_rounds,
-            )
-            if parsed is not None:
-                _apply_defaults(parsed)
-
+        parsed = _restore_parsed(state.get("parsed_query"))
         if parsed is None:
-            # Should not happen, but guard defensively
-            return {
-                "error": "Failed to parse trip query",
-                "parse_confidence": {},
-                "clarification_round": clarification_round + rounds_taken,
-            }
+            parsed = await self._parse_query(query, log)
+        if parsed is None:
+            if not rounds_left:
+                return _hard_stop("Failed to parse trip query", ["query"])
+            return {"pending_clarification_fields": ["query"]}
 
-        # ── Build parse_confidence map ────────────────────────────────────────
-        parse_confidence: dict[str, float] = {
-            "destination": parsed.destination.confidence,
-            "source": parsed.source_city.confidence,
-            "travelers": parsed.travelers.confidence,
-            "dates": parsed.dates_confidence,
-            "trip_days": parsed.trip_days_confidence,
+        extracted_days = quick_extract_days(query)
+        if extracted_days is not None:
+            parsed.trip_days = extracted_days
+            parsed.trip_days_confidence = 1.0
+
+        _apply_answers(parsed, answers)
+        is_intl = _derive_is_international(parsed, log)
+        parsed.is_international = is_intl
+
+        # A field answered once is never re-asked; a useless answer fails the gate below
+        # instead of restarting the question loop.
+        missing = [(f, v) for f, v in _compute_missing(parsed) if not answers.get(f, "").strip()]
+        base_updates: dict[str, Any] = {
+            "parsed_query": parsed.model_dump(mode="json"),
+            "parse_confidence": _confidence_map(parsed),
         }
-
-        # ``trip_days`` is resolved by now via LLM/override/answer/defaults above;
-        # this is a defensive fallback only, never the primary source of a default.
-        trip_days = parsed.trip_days if parsed.trip_days is not None else settings.default_trip_days
-
-        # ── Build TripDates ───────────────────────────────────────────────────
-        trip_dates: TripDates | None = None
-        if parsed.departure_date:
-            try:
-                dep = date.fromisoformat(parsed.departure_date)
-                ret = (
-                    date.fromisoformat(parsed.return_date)
-                    if parsed.return_date
-                    else dep + timedelta(days=max(0, trip_days - 1))
-                )
-                trip_dates = TripDates(departure=dep, return_date=ret)
-            except ValueError:
-                dep = date.today() + timedelta(days=30)
-                trip_dates = TripDates(
-                    departure=dep,
-                    return_date=dep + timedelta(days=max(0, trip_days - 1)),
-                )
-        else:
-            dep = date.today() + timedelta(days=30)
-            trip_dates = TripDates(
-                departure=dep,
-                return_date=dep + timedelta(days=max(0, trip_days - 1)),
-            )
-
-        tier = (
-            BudgetTier(parsed.budget_tier)
-            if parsed.budget_tier in BudgetTier.__members__.values()
-            else BudgetTier.mid
+        log.info(
+            "clarification_gate",
+            missing=[field for field, _ in missing],
+            round=clarification_round,
         )
-        budget = budget_to_state(BudgetPreference(tier=tier))
+
+        if missing:
+            fields = [field for field, _ in missing]
+            if not rounds_left:
+                log.warning("max_clarification_rounds_exhausted", rounds=clarification_round)
+                return {**base_updates, **_hard_stop(_MISSING_DETAILS_ERROR, fields)}
+            return {**base_updates, "pending_clarification_fields": fields}
+
+        trip_days = parsed.trip_days
+        # Budget is not necessarily a configured clarification field, so it can be
+        # absent without ever having been asked. Defaulting beats hard-stopping with
+        # an empty missing-fields list, which tells the caller nothing.
+        if not parsed.budget_tier:
+            parsed.budget_tier = settings.default_budget_tier
+            log.info(
+                LogEvent.CLARIFICATION_RESOLVED,
+                field="budget",
+                resolution="default",
+                value=parsed.budget_tier,
+            )
+        if trip_days is None or not parsed.departure_date:
+            fields = [field for field, _ in _compute_missing(parsed)]
+            log.warning(
+                LogEvent.AGENT_FAILED,
+                reason="required_trip_details_missing",
+                has_trip_days=trip_days is not None,
+                has_departure_date=bool(parsed.departure_date),
+                fields=fields,
+            )
+            return {**base_updates, **_hard_stop(_MISSING_DETAILS_ERROR, fields)}
+
+        trip_dates = _build_trip_dates(parsed, trip_days)
+        budget = budget_to_state(BudgetPreference(tier=BudgetTier(parsed.budget_tier)))
 
         try:
             travelers = max(1, int(parsed.travelers.value or 1))
@@ -530,27 +401,19 @@ class OrchestratorAgent:
             travelers = 1
 
         destination = (parsed.destination.value or "").strip()
-        source = (parsed.source_city.value or "").strip()
-
-        # International heuristic: override LLM if both cities are known Indian cities
-        src_domestic = source.lower() in _INDIAN_CITIES
-        dst_domestic = destination.lower() in _INDIAN_CITIES
-        is_intl = parsed.is_international
-        if src_domestic and dst_domestic:
-            is_intl = False
-
-        self_drive = parsed.self_drive_intent or self_drive_kw
+        source = (parsed.source.value or "").strip()
 
         updates: dict[str, Any] = {
+            **base_updates,
             "source": source,
             "destination": destination,
             "dates": trip_dates,
             "travelers": travelers,
             "budget": budget,
             "is_international": is_intl,
-            "self_drive_intent": self_drive,
-            "parse_confidence": parse_confidence,
-            "clarification_round": clarification_round + rounds_taken,
+            "self_drive_intent": parsed.self_drive_intent,
+            "missing_required_fields": [],
+            "pending_clarification_fields": [],
         }
 
         # Bootstrap user profile from interests
@@ -570,10 +433,126 @@ class OrchestratorAgent:
             source=source,
             destination=destination,
             is_international=is_intl,
-            self_drive=self_drive,
-            rounds=rounds_taken,
+            self_drive=parsed.self_drive_intent,
+            rounds=clarification_round,
         )
         return updates
+
+
+async def orchestrator_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Pause the graph for the fields the orchestrator flagged, then loop back to it.
+
+    This node holds the only orchestrator ``interrupt()``. It performs no LLM work, so
+    LangGraph's re-execution of the node on resume is free and deterministic.
+    """
+    session_id = state.get("session_id", "")
+    round_number = state.get("clarification_round", 0)
+    fields = list(state.get("pending_clarification_fields") or [])
+    log = get_agent_logger("orchestrator", session_id)
+
+    parsed = _restore_parsed(state.get("parsed_query"))
+    values = _field_values(parsed) if parsed else {}
+    prompts = [_build_clarification_prompt(field, values.get(field)) for field in fields]
+    log.info("clarification_required", fields=fields, round=round_number)
+
+    answers = ClarificationManager.request(
+        prompts, requester="orchestrator", round_number=round_number
+    )
+    merged = {
+        **(state.get("clarification_answers") or {}),
+        **{field: value for field, value in answers.items() if value.strip()},
+    }
+    return {
+        "clarification_answers": merged,
+        "clarification_round": round_number + 1,
+        "pending_clarification_fields": [],
+    }
+
+
+async def optional_clarification_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Ask skippable trip-style questions and durable food preferences in one round.
+
+    Food preferences are folded in here (rather than a separate later graph node)
+    so route discovery and supply search never stall on a second human round-trip.
+    """
+    session_id = state.get("session_id", "")
+    log = get_agent_logger("orchestrator", session_id)
+
+    prompts: list[ClarificationPrompt] = []
+    if settings.enable_optional_clarification:
+        prompts.extend(prompt.model_copy() for prompt in OPTIONAL_CLARIFICATION_PROMPTS)
+
+    profile: UserProfile | None = state.get("user_profile")
+    ask_food = not (profile and profile.food_preferences_configured)
+    if ask_food:
+        prompts.extend(prompt.model_copy() for prompt in FOOD_CLARIFICATION_PROMPTS)
+
+    dates = state.get("dates")
+    # Opt-in like every other skippable question: it costs an interrupt/resume cycle.
+    ask_flexibility = dates is not None and settings.enable_optional_clarification
+    if ask_flexibility:
+        prompts.append(_flexibility_prompt())
+
+    if not prompts:
+        return {}
+
+    log.info(
+        LogEvent.CLARIFICATION_REQUESTED,
+        optional=True,
+        fields=[prompt.field for prompt in prompts],
+    )
+    answers = ClarificationManager.request_optional(
+        prompts, requester="orchestrator", round_number=state.get("clarification_round", 0)
+    )
+
+    food_fields = {"preferred_cuisines", "dietary_restrictions"}
+    reserved_fields = food_fields | {settings.flexibility_days_field}
+    updates: dict[str, Any] = {
+        "optional_clarification_answers": {
+            field: value
+            for field, value in answers.items()
+            if field not in reserved_fields and value.strip() and value.strip() != "__skip__"
+        }
+    }
+
+    if ask_flexibility and dates is not None:
+        raw = answers.get(settings.flexibility_days_field, "").strip()
+        flexibility = None if raw in ("", "__skip__") else _parse_flexibility_answer(raw)
+        resolved = flexibility if flexibility is not None else settings.flexibility_days_default
+        updates["dates"] = dates.model_copy(update={"flexibility_days": resolved})
+        log.info(
+            LogEvent.CLARIFICATION_RESOLVED,
+            field=settings.flexibility_days_field,
+            value=resolved,
+            resolution="answered" if flexibility is not None else "default",
+        )
+
+    if ask_food:
+        dietary_answer = answers.get("dietary_restrictions", "").strip()
+        dietary = (
+            []
+            if dietary_answer.lower() in ("", "__skip__", "no dietary restrictions")
+            else _split_food_preference(dietary_answer)
+        )
+        cuisines_answer = answers.get("preferred_cuisines", "").strip()
+        cuisines = (
+            [] if cuisines_answer in ("", "__skip__") else _split_food_preference(cuisines_answer)
+        )
+        updated_profile = (profile or UserProfile(user_id=session_id or "anon")).model_copy(
+            update={
+                "preferred_cuisines": cuisines,
+                "dietary_restrictions": dietary,
+                "food_preferences_configured": True,
+            }
+        )
+        if session_id:
+            try:
+                await upsert_user_profile(session_id, updated_profile)
+            except Exception as exc:
+                log.warning("profile_persist_failed", error=str(exc))
+        updates["user_profile"] = updated_profile
+
+    return updates
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────

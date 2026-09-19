@@ -2,19 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import {
+  Accessibility,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  CircleUserRound,
+  Compass,
+  ForkKnife,
+  Hotel,
+  Save,
+} from "lucide-react";
 import { getProfile, saveProfile } from "@/lib/api";
 import type { UserProfileData } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
-const BUDGET_TIERS = ["budget", "mid", "luxury"];
 const HOTEL_STYLES = ["hostel", "budget", "boutique", "business", "luxury"];
 const TRAVEL_STYLES = ["adventure", "cultural", "luxury", "backpacker", "family"];
 const FITNESS_LEVELS = ["low", "moderate", "high"];
 
 const inputClass =
-  "rounded-md border border-border-strong bg-canvas px-3 py-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/25";
+  "min-h-11 rounded-md border border-border-strong bg-canvas px-3 text-sm text-fg outline-none transition-[border-color,box-shadow] placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-accent/25";
 
 function toList(value: string): string[] {
   return value
@@ -78,36 +87,36 @@ export function ProfileForm() {
   }
 
   return (
-    <div className="mx-auto h-dvh w-full max-w-[760px] overflow-y-auto px-5 py-6">
-      <header className="mb-6 flex items-start gap-3">
+    <div className="h-dvh overflow-y-auto">
+      <div className="mx-auto w-full max-w-[920px] px-5 pb-12 pt-16 sm:px-8 sm:pt-8">
+      <header className="mb-10 grid grid-cols-[2.5rem_minmax(0,1fr)] items-start gap-x-4">
         <button
-          className="inline-flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-fg hover:bg-canvas"
+          className="inline-flex size-10 items-center justify-center rounded-md border border-border bg-surface text-fg transition-colors hover:border-border-strong hover:bg-canvas"
           onClick={() => router.push("/")}
           aria-label="Back to chats"
         >
           <ArrowLeft size={18} />
         </button>
-        <div>
-          <h1 className="font-display text-[1.6rem] font-bold tracking-tight text-fg">Your profile</h1>
-          <p className="mt-1 text-sm text-muted">
-            Preferences here personalize every trip we plan for {username}.
+        <div className="min-w-0 pt-0.5">
+          <p className="mb-2 font-mono text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-summary-heading">
+            Settings
+          </p>
+          <h1 className="font-display text-[clamp(1.65rem,4vw,2.2rem)] font-bold leading-tight tracking-tight text-fg">
+            Personalize your trips
+          </h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">
+            Manage the preferences Travel Copilot uses to shape your recommendations, from places to stay to the food you seek out.
           </p>
         </div>
       </header>
 
-      <Section title="Identity">
-        <Field label="Display name">
+      <div className="flex flex-col gap-4">
+      <Section icon={<CircleUserRound size={17} />} title="Personal details">
+        <Field label="Name">
           <input
             className={inputClass}
             value={profile.display_name ?? ""}
             onChange={(e) => update("display_name", e.target.value)}
-          />
-        </Field>
-        <Field label="Home city">
-          <input
-            className={inputClass}
-            value={profile.home_city ?? ""}
-            onChange={(e) => update("home_city", e.target.value)}
           />
         </Field>
         <Field label="Nationality">
@@ -117,90 +126,24 @@ export function ProfileForm() {
             onChange={(e) => update("nationality", e.target.value)}
           />
         </Field>
-        <Field label="Passport country">
-          <input
-            className={inputClass}
-            value={profile.passport_country ?? ""}
-            onChange={(e) => update("passport_country", e.target.value)}
-          />
-        </Field>
       </Section>
 
-      <Section title="Budget">
-        <Field label="Budget tier">
-          <div className="inline-flex gap-[3px] rounded-md border border-border-strong bg-canvas p-[3px]">
-            {BUDGET_TIERS.map((tier) => (
-              <button
-                key={tier}
-                type="button"
-                className={cn(
-                  "rounded-sm px-3 py-1 text-[0.82rem] font-semibold capitalize text-muted",
-                  profile.budget_tier === tier && "bg-accent text-white",
-                )}
-                onClick={() => update("budget_tier", tier)}
-              >
-                {tier}
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label="Total budget">
-          <input
-            className={inputClass}
-            type="number"
-            min={0}
-            value={profile.total_budget ?? ""}
-            onChange={(e) => update("total_budget", e.target.value ? Number(e.target.value) : null)}
-          />
-        </Field>
-        <Field label="Per-day budget">
-          <input
-            className={inputClass}
-            type="number"
-            min={0}
-            value={profile.per_day_budget ?? ""}
-            onChange={(e) => update("per_day_budget", e.target.value ? Number(e.target.value) : null)}
-          />
-        </Field>
-        <Field label="Currency">
-          <input
-            className={inputClass}
-            value={profile.budget_currency ?? "INR"}
-            onChange={(e) => update("budget_currency", e.target.value.toUpperCase())}
-          />
-        </Field>
-      </Section>
-
-      <Section title="Travel style">
-        <Field label="Style">
-          <select
-            className={inputClass}
+      <Section icon={<Compass size={17} />} title="Travel preferences" subtitle="Set the pace, interests, and activity level you want reflected in your plans.">
+        <Field label="Travel style">
+          <SelectField
             value={profile.travel_style ?? ""}
             onChange={(e) => update("travel_style", e.target.value || null)}
-          >
-            <option value="">No preference</option>
-            {TRAVEL_STYLES.map((style) => (
-              <option key={style} value={style}>
-                {style}
-              </option>
-            ))}
-          </select>
+            options={TRAVEL_STYLES}
+          />
         </Field>
         <Field label="Fitness level">
-          <select
-            className={inputClass}
+          <SelectField
             value={profile.fitness_level ?? ""}
             onChange={(e) => update("fitness_level", e.target.value || null)}
-          >
-            <option value="">No preference</option>
-            {FITNESS_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
+            options={FITNESS_LEVELS}
+          />
         </Field>
-        <Field label="Interests (comma-separated)">
+        <Field label="Interests">
           <input
             className={inputClass}
             value={fromList(profile.interests)}
@@ -220,8 +163,8 @@ export function ProfileForm() {
         </Field>
       </Section>
 
-      <Section title="Food">
-        <Field label="Dietary restrictions (comma-separated)">
+      <Section icon={<ForkKnife size={17} />} title="Food and dining" subtitle="Tell us what to avoid and what you enjoy so recommendations feel more considered.">
+        <Field label="Dietary needs">
           <input
             className={inputClass}
             value={fromList(profile.dietary_restrictions)}
@@ -229,7 +172,7 @@ export function ProfileForm() {
             placeholder="vegetarian, no pork"
           />
         </Field>
-        <Field label="Preferred cuisines (comma-separated)">
+        <Field label="Cuisines you enjoy">
           <input
             className={inputClass}
             value={fromList(profile.preferred_cuisines)}
@@ -239,29 +182,22 @@ export function ProfileForm() {
         </Field>
       </Section>
 
-      <Section title="Stay & transport">
-        <Field label="Hotel style">
-          <select
-            className={inputClass}
+      <Section icon={<Hotel size={17} />} title="Stays and transport" subtitle="Choose the accommodation and carrier preferences we should use by default.">
+        <Field label="Accommodation style">
+          <SelectField
             value={profile.hotel_style ?? ""}
             onChange={(e) => update("hotel_style", e.target.value || null)}
-          >
-            <option value="">No preference</option>
-            {HOTEL_STYLES.map((style) => (
-              <option key={style} value={style}>
-                {style}
-              </option>
-            ))}
-          </select>
+            options={HOTEL_STYLES}
+          />
         </Field>
-        <Field label="Preferred hotel chains (comma-separated)">
+        <Field label="Hotel chains you like">
           <input
             className={inputClass}
             value={fromList(profile.preferred_hotel_chains)}
             onChange={(e) => update("preferred_hotel_chains", toList(e.target.value))}
           />
         </Field>
-        <Field label="Preferred airlines (comma-separated)">
+        <Field label="Airlines you prefer">
           <input
             className={inputClass}
             value={fromList(profile.preferred_airlines)}
@@ -270,8 +206,8 @@ export function ProfileForm() {
         </Field>
       </Section>
 
-      <Section title="Accessibility">
-        <Field label="Accessibility needs (comma-separated)">
+      <Section icon={<Accessibility size={17} />} title="Accessibility" subtitle="Add anything we should account for when planning movement, activities, and stays.">
+        <Field label="Access needs">
           <input
             className={inputClass}
             value={fromList(profile.accessibility_needs)}
@@ -281,29 +217,67 @@ export function ProfileForm() {
         </Field>
       </Section>
 
-      <div className="flex items-center gap-3 pb-6">
+      </div>
+
+      <div className="mt-6 flex items-center justify-between gap-4 pt-3 max-[520px]:items-start max-[520px]:flex-col">
         <button
-          className="rounded-md bg-accent px-5 py-3 text-[0.95rem] font-semibold text-white hover:bg-accent-hover disabled:opacity-60"
+          className="inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-5 text-[0.88rem] font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-wait disabled:opacity-60"
           onClick={handleSave}
           disabled={status === "saving"}
         >
-          {status === "saving" ? "Saving…" : "Save profile"}
+          <Save size={16} />
+          {status === "saving" ? "Saving settings…" : "Save settings"}
         </button>
-        {status === "saved" ? <span className="text-[0.88rem] font-semibold text-success">Saved ✓</span> : null}
+        {status === "saved" ? (
+          <span className="inline-flex items-center gap-1.5 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-success">
+            <Check size={14} strokeWidth={2.5} /> Settings saved
+          </span>
+        ) : null}
         {status === "error" ? (
-          <span className="text-[0.88rem] text-danger">Could not save. Try again.</span>
+          <ErrorBanner message="Could not save. Try again." className="px-3 py-2" />
         ) : null}
       </div>
+    </div>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ icon, title, subtitle, children }: { icon: React.ReactNode; title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <section className="mb-4 rounded-lg border border-border bg-surface p-5">
-      <h2 className="mb-4 text-base font-bold text-fg">{title}</h2>
-      <div className="grid grid-cols-2 gap-4 max-[640px]:grid-cols-1">{children}</div>
+    <section className="py-6">
+      <header className="mb-5 flex items-start gap-3">
+        <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent-hover">{icon}</span>
+        <div>
+          <h2 className="font-display text-[1rem] font-semibold tracking-tight text-fg">{title}</h2>
+          {subtitle ? <p className="mt-1 text-[0.8rem] leading-relaxed text-muted">{subtitle}</p> : null}
+        </div>
+      </header>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-5 max-[640px]:grid-cols-1">{children}</div>
     </section>
+  );
+}
+
+function SelectField({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: React.ChangeEventHandler<HTMLSelectElement>;
+  options: string[];
+}) {
+  return (
+    <span className="relative block">
+      <select className={`${inputClass} w-full appearance-none pr-10 capitalize`} value={value} onChange={onChange}>
+        <option value="">No preference</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+    </span>
   );
 }
 

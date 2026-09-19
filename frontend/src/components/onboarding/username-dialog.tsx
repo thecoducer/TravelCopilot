@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { registerUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { Input } from "@/components/ui/input";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { TravelCopilotLogo } from "@/components/brand/travel-copilot-logo";
@@ -66,7 +67,7 @@ export function UsernameDialog() {
             spellCheck={false}
             maxLength={32}
           />
-          {error ? <p className="text-sm text-danger">{error}</p> : null}
+          {error ? <ErrorBanner message={error} className="px-3 py-2" /> : null}
           <Button type="submit" disabled={submitting} className="mt-2 w-full">
             {submitting ? "Setting up…" : "Continue"}
           </Button>

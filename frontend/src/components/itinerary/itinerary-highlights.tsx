@@ -1,18 +1,14 @@
-import type { SafetyReport, TransportSection, VisaReport } from "@/lib/types";
+import type { TransportSection, VisaReport } from "@/lib/types";
 
 type ItineraryHighlightsProps = {
   transportSection: TransportSection | null;
   visaSection: VisaReport | null;
-  safetySection: SafetyReport | null;
-  safetyBriefing: string | null;
 };
 
 /** Compact strip of transport, budget, safety, and visa highlights. */
 export function ItineraryHighlights({
   transportSection,
   visaSection,
-  safetySection,
-  safetyBriefing,
 }: ItineraryHighlightsProps) {
   const cards = [
     transportSection?.recommended?.rationale
@@ -24,13 +20,6 @@ export function ItineraryHighlights({
           value: visaSection.visa_required
             ? `Required — ${visaSection.visa_type ?? "check details"}`
             : "Not required",
-        }
-      : null,
-    safetySection
-      ? {
-          label: "Travel safety",
-          value: safetyBriefing ?? `${safetySection.advisory_level} advisory for ${safetySection.destination}`,
-          fullWidth: true,
         }
       : null,
   ].filter((card): card is { label: string; value: string; fullWidth?: boolean } => card !== null);

@@ -4,6 +4,7 @@ import type {
   Itinerary,
   PlanRequest,
   SessionSummary,
+  UsageSummaryEvent,
   UserProfileData,
 } from "@/lib/types";
 
@@ -156,6 +157,17 @@ export async function getSessionItinerary(sessionId: string): Promise<Itinerary 
   await assertOk(response);
   const data = (await response.json()) as { itinerary: Itinerary | null };
   return data.itinerary;
+}
+
+/** Loads persisted token and cost metrics for a saved itinerary. */
+export async function getTripUsage(tripId: string): Promise<UsageSummaryEvent | null> {
+  const response = await fetch(`${API_BASE_URL}/api/trip/${tripId}/usage`);
+  if (response.status === 404) {
+    return null;
+  }
+  await assertOk(response);
+  const data = (await response.json()) as { usage: UsageSummaryEvent | null };
+  return data.usage;
 }
 
 /** Loads the chat-turn history for a session. */

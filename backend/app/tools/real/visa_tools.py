@@ -26,16 +26,16 @@ class VisaCentreSearchTool:
         self,
         passport_country: str = "",
         destination_country: str = "",
-        home_city: str = "",
+        application_city: str = "",
         **kwargs: object,
     ) -> dict[str, Any]:
         query = (
             f"{passport_country} passport {destination_country} visa application centre "
-            f"official operator in {home_city}"
+            f"official operator in {application_city}"
         )
         research = await self._tavily.run(query=query, max_results=5)
-        centre_query = f"visa application centre for {destination_country} in {home_city}"
-        places = await self._places.run(location=home_city, query=centre_query)
+        centre_query = f"visa application centre for {destination_country} in {application_city}"
+        places = await self._places.run(location=application_city, query=centre_query)
         runtime = self._merge_runtime(research, places)
         sources = [
             {"title": item.get("title", ""), "url": item.get("url", "")}
@@ -88,12 +88,12 @@ class EmbassySearchTool:
         self,
         passport_country: str = "",
         destination_country: str = "",
-        home_city: str = "",
+        application_city: str = "",
         **kwargs: object,
     ) -> dict[str, Any]:
         result = await self._places.run(
-            location=home_city,
-            query=f"{destination_country} embassy or consulate in {home_city}",
+            location=application_city,
+            query=f"{destination_country} embassy or consulate in {application_city}",
         )
         runtime = result.pop(TOOL_RUNTIME_KEY, {})
         place = result.get("places", [{}])[0] if result.get("places") else None

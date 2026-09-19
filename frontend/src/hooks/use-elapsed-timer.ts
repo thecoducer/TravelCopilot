@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 
 /**
- * Returns elapsed milliseconds since `startedAt`, ticking while `active` is
- * true. Stops updating (but keeps the last value) once `active` becomes false.
+ * Returns `baseMs` plus time elapsed since `runningSince`, ticking while it is
+ * set. Frozen at `baseMs` while `runningSince` is `null` (e.g. paused for a
+ * clarification prompt), so paused time is never counted as elapsed.
  */
-export function useElapsedTimer(startedAt: number | null, active: boolean): number {
+export function useElapsedTimer(baseMs: number, runningSince: number | null): number {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!active || startedAt === null) {
+    if (runningSince === null) {
       return;
     }
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [active, startedAt]);
+  }, [runningSince]);
 
-  if (startedAt === null) {
-    return 0;
+  if (runningSince === null) {
+    return baseMs;
   }
-  return Math.max(0, now - startedAt);
+  return baseMs + Math.max(0, now - runningSince);
 }

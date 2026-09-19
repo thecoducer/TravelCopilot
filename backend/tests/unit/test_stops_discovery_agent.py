@@ -14,9 +14,9 @@ import pytest
 
 from app.agents.stops_discovery_agent import (
     StopsDiscoveryAgent,
-    _GatewayOption,
-    _Route,
-    _Stop,
+    StopDiscoveryGatewayOption,
+    StopDiscoveryRoute,
+    StopDiscoveryStop,
 )
 from app.graph.state import initial_state
 from app.models.stops import SOURCE_STOP_ID, LegType
@@ -48,20 +48,22 @@ def _base_state(**overrides: Any) -> dict[str, Any]:
 
 
 class TestSingleDestination:
-    async def test_single_destination_status_produces_no_route_structure(self) -> None:
-        route = _Route(route_discovery_status="single_destination")
+    async def test_single_destination_status_produces_one_stop_route_structure(self) -> None:
+        route = StopDiscoveryRoute(route_discovery_status="single_destination")
         agent = StopsDiscoveryAgent(llm=_make_llm(route))
 
         result = await agent(_base_state(destination="Osaka"))
 
         assert result["route_discovery_status"] == "single_destination"
-        assert result["stops"] == {}
+        assert list(result["stops"]) == ["0"]
+        assert result["stops"]["0"].name == "Osaka"
         assert result["route_legs"] == {}
-        assert result["stops_by_day"] == {}
+        assert len(result["stops_by_day"]) == 5
+        assert {allocation.stop_id for allocation in result["stops_by_day"].values()} == {"0"}
         assert result["gateway_options"] == []
 
     async def test_missing_dates_defaults_to_single_destination_without_llm_call(self) -> None:
-        llm = _make_llm(_Route(route_discovery_status="single_destination"))
+        llm = _make_llm(StopDiscoveryRoute(route_discovery_status="single_destination"))
         agent = StopsDiscoveryAgent(llm=llm)
 
         result = await agent(_base_state(dates=None))
@@ -71,20 +73,20 @@ class TestSingleDestination:
 
 
 class TestMultiStopRouteShaping:
-    def _route(self) -> _Route:
-        return _Route(
+    def _route(self) -> StopDiscoveryRoute:
+        return StopDiscoveryRoute(
             route_discovery_status="multi_stop_provisional",
             overnight_stops=[
-                _Stop(name="Bhalukpong", nights_hint=1),
-                _Stop(name="Dirang", nights_hint=1),
-                _Stop(name="Tawang", nights_hint=1),
-                _Stop(name="Dirang", nights_hint=1),
+                StopDiscoveryStop(name="Bhalukpong", nights_hint=1),
+                StopDiscoveryStop(name="Dirang", nights_hint=1),
+                StopDiscoveryStop(name="Tawang", nights_hint=1),
+                StopDiscoveryStop(name="Dirang", nights_hint=1),
             ],
             gateway_options=[
-                _GatewayOption(
+                StopDiscoveryGatewayOption(
                     option_id="gw_flight",
                     gateway_name="Fly via Guwahati",
-                    gateway_stop=_Stop(name="Guwahati", stop_kind="gateway_transit"),
+                    gateway_stop=StopDiscoveryStop(name="Guwahati", stop_kind="gateway_transit"),
                     transit_duration_hours=2.0,
                     cost_tier="mid",
                     is_recommended=True,
@@ -145,18 +147,31 @@ class TestMultiStopRouteShaping:
         assert len(result["stops_by_day"]) == trip_days
         assert set(result["stops_by_day"].keys()) == set(range(trip_days))
 
+        # An N-day trip has N-1 nights; equalling N would push checkout past the
+        # traveller's return date.
         nights_total = sum(
             stop.nights for stop in result["stops"].values() if stop.stop_kind == "overnight"
         )
-        assert nights_total == trip_days
+        assert nights_total == trip_days - 1
+
+    async def test_route_never_ends_after_the_return_date(self) -> None:
+        agent = StopsDiscoveryAgent(llm=_make_llm(self._route()))
+        state = _base_state()
+        result = await agent(state)
+
+        return_date = state["dates"].return_date
+        overnight = [s for s in result["stops"].values() if s.stop_kind == "overnight"]
+        last_stop = max(overnight, key=lambda s: s.sequence)
+        assert last_stop.departure_date == return_date
+        assert all(stop.departure_date <= return_date for stop in overnight)
 
     async def test_gateway_options_capped_and_one_recommended(self) -> None:
         route = self._route()
         route.gateway_options = [
-            _GatewayOption(
+            StopDiscoveryGatewayOption(
                 option_id=f"gw_{i}",
                 gateway_name=f"Option {i}",
-                gateway_stop=_Stop(name="Guwahati", stop_kind="gateway_transit"),
+                gateway_stop=StopDiscoveryStop(name="Guwahati", stop_kind="gateway_transit"),
             )
             for i in range(5)
         ]
@@ -170,17 +185,17 @@ class TestMultiStopRouteShaping:
         assert sum(1 for g in result["gateway_options"] if g.is_recommended) == 1
 
     async def test_direct_gateway_when_first_stop_has_no_separate_transit(self) -> None:
-        route = _Route(
+        route = StopDiscoveryRoute(
             route_discovery_status="multi_stop_provisional",
             overnight_stops=[
-                _Stop(name="Leh", nights_hint=3),
-                _Stop(name="Nubra Valley", nights_hint=2),
+                StopDiscoveryStop(name="Leh", nights_hint=3),
+                StopDiscoveryStop(name="Nubra Valley", nights_hint=2),
             ],
             gateway_options=[
-                _GatewayOption(
+                StopDiscoveryGatewayOption(
                     option_id="gw_direct",
                     gateway_name="Direct flight",
-                    gateway_stop=_Stop(name="Leh", stop_kind="overnight"),
+                    gateway_stop=StopDiscoveryStop(name="Leh", stop_kind="overnight"),
                     is_recommended=True,
                 )
             ],
@@ -207,7 +222,7 @@ class TestDiscoveryFailed:
         assert result["stops"] == {}
 
     async def test_route_version_increments_on_each_call(self) -> None:
-        route = _Route(route_discovery_status="single_destination")
+        route = StopDiscoveryRoute(route_discovery_status="single_destination")
         agent = StopsDiscoveryAgent(llm=_make_llm(route))
 
         first = await agent(_base_state())

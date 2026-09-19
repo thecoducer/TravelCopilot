@@ -12,6 +12,7 @@ export type PlanRequest = {
 };
 
 export type ClarifyRequest = {
+  request_id: string;
   answers: Record<string, string>;
 };
 
@@ -37,13 +38,8 @@ export type UserProfileData = {
   user_id: string;
   username?: string | null;
   display_name?: string | null;
-  home_city?: string | null;
   nationality?: string | null;
-  passport_country?: string | null;
   preferred_currency?: string;
-  total_budget?: number | null;
-  per_day_budget?: number | null;
-  budget_currency?: string;
   dietary_restrictions?: string[];
   preferred_cuisines?: string[];
   food_preferences_configured?: boolean;
@@ -52,7 +48,6 @@ export type UserProfileData = {
   preferred_airlines?: string[];
   preferred_hotel_chains?: string[];
   hotel_style?: string | null;
-  budget_tier?: string;
   travel_style?: string | null;
   fitness_level?: string | null;
   altitude_experience?: boolean | null;
@@ -79,10 +74,14 @@ export type ClarificationPrompt = {
   input_type: "text" | "date" | "number" | "select";
   options: string[];
   extracted_value: string | null;
+  optional?: boolean;
+  skip_label?: string;
 };
 
 export type NeedsClarificationEvent = {
   session_id: string;
+  request_id: string;
+  requester: string;
   prompts: ClarificationPrompt[];
   round: number;
 };
@@ -93,20 +92,16 @@ export type CompleteEvent = {
   itinerary: Itinerary | null;
 };
 
-export type AgentUsage = {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  cost_usd: number;
-  latency_ms: number;
-};
-
 export type UsageSummaryEvent = {
   session_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
   total_tokens: number;
-  total_cost_usd: number;
-  total_latency_ms: number;
-  per_agent: Record<string, AgentUsage>;
+  cost_usd: number;
+  total_duration_ms?: number;
+  llm_calls: number;
 };
 
 export type ErrorEvent = {
@@ -240,21 +235,6 @@ export type ScamEntry = {
   how_to_avoid: string;
 };
 
-export type DaySafetyBriefing = {
-  summary: string;
-  advisory_level: string | null;
-  seasonal_weather_summary?: string | null;
-  crowd_level?: string | null;
-  seasonal_risks?: string[];
-  altitude_meters?: number | null;
-  altitude_warning?: string | null;
-  acclimatization_advice?: string | null;
-  top_scams?: ScamEntry[];
-  emergency_contacts?: Record<string, string>;
-  women_safety_notes?: string | null;
-  medical_facilities?: string | null;
-};
-
 export type ReviewSummary = {
   place_name: string;
   rating: number | null;
@@ -277,11 +257,9 @@ export type TripDays = {
   food_options: FoodOptions[];
   stay_options: StayOptions | null;
   transport_options: TransportOptions[];
-  safety_briefing: DaySafetyBriefing | null;
   review_highlights: ReviewSummary[];
   permits_required: string[];
   altitude_meters: number | null;
-  altitude_warning: string | null;
   connectivity: string | null;
   drive_notes: string | null;
   estimated_cost: number | null;
@@ -419,8 +397,6 @@ export type Itinerary = {
   id: string | null;
   title: string;
   source: string;
-  destination: string;
-  destinations: string[];
   dates: TripDates | null;
   travelers: number;
   trip_days: TripDays[];

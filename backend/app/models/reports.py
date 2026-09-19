@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.models.enums import BudgetVerdict, SectionStatus, Sentiment
+
 # ── Shared building blocks ──────────────────────────────────────────────────
 
 
@@ -40,7 +42,10 @@ class ScamEntry(BaseModel):
 
 class SafetyReport(BaseModel):
     destination: str
-    advisory_level: str  # e.g. "Exercise normal caution"
+    advisory_level: str | None = None  # e.g. "Exercise normal caution"
+    # UNAVAILABLE distinguishes "the agent could not produce this" from
+    # "there was genuinely nothing to report".
+    status: SectionStatus = SectionStatus.POPULATED
     travel_month: str | None = None
     is_peak_season: bool | None = None
     season_label: str | None = None
@@ -125,7 +130,7 @@ class BudgetReport(BaseModel):
     fx_disclaimer: str | None = None
     per_category_breakdown: dict[str, float] = Field(default_factory=dict)
     per_day_breakdown: list[float] = Field(default_factory=list)
-    vs_budget_verdict: str  # "on-budget" | "over" | "under"
+    vs_budget_verdict: BudgetVerdict
     cost_saving_tips: list[str] = Field(default_factory=list)
     per_person_cost: float | None = None  # total_estimated_cost / number of travelers
     permit_costs: float | None = None  # ILP, PAP, park fees etc. broken out separately
@@ -142,7 +147,9 @@ class ReviewSummary(BaseModel):
     review_count: int | None = None
     pros: list[str] = Field(default_factory=list)
     cons: list[str] = Field(default_factory=list)
-    sentiment: str | None = None  # "positive" | "mixed" | "negative"
+    # UNKNOWN whenever no review text backed the judgement — never imply a
+    # positive reception the provider data does not support.
+    sentiment: Sentiment = Sentiment.UNKNOWN
     photos: list[str] = Field(default_factory=list)
     google_maps_url: str | None = None
     # Multi-stop identity — unset for single_destination trips. ``review_key`` is
@@ -158,10 +165,14 @@ class ReviewSummary(BaseModel):
 # ── Observability ────────────────────────────────────────────────────────────
 
 
-class AgentTokenUsage(BaseModel):
-    agent_name: str
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
+class RunUsage(BaseModel):
+    """Aggregated usage and wall-clock duration for one planning run."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float = 0.0
-    latency_ms: float = 0.0
+    total_duration_ms: float = 0.0
+    llm_calls: int = 0

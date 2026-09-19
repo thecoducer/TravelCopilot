@@ -12,15 +12,32 @@ Production:  JSON lines with a structured, machine-parseable ``exception`` field
 from __future__ import annotations
 
 import logging as stdlib_logging
-from typing import cast
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 import structlog
 
-from app.config import settings
+logger = structlog.get_logger(__name__)
+
+
+def log_configuration_validation_errors(errors: Sequence[Mapping[str, Any]]) -> None:
+    """Log each configuration validation error with its environment key."""
+    for error in errors:
+        field_name = ".".join(str(part) for part in error["loc"])
+        if error["type"] == "missing":
+            logger.error("required_configuration_missing", key=field_name)
+        else:
+            logger.error(
+                "configuration_invalid",
+                key=field_name,
+                error_type=error["type"],
+            )
 
 
 def configure_logging() -> None:
     """Configure structlog + stdlib logging to share one rendering pipeline."""
+    from app.config import settings
+
     level_int = stdlib_logging.getLevelName(settings.log_level.upper())
 
     # Processors shared by both structlog and stdlib foreign-log chains.
@@ -65,7 +82,10 @@ def configure_logging() -> None:
         ]
 
     structlog.configure(
-        processors=shared_processors + final_processors,
+        # Because records are routed through stdlib, structlog must hand the event
+        # dict to ProcessorFormatter instead of rendering it — rendering here too
+        # produces a fully-formatted line nested inside a second formatted line.
+        processors=shared_processors + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
         wrapper_class=structlog.make_filtering_bound_logger(level_int),
         context_class=dict,
         # Route through stdlib so both structlog + stdlib share one handler.
@@ -76,7 +96,10 @@ def configure_logging() -> None:
     # Single stdlib handler using structlog's ProcessorFormatter so foreign
     # logs (LiteLLM, uvicorn, SQLAlchemy) are also rendered consistently.
     formatter = structlog.stdlib.ProcessorFormatter(
-        processors=final_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            *final_processors,
+        ],
         foreign_pre_chain=shared_processors,
     )
     handler = stdlib_logging.StreamHandler()
