@@ -1,6 +1,6 @@
 """Prompt templates for the reviews agent."""
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from app.models.enums import Sentiment
 
@@ -24,7 +24,8 @@ REVIEW_SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
             "human",
             "Place: {place_name}\n"
             "Rating: {rating}/5 ({review_count} reviews)\n\n"
-            "Reviews:\n{reviews}",
+            "Reviews:",
         ),
+        MessagesPlaceholder("reviews"),
     ]
 )

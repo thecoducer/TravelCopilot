@@ -1,6 +1,6 @@
 """Prompt templates for shared agent behavior."""
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 OPTIONAL_CLARIFICATION_SYSTEM_PROMPT = (
     "You may ask up to 3 optional questions to improve the itinerary. "
@@ -13,6 +13,9 @@ OPTIONAL_CLARIFICATION_SYSTEM_PROMPT = (
 OPTIONAL_CLARIFICATION_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", OPTIONAL_CLARIFICATION_SYSTEM_PROMPT),
-        ("human", "Agent context:\n{context}\nTrip state:\n{state}"),
+        ("human", "Agent context:"),
+        MessagesPlaceholder("context"),
+        ("human", "Trip state:"),
+        MessagesPlaceholder("state"),
     ]
 )

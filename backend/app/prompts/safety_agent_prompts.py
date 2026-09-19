@@ -1,6 +1,6 @@
 """Prompt templates for the safety agent."""
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 SYSTEM_PROMPT = """\\
 You are a travel safety analyst. Based on the search results and venue list below, produce a
@@ -27,7 +27,9 @@ SAFETY_REPORT_PROMPT = ChatPromptTemplate.from_messages(
         ("system", SYSTEM_PROMPT),
         (
             "human",
-            "Destination: {destination}\n\nSearch results:\n{context}{venue_section}",
+          "Destination: {destination}\n\nSearch results:",
         ),
+        MessagesPlaceholder("search_results"),
+        MessagesPlaceholder("venue_context"),
     ]
 )

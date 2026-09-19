@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from langchain_core.messages import HumanMessage
+
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
@@ -170,7 +172,7 @@ class VisaAgent(AgentClarificationMixin):
                 VISA_REPORT_PROMPT.format_messages(
                     passport_country=passport_country,
                     destination_country=destination_country,
-                    context=context,
+                    search_results=[HumanMessage(content=context)],
                 ),
                 agent=AgentName.VISA,
                 log=log,

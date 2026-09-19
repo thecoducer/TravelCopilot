@@ -1,6 +1,6 @@
 """Prompt templates for the itinerary compiler agent."""
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 DAY_PLAN_PROMPT = """\\
 You are assembling {day_count} day(s) at {stop_name} for a traveller.
@@ -53,6 +53,6 @@ DAY_PLAN_CHAT_PROMPT = ChatPromptTemplate.from_messages(
 NARRATIVE_CHAT_PROMPT = ChatPromptTemplate.from_messages(
     [
         ("system", NARRATIVE_PROMPT),
-        ("human", "{narrative_context}"),
+    MessagesPlaceholder("narrative_context"),
     ]
 )

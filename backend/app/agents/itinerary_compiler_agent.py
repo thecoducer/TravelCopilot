@@ -36,6 +36,8 @@ import json
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from langchain_core.messages import HumanMessage
+
 from app.agents.base import AgentClarificationMixin
 from app.config import settings
 from app.llm import StructuredOutputError, get_llm, invoke_structured
@@ -313,7 +315,9 @@ class ItineraryCompilerAgent(AgentClarificationMixin):
                 self._llm,
                 TripNarrative,
                 NARRATIVE_CHAT_PROMPT.format_messages(
-                    narrative_context=self._compiler.build_narrative_context(state, days)
+                    narrative_context=[
+                        HumanMessage(content=self._compiler.build_narrative_context(state, days))
+                    ]
                 ),
                 agent=AgentName.ITINERARY_COMPILER,
                 log=log,

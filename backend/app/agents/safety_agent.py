@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from langchain_core.messages import HumanMessage
+
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
@@ -104,8 +106,8 @@ class SafetyAgent(AgentClarificationMixin):
                 SafetyReport,
                 SAFETY_REPORT_PROMPT.format_messages(
                     destination=destination,
-                    context=context,
-                    venue_section=venue_section,
+                    search_results=[HumanMessage(content=context)],
+                    venue_context=([HumanMessage(content=venue_section)] if venue_section else []),
                 ),
                 agent=AgentName.SAFETY,
                 session_id=session_id,

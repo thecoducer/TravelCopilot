@@ -10,6 +10,8 @@ import asyncio
 import re
 from typing import Any, NamedTuple
 
+from langchain_core.messages import HumanMessage
+
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
@@ -211,7 +213,7 @@ class ReviewsAgent(AgentClarificationMixin):
                         place_name=target.name,
                         rating=details.get("rating"),
                         review_count=details.get("review_count"),
-                        reviews=reviews_text,
+                        reviews=[HumanMessage(content=reviews_text)],
                     ),
                     agent=AgentName.REVIEWS,
                     log=log,

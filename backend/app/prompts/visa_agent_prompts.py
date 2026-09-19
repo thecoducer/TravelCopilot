@@ -1,6 +1,6 @@
 """Prompt templates for the visa agent."""
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 SYSTEM_PROMPT = """\\
 You are an expert visa and immigration adviser. Based on the search results below,
@@ -23,8 +23,8 @@ VISA_REPORT_PROMPT = ChatPromptTemplate.from_messages(
         (
             "human",
             "Passport country: {passport_country}\n"
-            "Destination country: {destination_country}\n\n"
-            "Search results:\n{context}",
+            "Destination country: {destination_country}\n\nSearch results:",
         ),
+        MessagesPlaceholder("search_results"),
     ]
 )

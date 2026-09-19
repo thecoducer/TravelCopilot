@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+from langchain_core.messages import HumanMessage
 
 from app.llm import StructuredOutputError, invoke_structured
 from app.models.clarification import ClarificationPrompt, OptionalClarificationOutput
@@ -46,7 +47,10 @@ class AgentClarificationMixin:
             proposal = await invoke_structured(
                 llm,
                 OptionalClarificationOutput,
-                OPTIONAL_CLARIFICATION_PROMPT.format_messages(context=context, state=state),
+                OPTIONAL_CLARIFICATION_PROMPT.format_messages(
+                    context=[HumanMessage(content=context)],
+                    state=[HumanMessage(content=str(state))],
+                ),
                 agent=requester,
             )
         except StructuredOutputError as exc:
