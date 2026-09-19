@@ -157,14 +157,14 @@ class TestGraphCompilation:
 class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_domestic_route_returns_correct_keys(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Leh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Leh", confidence=0.95),
             departure_date="2026-07-15",
             trip_days=5,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -187,14 +187,14 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_self_drive_intent_comes_from_structured_parser(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Mumbai", confidence=0.9),
-            destination=_FieldConfidence(value="Goa", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Mumbai", confidence=0.9),
+            destination=FieldConfidence(value="Goa", confidence=0.95),
             departure_date="2026-08-01",
             trip_days=4,
-            travelers=_FieldConfidence(value="1", confidence=0.9),
+            travelers=FieldConfidence(value="1", confidence=0.9),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=True,
@@ -212,15 +212,15 @@ class TestOrchestratorAgent:
         """When required fields are missing, the orchestrator calls interrupt()
         with a payload containing the clarification prompts.
         """
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
         from app.config import settings
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="unknown", confidence=0.3),
-            destination=_FieldConfidence(value=None, confidence=0.0),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="unknown", confidence=0.3),
+            destination=FieldConfidence(value=None, confidence=0.0),
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -240,10 +240,10 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_clarification_requests_all_missing_trip_fields(self) -> None:
-        from app.agents.orchestrator import _ParsedQuery
+        from app.agents.orchestrator import ParsedQuery
         from app.config import settings
 
-        agent = OrchestratorAgent(llm=_make_llm(_ParsedQuery()))
+        agent = OrchestratorAgent(llm=_make_llm(ParsedQuery()))
 
         with patch.object(settings, "max_clarification_rounds", 1):
             result, payloads = await _drive_orchestrator(
@@ -257,15 +257,15 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_clarification_triggered_when_trip_days_unstated(self) -> None:
         """A query with no stated or implied duration must be clarified, never defaulted to 3."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Goa", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Goa", confidence=0.95),
             departure_date="2026-11-01",
             trip_days=None,
             trip_days_confidence=0.0,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -286,15 +286,15 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_fully_specified_query_no_clarification(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Osaka", confidence=0.98),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Osaka", confidence=0.98),
             departure_date="2026-10-14",
             return_date="2026-10-17",
             trip_days=3,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=True,
             self_drive_intent=False,
@@ -312,21 +312,21 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_unstable_llm_parse_does_not_reask_answered_fields(self) -> None:
         """A disagreeing second parse must not restart the clarification loop."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        first = _ParsedQuery(
-            source=_FieldConfidence(value=None, confidence=0.0),
-            destination=_FieldConfidence(value="Sikkim", confidence=0.95),
+        first = ParsedQuery(
+            source=FieldConfidence(value=None, confidence=0.0),
+            destination=FieldConfidence(value="Sikkim", confidence=0.95),
             departure_date=None,
             trip_days=8,
             trip_days_confidence=1.0,
-            travelers=_FieldConfidence(value=None, confidence=0.0),
+            travelers=FieldConfidence(value=None, confidence=0.0),
             budget_tier=None,
             dates_confidence=0.0,
             destination_country="India",
         )
         drifted = first.model_copy(
-            update={"destination": _FieldConfidence(value="Sikkim", confidence=0.1)}
+            update={"destination": FieldConfidence(value="Sikkim", confidence=0.1)}
         )
 
         chain = MagicMock()
@@ -395,14 +395,14 @@ class TestOrchestratorAgent:
 
     @pytest.mark.asyncio
     async def test_structured_travelers_value_is_used(self) -> None:
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Arunachal Pradesh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Arunachal Pradesh", confidence=0.95),
             departure_date="2026-11-11",
             trip_days=5,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             is_international=False,
             dates_confidence=0.95,
@@ -427,15 +427,15 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_deterministic_duration_override_from_query(self) -> None:
         """Query duration '6 days' deterministically overrides LLM default trip_days=3."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
         # Mock LLM returns default trip_days=3, missing the 'for 6 days' in query
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Ladakh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Ladakh", confidence=0.95),
             departure_date=None,
             trip_days=3,  # LLM failed to extract 6
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -464,15 +464,15 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_clarification_interrupt_contains_input_type(self) -> None:
         """Interrupt payload prompts include input_type for frontend rendering."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
         from app.config import settings
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.9),
-            destination=_FieldConfidence(value=None, confidence=0.0),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.9),
+            destination=FieldConfidence(value=None, confidence=0.0),
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -497,14 +497,14 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_missing_source_requires_clarification(self) -> None:
         """A missing source is never inferred from a user profile."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value=None, confidence=0.0),
-            destination=_FieldConfidence(value="Leh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value=None, confidence=0.0),
+            destination=FieldConfidence(value="Leh", confidence=0.95),
             departure_date="2026-07-15",
             trip_days=4,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -525,16 +525,16 @@ class TestOrchestratorAgent:
         from app.agents.orchestrator import (
             _compute_missing,
             _derive_is_international,
-            _FieldConfidence,
-            _ParsedQuery,
+            FieldConfidence,
+            ParsedQuery,
         )
 
-        parsed = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=1.0),
-            destination=_FieldConfidence(value="Darjeeling", confidence=0.95),
+        parsed = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=1.0),
+            destination=FieldConfidence(value="Darjeeling", confidence=0.95),
             trip_days=5,
             trip_days_confidence=1.0,
-            travelers=_FieldConfidence(value="3", confidence=1.0),
+            travelers=FieldConfidence(value="3", confidence=1.0),
             budget_tier="mid",
             departure_date="2026-10-01",
             dates_confidence=1.0,
@@ -618,14 +618,14 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_date_clarification_preserves_parsed_trip_days(self) -> None:
         """A single calendar date preserves the parsed trip duration."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        mock_response = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.95),
-            destination=_FieldConfidence(value="Ladakh", confidence=0.95),
+        mock_response = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.95),
+            destination=FieldConfidence(value="Ladakh", confidence=0.95),
             departure_date=None,
             trip_days=5,
-            travelers=_FieldConfidence(value="1", confidence=0.8),
+            travelers=FieldConfidence(value="1", confidence=0.8),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -681,15 +681,15 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_max_clarification_rounds_exhausted_stops_without_defaults(self) -> None:
         """After max clarification rounds, required fields remain unresolved."""
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
         from app.config import settings
 
-        ambiguous_response = _ParsedQuery(
-            source=_FieldConfidence(value="unknown", confidence=0.3),
-            destination=_FieldConfidence(value=None, confidence=0.0),
+        ambiguous_response = ParsedQuery(
+            source=FieldConfidence(value="unknown", confidence=0.3),
+            destination=FieldConfidence(value=None, confidence=0.0),
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value=None, confidence=0.0),
+            travelers=FieldConfidence(value=None, confidence=0.0),
             budget_tier="mid",
             is_international=False,
             self_drive_intent=False,
@@ -811,11 +811,11 @@ class TestTransportSearchAgent:
     async def test_returns_transport_legs_raw(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        from app.agents.transport_search_agent import _HubResult, _RouteCombo
+        from app.agents.transport_search_agent import HubResult, RouteCombo
 
-        mock_hubs = _HubResult(
+        mock_hubs = HubResult(
             route_combinations=[
-                _RouteCombo(origin="KOL", destination="IXL", mode="flight"),
+                RouteCombo(origin="KOL", destination="IXL", mode="flight"),
             ]
         )
         agent = TransportSearchAgent(
@@ -840,11 +840,11 @@ class TestTransportSearchAgent:
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
         """Should use a direct flight when the LLM returns no routes."""
-        from app.agents.transport_search_agent import _HubResult
+        from app.agents.transport_search_agent import HubResult
 
         agent = TransportSearchAgent(
             tool_factory=mock_tool_factory,
-            llm=_make_llm(_HubResult(route_combinations=[])),
+            llm=_make_llm(HubResult(route_combinations=[])),
         )
         result = await agent({**base_state, "source": "", "destination": ""})
         assert "transport_legs_raw" in result
@@ -854,12 +854,12 @@ class TestTransportSearchAgent:
     async def test_dispatches_taxi_and_transit_modes(
         self, mock_tool_factory: ToolFactory, base_state: dict[str, Any]
     ) -> None:
-        from app.agents.transport_search_agent import _HubResult, _RouteCombo
+        from app.agents.transport_search_agent import HubResult, RouteCombo
 
-        mock_hubs = _HubResult(
+        mock_hubs = HubResult(
             route_combinations=[
-                _RouteCombo(origin="KOL", destination="DEL", mode="train"),
-                _RouteCombo(origin="DEL", destination="LEH", mode="taxi"),
+                RouteCombo(origin="KOL", destination="DEL", mode="train"),
+                RouteCombo(origin="DEL", destination="LEH", mode="taxi"),
                 {"origin": "KOL", "destination": "LEH", "mode": "other"},
             ]
         )
@@ -1061,9 +1061,9 @@ class TestStayAnalystAgent:
                 review_count=120,
             ),
         ]
-        from app.agents.stay_analyst_agent import _RankingOutput
+        from app.agents.stay_analyst_agent import RankingOutput
 
-        mock_result = _RankingOutput(
+        mock_result = RankingOutput(
             ranked_indices=[0, 1, 2],
             personalization_reasons=[
                 "Best rating for mid-range travellers.",
@@ -1297,7 +1297,7 @@ class TestTransportOptimizerAgent:
     ) -> None:
         from datetime import UTC, datetime
 
-        from app.agents.transport_optimizer_agent import _OptimiserOutput
+        from app.agents.transport_optimizer_agent import OptimiserOutput
         from app.models.transport import RouteLeg, RouteWaypoint, TransportRecommendation
 
         rec = TransportRecommendation(
@@ -1324,7 +1324,7 @@ class TestTransportOptimizerAgent:
                 RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
             ],
         )
-        mock_out = _OptimiserOutput(recommended=rec, alternatives=[])
+        mock_out = OptimiserOutput(recommended=rec, alternatives=[])
         from app.agents.transport_optimizer_agent import TransportOptimizerAgent
 
         agent = TransportOptimizerAgent(llm=_make_llm(mock_out))
@@ -1343,7 +1343,7 @@ class TestTransportOptimizerAgent:
     ) -> None:
         from datetime import UTC, datetime
 
-        from app.agents.transport_optimizer_agent import _OptimiserOutput
+        from app.agents.transport_optimizer_agent import OptimiserOutput
         from app.models.transport import RouteLeg, RouteWaypoint, TransportRecommendation
 
         leg = RouteLeg(
@@ -1369,7 +1369,7 @@ class TestTransportOptimizerAgent:
                 RouteWaypoint(label="IXL", name="Leh", lat=34.15, lng=77.57),
             ],
         )
-        mock_out = _OptimiserOutput(recommended=rec, alternatives=[])
+        mock_out = OptimiserOutput(recommended=rec, alternatives=[])
         from app.agents.transport_optimizer_agent import TransportOptimizerAgent
 
         agent = TransportOptimizerAgent(llm=_make_llm(mock_out))
@@ -1426,11 +1426,11 @@ class TestReviewsAgent:
         ]
 
         def _mock_side_effect(schema: Any) -> MagicMock:
-            from app.agents.reviews_agent import _PlaceSummary
+            from app.agents.reviews_agent import PlaceSummary
 
             chain = MagicMock()
             chain.ainvoke = AsyncMock(
-                return_value=_PlaceSummary(
+                return_value=PlaceSummary(
                     pros=["Good location", "Clean rooms"],
                     cons=["Noisy street"],
                     sentiment="positive",

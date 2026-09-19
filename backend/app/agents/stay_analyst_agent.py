@@ -12,12 +12,11 @@ import json
 from statistics import mean
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
+from app.models.output.stay_analyst_agent_output import RankingOutput
 from app.models.transport import StayOption
 from app.models.user_profile import BudgetTier, budget_from_state
 from app.prompts.stay_analyst_agent_prompts import STAY_RANKING_PROMPT
@@ -27,12 +26,6 @@ _BUDGET_MAX_MULTIPLIER = 0.85  # budget: at most 85% of average price
 _MID_MAX_MULTIPLIER = 1.6  # mid: at most 160% of average price
 
 _PRICE_DISCLAIMER = "Price per night is indicative — confirm on booking platform before reserving."
-
-
-class _RankingOutput(BaseModel):
-    ranked_indices: list[int] = Field(default_factory=list)
-    personalization_reasons: list[str] = Field(default_factory=list)
-    rationale: str = ""
 
 
 def _budget_filter(stays: list[StayOption], budget_tier: str) -> list[StayOption]:
@@ -164,7 +157,7 @@ class StayAnalystAgent(AgentClarificationMixin):
         try:
             ranking = await invoke_structured(
                 self._llm,
-                _RankingOutput,
+                RankingOutput,
                 STAY_RANKING_PROMPT.format_messages(
                     budget_tier=budget_tier,
                     hotel_style=hotel_style or "any",
@@ -177,7 +170,7 @@ class StayAnalystAgent(AgentClarificationMixin):
         except StructuredOutputError as exc:
             log.error(LogEvent.AGENT_DEGRADED, section="stay_ranking", error=str(exc))
             # Fallback: top 3 by rating
-            ranking = _RankingOutput(
+            ranking = RankingOutput(
                 ranked_indices=list(range(min(3, len(candidates)))),
                 personalization_reasons=["Best available option"] * min(3, len(candidates)),
                 rationale="Ranked by rating (fallback).",

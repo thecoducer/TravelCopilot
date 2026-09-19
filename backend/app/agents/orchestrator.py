@@ -26,7 +26,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from app.agents.base import AgentClarificationMixin
 from app.config import settings
@@ -34,6 +34,7 @@ from app.llm import get_llm, structured_llm
 from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
 from app.models.enums import LogEvent
+from app.models.output.orchestrator_agent_output import FieldConfidence, ParsedQuery
 from app.models.user_profile import (
     BudgetPreference,
     BudgetTier,
@@ -86,61 +87,6 @@ def _parse_flexibility_answer(value: str) -> int | None:
 # ── Structured LLM output ─────────────────────────────────────────────────────
 
 
-class _FieldConfidence(BaseModel):
-    value: str | None = None
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-
-
-class _ParsedQuery(BaseModel):
-    """Structured output from the orchestrator's LLM call."""
-
-    source: _FieldConfidence = Field(
-        default_factory=lambda: _FieldConfidence(value=None, confidence=0.0)
-    )
-    destination: _FieldConfidence = Field(
-        default_factory=lambda: _FieldConfidence(value=None, confidence=0.0)
-    )
-    departure_date: str | None = Field(
-        default=None, description="ISO-8601 departure date, null if not mentioned"
-    )
-    return_date: str | None = Field(
-        default=None,
-        description=("ISO-8601 return/end date if explicitly mentioned, otherwise null"),
-    )
-    # None means the query did not state or imply a duration — the compiler must
-    # never guess this, so it is a first-class clarification field like ``dates``.
-    trip_days: int | None = Field(
-        default=None,
-        ge=1,
-        description="Total duration of the trip in days (e.g. 6 for 'for 6 days', 7 for '1 week')",
-    )
-    trip_days_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    travelers: _FieldConfidence = Field(
-        default_factory=lambda: _FieldConfidence(value=None, confidence=0.0)
-    )
-    budget_tier: str | None = Field(
-        default=None, description="budget | mid | luxury; null if not specified"
-    )
-    interests: list[str] = Field(default_factory=list)
-    is_international: bool | None = Field(
-        default=None,
-        description=(
-            "True for cross-border travel, false for same-country travel, "
-            "null when geography is ambiguous"
-        ),
-    )
-    self_drive_intent: bool = False
-    dates_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    source_country: str | None = Field(
-        default=None,
-        description="Country of the departure city, null when it cannot be determined",
-    )
-    destination_country: str | None = Field(
-        default=None,
-        description="Country of the destination, null when it cannot be determined",
-    )
-
-
 # ── Clarification helper functions ────────────────────────────────────────────
 
 
@@ -173,7 +119,7 @@ def _build_clarification_prompt(field: str, extracted_value: str | None) -> Clar
     )
 
 
-def _field_values(parsed: _ParsedQuery) -> dict[str, str | None]:
+def _field_values(parsed: ParsedQuery) -> dict[str, str | None]:
     """Map each clarification field to the value currently parsed for it."""
     return {
         "destination": parsed.destination.value,
@@ -185,7 +131,7 @@ def _field_values(parsed: _ParsedQuery) -> dict[str, str | None]:
     }
 
 
-def _field_confidences(parsed: _ParsedQuery) -> dict[str, float]:
+def _field_confidences(parsed: ParsedQuery) -> dict[str, float]:
     return {
         "destination": parsed.destination.confidence,
         "source": parsed.source.confidence,
@@ -196,7 +142,7 @@ def _field_confidences(parsed: _ParsedQuery) -> dict[str, float]:
     }
 
 
-def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
+def _compute_missing(parsed: ParsedQuery) -> list[tuple[str, str | None]]:
     """Return list of (field, extracted_value_or_None) for fields needing clarification."""
     field_values = _field_values(parsed)
     field_confidences = _field_confidences(parsed)
@@ -215,7 +161,7 @@ def _compute_missing(parsed: _ParsedQuery) -> list[tuple[str, str | None]]:
     return missing
 
 
-def _derive_is_international(parsed: _ParsedQuery, log: Any) -> bool:
+def _derive_is_international(parsed: ParsedQuery, log: Any) -> bool:
     """Resolve cross-border travel from the parsed countries instead of asking the user."""
     source_country = (parsed.source_country or "").strip().lower()
     destination_country = (parsed.destination_country or "").strip().lower()
@@ -231,17 +177,17 @@ def _derive_is_international(parsed: _ParsedQuery, log: Any) -> bool:
     return False
 
 
-def _restore_parsed(payload: Any) -> _ParsedQuery | None:
+def _restore_parsed(payload: Any) -> ParsedQuery | None:
     """Rebuild the cached parse from state, or None when absent/incompatible."""
     if not isinstance(payload, dict):
         return None
     try:
-        return _ParsedQuery.model_validate(payload)
+        return ParsedQuery.model_validate(payload)
     except ValidationError:
         return None
 
 
-def _confidence_map(parsed: _ParsedQuery) -> dict[str, float]:
+def _confidence_map(parsed: ParsedQuery) -> dict[str, float]:
     return {
         "destination": parsed.destination.confidence,
         "source": parsed.source.confidence,
@@ -263,7 +209,7 @@ def _hard_stop(message: str, fields: list[str]) -> dict[str, Any]:
     }
 
 
-def _build_trip_dates(parsed: _ParsedQuery, trip_days: int) -> TripDates:
+def _build_trip_dates(parsed: ParsedQuery, trip_days: int) -> TripDates:
     span = timedelta(days=max(0, trip_days - 1))
     try:
         departure = date.fromisoformat(parsed.departure_date or "")
@@ -303,16 +249,16 @@ def _parse_date_answer(dates_str: str) -> tuple[str | None, str | None, float]:
     return None, None, 0.0
 
 
-def _apply_answers(parsed: _ParsedQuery, answers: dict[str, str]) -> None:
+def _apply_answers(parsed: ParsedQuery, answers: dict[str, str]) -> None:
     """Inject user's clarification answers directly into ``parsed`` at confidence=1.0."""
     if dest := answers.get("destination", "").strip():
-        parsed.destination = _FieldConfidence(value=dest, confidence=1.0)
+        parsed.destination = FieldConfidence(value=dest, confidence=1.0)
     if source := answers.get("source", "").strip():
-        parsed.source = _FieldConfidence(value=source, confidence=1.0)
+        parsed.source = FieldConfidence(value=source, confidence=1.0)
     if travelers_str := answers.get("travelers", "").strip():
         try:
             int(travelers_str)  # validate it's a number
-            parsed.travelers = _FieldConfidence(value=travelers_str, confidence=1.0)
+            parsed.travelers = FieldConfidence(value=travelers_str, confidence=1.0)
         except ValueError:
             pass
     if trip_days_str := answers.get("trip_days", "").strip():
@@ -344,9 +290,9 @@ class OrchestratorAgent(AgentClarificationMixin):
     def __init__(self, llm: Any | None = None) -> None:
         self._llm = llm or get_llm("orchestrator")
 
-    async def _parse_query(self, query: str, log: Any) -> _ParsedQuery | None:
+    async def _parse_query(self, query: str, log: Any) -> ParsedQuery | None:
         """Run the single structured-output parse for this planning session."""
-        chain = structured_llm(self._llm, _ParsedQuery)
+        chain = structured_llm(self._llm, ParsedQuery)
         try:
             raw = await chain.ainvoke(
                 QUERY_PARSE_PROMPT.partial(today=date.today().isoformat()).format_messages(
@@ -360,7 +306,7 @@ class OrchestratorAgent(AgentClarificationMixin):
             )
             return None
 
-        parsed = raw if isinstance(raw, _ParsedQuery) else _ParsedQuery.model_validate(raw)
+        parsed = raw if isinstance(raw, ParsedQuery) else ParsedQuery.model_validate(raw)
         log.info(
             "llm_parse_result",
             query=query[:80],

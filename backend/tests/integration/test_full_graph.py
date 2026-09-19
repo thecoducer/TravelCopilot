@@ -18,11 +18,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
-from app.agents.stay_analyst_agent import _RankingOutput
-from app.agents.stops_discovery_agent import _GatewayOption, _Route, _Stop
-from app.agents.transport_optimizer_agent import _LegRecommendation, _OptimiserOutput
-from app.agents.transport_search_agent import _HubResult, _RouteCombo
+from app.agents.orchestrator import FieldConfidence, ParsedQuery
+from app.agents.stay_analyst_agent import RankingOutput
+from app.agents.stops_discovery_agent import StopDiscoveryGatewayOption, StopDiscoveryRoute, StopDiscoveryStop
+from app.agents.transport_optimizer_agent import LegRecommendation, OptimiserOutput
+from app.agents.transport_search_agent import HubResult, RouteCombo
 from app.graph.graph import build_graph
 from app.graph.state import initial_state
 from app.models.itinerary import (
@@ -154,20 +154,20 @@ def _make_fake_llm(
     destination: str = "Osaka",
     is_intl: bool = False,
     self_drive: bool = False,
-    route: _Route | None = None,
-    parsed_query: _ParsedQuery | None = None,
+    route: StopDiscoveryRoute | None = None,
+    parsed_query: ParsedQuery | None = None,
 ) -> MagicMock:
     """Return a MagicMock LLM that dispatches by schema type."""
     _responses: dict[type, Any] = {
-        _ParsedQuery: parsed_query
-        or _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=0.9),
-            destination=_FieldConfidence(value=destination, confidence=0.95),
+        ParsedQuery: parsed_query
+        or ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=0.9),
+            destination=FieldConfidence(value=destination, confidence=0.95),
             departure_date="2026-10-14",
             return_date="2026-10-16",
             trip_days=3,
             trip_days_confidence=0.9,
-            travelers=_FieldConfidence(value="2", confidence=1.0),
+            travelers=FieldConfidence(value="2", confidence=1.0),
             budget_tier="mid",
             interests=["food", "history"],
             is_international=is_intl,
@@ -199,12 +199,12 @@ def _make_fake_llm(
             confidence="medium" if is_intl else "high",
             sources=[],
         ),
-        _HubResult: _HubResult(
+        HubResult: HubResult(
             route_combinations=[
-                _RouteCombo(origin="KOL", destination="OSA", mode="flight"),
+                RouteCombo(origin="KOL", destination="OSA", mode="flight"),
             ]
         ),
-        _Route: route or _Route(route_discovery_status="single_destination"),
+        StopDiscoveryRoute: route or StopDiscoveryRoute(route_discovery_status="single_destination"),
         ExperiencesOutput: ExperiencesOutput(
             experiences=[
                 Experience(
@@ -231,10 +231,10 @@ def _make_fake_llm(
                 ),
             ]
         ),
-        _LegRecommendation: _LegRecommendation(
+        LegRecommendation: LegRecommendation(
             leg_id="stub_leg", recommendation=_stub_transport_rec()
         ),
-        _RankingOutput: _RankingOutput(
+        RankingOutput: RankingOutput(
             ranked_indices=[0, 1, 2],
             personalization_reasons=[
                 "Good value for mid-range travellers.",
@@ -243,7 +243,7 @@ def _make_fake_llm(
             ],
             rationale="Mock Hotel is the best pick for this trip.",
         ),
-        _OptimiserOutput: _OptimiserOutput(
+        OptimiserOutput: OptimiserOutput(
             recommended=_stub_transport_rec(),
             alternatives=[],
         ),
@@ -308,7 +308,7 @@ def _run_graph_with_fake_llm(
     is_intl: bool = False,
     self_drive: bool = False,
     extra_state: dict[str, Any] | None = None,
-    route: _Route | None = None,
+    route: StopDiscoveryRoute | None = None,
 ) -> dict[str, Any]:
     """Run the graph with a fake LLM injected directly into all agents."""
     import asyncio
@@ -504,14 +504,14 @@ class TestFullGraph:
         """
         from langgraph.checkpoint.memory import MemorySaver
 
-        from app.agents.orchestrator import _FieldConfidence, _ParsedQuery
+        from app.agents.orchestrator import FieldConfidence, ParsedQuery
 
-        vague_response = _ParsedQuery(
-            source=_FieldConfidence(value="unknown", confidence=0.5),
-            destination=_FieldConfidence(value=None, confidence=0.0),  # missing
+        vague_response = ParsedQuery(
+            source=FieldConfidence(value="unknown", confidence=0.5),
+            destination=FieldConfidence(value=None, confidence=0.0),  # missing
             departure_date=None,
             trip_days=3,
-            travelers=_FieldConfidence(value=None, confidence=0.0),  # missing
+            travelers=FieldConfidence(value=None, confidence=0.0),  # missing
             budget_tier="mid",
             interests=[],
             is_international=False,
@@ -521,7 +521,7 @@ class TestFullGraph:
 
         def _with_structured_output(schema: Any) -> MagicMock:
             chain = MagicMock()
-            if schema is _ParsedQuery:
+            if schema is ParsedQuery:
                 chain.ainvoke = AsyncMock(return_value=vague_response)
             else:
                 chain.ainvoke = AsyncMock(return_value=MagicMock())
@@ -585,24 +585,24 @@ class TestFullGraph:
 # ── Multi-stop route (StopsDiscoveryAgent) integration ─────────────────────────
 
 
-def _repeated_stop_route() -> _Route:
+def _repeated_stop_route() -> StopDiscoveryRoute:
     """A route that revisits one place — Dirang -> Tawang -> Dirang.
 
     Kept to 3 overnight stops because the fake orchestrator response used by
     ``_make_fake_llm`` always resolves to a fixed 3-day trip.
     """
-    return _Route(
+    return StopDiscoveryRoute(
         route_discovery_status="multi_stop_provisional",
         overnight_stops=[
-            _Stop(name="Dirang", nights_hint=1),
-            _Stop(name="Tawang", nights_hint=1),
-            _Stop(name="Dirang", nights_hint=1),
+            StopDiscoveryStop(name="Dirang", nights_hint=1),
+            StopDiscoveryStop(name="Tawang", nights_hint=1),
+            StopDiscoveryStop(name="Dirang", nights_hint=1),
         ],
         gateway_options=[
-            _GatewayOption(
+            StopDiscoveryGatewayOption(
                 option_id="gw_guwahati",
                 gateway_name="Via Guwahati",
-                gateway_stop=_Stop(name="Guwahati", stop_kind="gateway_transit"),
+                gateway_stop=StopDiscoveryStop(name="Guwahati", stop_kind="gateway_transit"),
                 is_recommended=True,
             )
         ],
@@ -645,28 +645,28 @@ class TestMultiStopRoute:
 
     def test_ladakh_5_day_trip_continuous_day_numbers_and_source(self) -> None:
         """A 5-day multi-stop Ladakh trip must generate 5 days sequentially numbered from 1 to 5."""
-        ladakh_route = _Route(
+        ladakh_route = StopDiscoveryRoute(
             route_discovery_status="multi_stop_provisional",
             overnight_stops=[
-                _Stop(name="Leh", nights_hint=3),
-                _Stop(name="Nubra Valley", nights_hint=2),
+                StopDiscoveryStop(name="Leh", nights_hint=3),
+                StopDiscoveryStop(name="Nubra Valley", nights_hint=2),
             ],
             gateway_options=[
-                _GatewayOption(
+                StopDiscoveryGatewayOption(
                     option_id="gw_direct",
                     gateway_name="Direct Flight to Leh",
-                    gateway_stop=_Stop(name="Leh", stop_kind="overnight"),
+                    gateway_stop=StopDiscoveryStop(name="Leh", stop_kind="overnight"),
                     is_recommended=True,
                 )
             ],
         )
-        ladakh_parsed = _ParsedQuery(
-            source=_FieldConfidence(value="Kolkata", confidence=1.0),
-            destination=_FieldConfidence(value="Ladakh", confidence=1.0),
+        ladakh_parsed = ParsedQuery(
+            source=FieldConfidence(value="Kolkata", confidence=1.0),
+            destination=FieldConfidence(value="Ladakh", confidence=1.0),
             departure_date="2026-10-14",
             return_date="2026-10-18",
             trip_days=5,
-            travelers=_FieldConfidence(value="1", confidence=1.0),
+            travelers=FieldConfidence(value="1", confidence=1.0),
             budget_tier="mid",
             interests=["nature", "photography"],
             is_international=False,
@@ -717,23 +717,23 @@ class TestMultiStopRoute:
 
         def _with_structured_output(schema: Any) -> MagicMock:
             chain = MagicMock()
-            if schema is _ParsedQuery:
+            if schema is ParsedQuery:
                 chain.ainvoke = AsyncMock(
-                    return_value=_ParsedQuery(
-                        source=_FieldConfidence(value="Kolkata", confidence=0.9),
-                        destination=_FieldConfidence(value="Nowhereland", confidence=0.95),
+                    return_value=ParsedQuery(
+                        source=FieldConfidence(value="Kolkata", confidence=0.9),
+                        destination=FieldConfidence(value="Nowhereland", confidence=0.95),
                         departure_date="2026-10-14",
                         return_date="2026-10-17",
                         trip_days=3,
                         trip_days_confidence=0.9,
-                        travelers=_FieldConfidence(value="2", confidence=1.0),
+                        travelers=FieldConfidence(value="2", confidence=1.0),
                         budget_tier="mid",
                         is_international=False,
                         self_drive_intent=True,
                         dates_confidence=0.9,
                     )
                 )
-            elif schema is _Route:
+            elif schema is StopDiscoveryRoute:
                 chain.ainvoke = AsyncMock(side_effect=RuntimeError("route discovery boom"))
             else:
                 chain.ainvoke = AsyncMock(return_value=MagicMock())

@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
-from typing import Any, Literal
-
-from pydantic import BaseModel, Field
+from typing import Any
 
 from app.agents.base import AgentClarificationMixin
 from app.config import settings
@@ -24,6 +22,11 @@ from app.graph.state import TripStateModel
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent, StopKind
+from app.models.output.stops_discovery_agent_output import (
+    StopDiscoveryGatewayOption,
+    StopDiscoveryRoute,
+    StopDiscoveryStop,
+)
 from app.models.stops import (
     SINGLE_STOP_ID,
     SOURCE_STOP_ID,
@@ -53,33 +56,6 @@ _LEG_TYPE_ORDER: dict[LegType, int] = {
 _LONG_DISTANCE_LEG_TYPES = frozenset(
     {LegType.SOURCE_TO_GATEWAY, LegType.GATEWAY_TO_SOURCE, LegType.COUNTRY_TRANSFER}
 )
-
-
-class _Stop(BaseModel):
-    name: str
-    stop_kind: Literal["overnight", "gateway_transit"] = "overnight"
-    nights_hint: int = Field(default=1, ge=0)
-    country: str | None = None
-    permits_required: list[str] = Field(default_factory=list)
-    altitude_meters: int | None = None
-    notes: str | None = None
-
-
-class _GatewayOption(BaseModel):
-    option_id: str
-    gateway_name: str
-    gateway_stop: _Stop
-    transit_duration_hours: float | None = None
-    cost_tier: str | None = None
-    scenic_value: str | None = None
-    acclimatization_notes: str | None = None
-    is_recommended: bool = False
-
-
-class _Route(BaseModel):
-    route_discovery_status: Literal["single_destination", "multi_stop_provisional"]
-    overnight_stops: list[_Stop] = Field(default_factory=list)
-    gateway_options: list[_GatewayOption] = Field(default_factory=list)
 
 
 def _slugify(name: str) -> str:
@@ -211,7 +187,7 @@ def _resequence(route_legs: dict[str, RouteLegPlan]) -> dict[str, RouteLegPlan]:
 
 
 def _build_gateway_option(
-    option: _GatewayOption,
+    option: StopDiscoveryGatewayOption,
     first_stop: TripStop,
     last_stop: TripStop,
     stops_by_day: dict[int, DayAllocation],
@@ -325,7 +301,7 @@ def _empty_result(status: str, route_version: int) -> dict[str, Any]:
 
 
 def _shape_route(
-    route: _Route,
+    route: StopDiscoveryRoute,
     dates: TripDates,
     self_drive_intent: bool,
     route_version: int,
@@ -402,10 +378,10 @@ def _shape_route(
     gateway_options_input = route.gateway_options[: settings.max_gateway_options]
     if not gateway_options_input:
         gateway_options_input = [
-            _GatewayOption(
+            StopDiscoveryGatewayOption(
                 option_id="gw_direct",
                 gateway_name="Direct",
-                gateway_stop=_Stop(name=first_stop.name, stop_kind="overnight"),
+                gateway_stop=StopDiscoveryStop(name=first_stop.name, stop_kind="overnight"),
                 is_recommended=True,
             )
         ]
@@ -489,7 +465,7 @@ class StopsDiscoveryAgent(AgentClarificationMixin):
         try:
             route = await invoke_structured(
                 self._llm,
-                _Route,
+                StopDiscoveryRoute,
                 ROUTE_DISCOVERY_PROMPT.partial(
                     max_gateway_options=settings.max_gateway_options
                 ).format_messages(

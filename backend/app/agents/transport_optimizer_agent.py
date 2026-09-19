@@ -13,13 +13,12 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.llm.config import llm_settings
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
+from app.models.output.transport_optimizer_agent_output import LegRecommendation, OptimiserOutput
 from app.models.stops import RouteLegPlan
 from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
@@ -32,19 +31,6 @@ from app.tools.factory import ToolFactory
 
 # Seat classes considered "premium" — excluded for budget tier
 _PREMIUM_CLASSES = frozenset(["business", "first", "premium economy", "premium"])
-
-
-class _OptimiserOutput(BaseModel):
-    recommended: TransportRecommendation
-    alternatives: list[TransportRecommendation] = Field(default_factory=list)
-
-
-class _LegRecommendation(BaseModel):
-    leg_id: str
-    # Optional so a no-result leg is expressible: the prompt permits skipping the
-    # recommendation, and a required field would reject the model's own valid answer.
-    recommendation: TransportRecommendation | None = None
-    no_result: bool = False
 
 
 # Google Routes returns durations as a protobuf duration string ("18543s").
@@ -223,7 +209,7 @@ class TransportOptimizerAgent(AgentClarificationMixin):
         try:
             output = await invoke_structured(
                 self._llm,
-                _OptimiserOutput,
+                OptimiserOutput,
                 ROUTE_OPTIMIZATION_PROMPT.format_messages(
                     source=source,
                     destination=destination,
@@ -303,7 +289,7 @@ class TransportOptimizerAgent(AgentClarificationMixin):
                 try:
                     item = await invoke_structured(
                         self._llm,
-                        _LegRecommendation,
+                        LegRecommendation,
                         LEG_OPTIMIZATION_PROMPT.format_messages(
                             travelers=travelers,
                             budget_tier=budget_tier,

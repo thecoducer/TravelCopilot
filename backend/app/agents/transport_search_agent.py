@@ -19,12 +19,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
+from app.models.output.transport_search_agent_output import HubResult, RouteCombo  # noqa: F401
 from app.models.stops import RouteLegPlan, stop_display_name
 from app.prompts.transport_search_agent_prompts import HUB_DISCOVERY_PROMPT
 from app.services.cache_service import TTL_FLIGHTS, TTL_TRANSIT, cache_service
@@ -34,17 +33,6 @@ from app.tools.factory import ToolFactory
 # Generic TransportSearchPolicy.allowed_modes value -> which fetch helper handles it.
 _TRANSIT_MODES = frozenset({"train", "bus", "intercity_bus", "ferry"})
 _ROAD_MODES = frozenset({"road", "taxi", "rental", "local_transit", "private_car"})
-
-
-class _RouteCombo(BaseModel):
-    origin: str
-    destination: str
-    mode: str = Field(pattern="^(flight|train|bus|cab|taxi|ferry|other)$")
-    via_hub: str | None = None
-
-
-class _HubResult(BaseModel):
-    route_combinations: list[_RouteCombo] = Field(default_factory=list)
 
 
 class TransportSearchAgent(AgentClarificationMixin):
@@ -106,7 +94,7 @@ class TransportSearchAgent(AgentClarificationMixin):
         try:
             hubs = await invoke_structured(
                 self._llm,
-                _HubResult,
+                HubResult,
                 HUB_DISCOVERY_PROMPT.format_messages(source=source, destination=destination),
                 agent=AgentName.TRANSPORT_SEARCH,
                 log=log,

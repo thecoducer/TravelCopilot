@@ -13,14 +13,16 @@ import contextlib
 import json
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from app.agents.base import AgentClarificationMixin
 from app.config import settings
 from app.graph.state import TripStateModel
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, BudgetVerdict, LogEvent
+from app.models.output.budget_planner_agent_output import (
+    CostSavingTips,
+    DestinationCostEstimate,
+)
 from app.models.reports import BudgetReport
 from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
@@ -61,29 +63,6 @@ def _per_day_breakdown(
         )
         for day in range(trip_days)
     ]
-
-
-class DestinationCostEstimate(BaseModel):
-    """LLM-estimated daily per-person cost for food and activities in destination local currency."""
-
-    daily_food_per_person: float = Field(
-        default=0.0,
-        description="Estimated daily food/dining cost per person in local currency.",
-    )
-    daily_activity_per_person: float = Field(
-        default=0.0,
-        description="Estimated daily activity/sightseeing cost per person in local currency.",
-    )
-    rationale: str = Field(
-        default="",
-        description="Brief explanation of estimate based on destination pricing and budget tier.",
-    )
-
-
-class _CostSavingTips(BaseModel):
-    """Structured output schema for cost-saving tips."""
-
-    tips: list[str] = Field(default_factory=list)
 
 
 class BudgetPlannerAgent(AgentClarificationMixin):
@@ -316,7 +295,7 @@ class BudgetPlannerAgent(AgentClarificationMixin):
             try:
                 tips_result = await invoke_structured(
                     self._llm,
-                    _CostSavingTips,
+                    CostSavingTips,
                     COST_SAVING_TIPS_PROMPT.format_messages(
                         destination=destination,
                         trip_days=trip_days,

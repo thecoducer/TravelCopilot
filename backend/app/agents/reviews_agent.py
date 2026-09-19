@@ -10,12 +10,11 @@ import asyncio
 import re
 from typing import Any, NamedTuple
 
-from pydantic import BaseModel, Field
-
 from app.agents.base import AgentClarificationMixin
 from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent, Sentiment
+from app.models.output.reviews_agent_output import PlaceSummary
 from app.models.reports import ReviewSummary
 from app.prompts.reviews_agent_prompts import REVIEW_SUMMARY_PROMPT
 from app.services.cache_service import TTL_PLACES, cache_service
@@ -25,15 +24,9 @@ from app.tools.factory import ToolFactory
 _REVIEW_SUMMARY_TIMEOUT_SECONDS = 60
 
 
-class _PlaceSummary(BaseModel):
-    pros: list[str] = Field(default_factory=list)
-    cons: list[str] = Field(default_factory=list)
-    sentiment: Sentiment = Sentiment.UNKNOWN
-
-
 # Returned whenever no review text reached the model, so downstream consumers can
 # tell "no evidence" apart from "reviewers were positive".
-_NO_EVIDENCE_SUMMARY = _PlaceSummary(pros=[], cons=[], sentiment=Sentiment.UNKNOWN)
+_NO_EVIDENCE_SUMMARY = PlaceSummary(pros=[], cons=[], sentiment=Sentiment.UNKNOWN)
 
 
 class _ReviewTarget(NamedTuple):
@@ -187,7 +180,7 @@ class ReviewsAgent(AgentClarificationMixin):
 
     async def _fetch_and_summarise_place(
         self, target: _ReviewTarget, log: Any
-    ) -> tuple[dict[str, Any], _PlaceSummary]:
+    ) -> tuple[dict[str, Any], PlaceSummary]:
         """Network + LLM work for one physical place, independent of how many stops visit it."""
         physical_key = target.place_id or _fallback_place_key(target.name, target.lat, target.lng)
         details = await cache_service.get_or_set(
@@ -210,10 +203,10 @@ class ReviewsAgent(AgentClarificationMixin):
             return details, _NO_EVIDENCE_SUMMARY
 
         try:
-            summary: _PlaceSummary = await asyncio.wait_for(
+            summary: PlaceSummary = await asyncio.wait_for(
                 invoke_structured(
                     self._llm,
-                    _PlaceSummary,
+                    PlaceSummary,
                     REVIEW_SUMMARY_PROMPT.format_messages(
                         place_name=target.name,
                         rating=details.get("rating"),
