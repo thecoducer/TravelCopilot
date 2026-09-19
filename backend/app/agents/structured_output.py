@@ -18,8 +18,8 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage
 from pydantic import BaseModel
 
-from app.config import settings
 from app.llm import extract_llm_call_usage, get_active_llm_run_id, llm_semaphore, structured_llm
+from app.llm.config import llm_settings
 from app.models.enums import FinishReason, LogEvent
 from app.services.usage_service import record_llm_call_usage
 
@@ -82,7 +82,7 @@ def _bind[SchemaT: BaseModel](llm: Any, schema: type[SchemaT]) -> tuple[Any, boo
     Returns ``(chain, raw_included)``. Test doubles and older integrations expose
     only ``with_structured_output(schema)``, so the plain form is the fallback.
     """
-    method = settings.llm_structured_output_method.strip()
+    method = llm_settings.structured_output_method.strip()
     if method:
         try:
             return llm.with_structured_output(schema, method=method, include_raw=True), True
@@ -119,7 +119,7 @@ async def _track_usage(raw: Any, llm: Any, agent: str, bound_log: Any) -> None:
     if not run_id:
         return
     try:
-        model = getattr(llm, "model", "") or settings.llm_model
+        model = llm_settings.model
         usage = extract_llm_call_usage(raw, model)
         bound_log.info(LogEvent.LLM_USAGE_RECORDED, agent=agent, **usage)
         await record_llm_call_usage(run_id, usage)
@@ -144,7 +144,7 @@ async def invoke_structured[SchemaT: BaseModel](
     """
     bound_log = log or logger.bind(agent=agent, session_id=session_id)
     schema_name = schema.__name__
-    attempts = max(1, max_attempts or settings.llm_structured_max_attempts)
+    attempts = max(1, max_attempts or llm_settings.structured_max_attempts)
     conversation = list(messages)
 
     last_error: Exception | None = None
@@ -170,7 +170,7 @@ async def invoke_structured[SchemaT: BaseModel](
                 schema=schema_name,
                 attempt=attempt,
                 finish_reason=_finish_reason(raw),
-                max_tokens=settings.max_tokens_for_agent(agent),
+                max_tokens=llm_settings.max_tokens_for_agent(agent),
             )
 
         if parsed is not None and parsing_error is None and not truncated:

@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
 from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.config import settings
 from app.llm import get_llm
+from app.llm.config import llm_settings
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
 from app.models.stops import RouteLegPlan
@@ -321,7 +321,7 @@ class TransportOptimizerAgent(AgentClarificationMixin):
         # One bounded call per leg rather than a single request covering the whole
         # route: the combined schema is large enough that a 9-leg route reliably
         # truncated, and one bad leg then discarded every other leg's answer.
-        semaphore = asyncio.Semaphore(settings.llm_concurrency)
+        semaphore = asyncio.Semaphore(llm_settings.concurrency)
 
         async def _optimise_one(leg_id: str, summary: dict[str, Any]) -> TransportRecommendation:
             if not summary["options"]:

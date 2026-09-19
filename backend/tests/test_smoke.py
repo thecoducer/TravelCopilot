@@ -8,17 +8,20 @@ import json
 import logging
 from collections.abc import Iterator
 
+import pytest
 import structlog
+from pydantic import ValidationError
 
 from app.config import Settings, settings
+from app.llm.config import llm_settings
 
 
 def test_settings_llm_provider() -> None:
-    assert settings.llm_provider == "openai"
+    assert llm_settings.provider
 
 
 def test_settings_llm_model() -> None:
-    assert settings.llm_model == "gpt-4o"
+    assert llm_settings.model
 
 
 def test_mock_external_apis_is_bool() -> None:
@@ -39,9 +42,20 @@ def test_clarification_fields_parsed() -> None:
 def test_retryable_status_codes_parsed() -> None:
     configured_settings = Settings(
         _env_file=None,
+        database_url="sqlite+aiosqlite://",
+        redis_url="redis://localhost:6379/0",
         external_api_retryable_status_codes="408, 429, 503",
     )
     assert configured_settings.retryable_status_codes == (408, 429, 503)
+
+
+def test_required_settings_fail_when_missing(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR), pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+    assert "required_configuration_missing" in caplog.text
+    assert "llm_provider" in caplog.text
+    assert "database_url" in caplog.text
 
 
 @contextlib.contextmanager

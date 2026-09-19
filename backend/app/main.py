@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from app.config import settings
+from app.llm.config import llm_settings
 from app.logging import configure_logging
 
 
@@ -43,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ── Startup ──────────────────────────────────────────────────────────
     logger.info(
         "startup",
-        llm_model=settings.llm_model,
+        llm_model=llm_settings.model,
         mock_apis=settings.mock_external_apis,
         env=settings.app_env,
     )

@@ -1248,11 +1248,11 @@ class TestGetLLM:
         assert llm.metadata["session_id"] == "sess_123"
 
     def test_model_string_uses_provider_and_model(self) -> None:
-        from app.config import settings
         from app.llm import get_llm
+        from app.llm.config import llm_settings
 
         llm = get_llm("orchestrator")
-        expected = f"{settings.llm_provider}/{settings.llm_model}"
+        expected = f"{llm_settings.provider}/{llm_settings.model}"
         assert llm.model == expected
 
 

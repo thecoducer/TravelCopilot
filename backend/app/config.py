@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.logging import log_configuration_validation_errors
 
 # Shared tool-runtime constants. Keeping these values here makes provider adapters
 # configurable without scattering protocol names, statuses, or retention policy.
@@ -146,46 +148,6 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "info"
 
-    # LLM — swap provider+model with two env vars, zero code changes
-    # Examples:
-    #   openai      / gpt-4o                              (default)
-    #   anthropic   / claude-3-5-sonnet-20241022
-    #   gemini      / gemini-1.5-pro
-    #   groq        / llama3-70b-8192
-    #   openrouter  / nvidia/nemotron-3-ultra-550b-a55b:free
-    #   ollama      / llama3                              (local)
-    llm_provider: str = "openai"
-    llm_model: str = "gpt-4o"
-
-    # Provider API keys — LiteLLM reads these as env vars automatically;
-    # declare them here so pydantic-settings can validate + populate from .env
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
-    google_api_key: str = ""  # Gemini / Vertex AI
-    groq_api_key: str = ""  # Groq (fast Llama inference)
-    openrouter_api_key: str = ""  # reads OPEN_ROUTER_API_KEY; LiteLLM expects OPENROUTER_API_KEY
-
-    # Optional: custom base URL for local / self-hosted models (Ollama, vLLM, etc.)
-    llm_api_base: str = ""  # e.g. http://localhost:11434  for Ollama
-
-    # LLM runtime guards — reasoning-heavy models stall indefinitely without an explicit budget
-    llm_timeout_seconds: float = 60.0
-    llm_max_tokens: int = 4096
-    llm_num_retries: int = 2  # LiteLLM-side retries
-    llm_max_retries: int = 1  # LangChain-side tenacity retries
-    # "json_schema" | "function_calling" | "json_mode"; blank uses the provider default
-    llm_structured_output_method: str = "json_schema"
-
-    # Token budget for agents whose schema produces large nested output. A single
-    # global budget truncates them mid-object, which surfaces only as a parse error.
-    llm_max_tokens_large: int = 0
-    # Comma-separated agent names (see models.enums.AgentName) using the large budget.
-    llm_large_output_agents: str = ""
-    # Re-prompt attempts after a schema-validation or truncation failure.
-    llm_structured_max_attempts: int = 0
-    # Cap on simultaneous in-flight LLM calls across all agent fan-outs.
-    llm_concurrency: int = 0
-
     # Execution mode switch: real invokes provider adapters; mock replays recordings only.
     mock_external_apis: bool = True
 
@@ -248,10 +210,10 @@ class Settings(BaseSettings):
     open_exchange_rates_latest_url: str = "https://openexchangerates.org/api/latest.json"
 
     # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/travelcopilot"
+    database_url: str = Field(..., min_length=1)
 
     # Redis
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = Field(..., min_length=1)
 
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
@@ -335,19 +297,6 @@ class Settings(BaseSettings):
         return [f.strip() for f in self.clarification_required_fields.split(",")]
 
     @property
-    def large_output_agent_names(self) -> frozenset[str]:
-        """Agents whose structured output needs ``llm_max_tokens_large``."""
-        return frozenset(
-            name.strip() for name in self.llm_large_output_agents.split(",") if name.strip()
-        )
-
-    def max_tokens_for_agent(self, agent_name: str) -> int:
-        """Token budget for one agent, falling back to the global budget."""
-        if agent_name in self.large_output_agent_names:
-            return self.llm_max_tokens_large
-        return self.llm_max_tokens
-
-    @property
     def field_thresholds(self) -> dict[str, float]:
         """Parse clarification_field_thresholds into a field→threshold mapping."""
         import contextlib
@@ -381,4 +330,12 @@ class Settings(BaseSettings):
         }
 
 
-settings = Settings()
+def _load_settings() -> Settings:
+    try:
+        return Settings()
+    except ValidationError as exc:
+        log_configuration_validation_errors(exc.errors())
+        raise
+
+
+settings = _load_settings()

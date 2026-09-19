@@ -11,12 +11,10 @@ from typing import Any
 import structlog
 
 from app.config import settings
+from app.llm.config import llm_settings
 
 logger = structlog.get_logger(__name__)
 
-# Identifies one planning run (one graph invocation) so usage recorded deep
-# inside agent LLM calls can be attributed without threading an id through
-# every agent constructor.
 _ACTIVE_RUN_ID: ContextVar[str] = ContextVar("active_llm_run_id", default="")
 
 
@@ -37,11 +35,11 @@ def get_active_llm_run_id() -> str:
 
 def _sync_api_keys() -> None:
     key_map = {
-        "OPENAI_API_KEY": settings.openai_api_key,
-        "ANTHROPIC_API_KEY": settings.anthropic_api_key,
-        "GOOGLE_API_KEY": settings.google_api_key,
-        "GROQ_API_KEY": settings.groq_api_key,
-        "OPENROUTER_API_KEY": settings.openrouter_api_key,
+        "OPENAI_API_KEY": llm_settings.openai_api_key,
+        "ANTHROPIC_API_KEY": llm_settings.anthropic_api_key,
+        "GOOGLE_API_KEY": llm_settings.google_api_key,
+        "GROQ_API_KEY": llm_settings.groq_api_key,
+        "OPENROUTER_API_KEY": llm_settings.openrouter_api_key,
     }
     for env_var, value in key_map.items():
         if value and not os.environ.get(env_var):
@@ -78,7 +76,7 @@ def _read_value(value: Any, key: str, default: Any = None) -> Any:
 
 
 def _fallback_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Static-pricing-table cost estimate, used when a provider reports none."""
+    """Estimate cost when a provider reports none."""
     try:
         import litellm
 
@@ -92,21 +90,12 @@ def _fallback_cost_usd(model: str, input_tokens: int, output_tokens: int) -> flo
 
 
 def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
-    """Normalize token, cost, and reasoning/cache detail for one LLM response.
-
-    Reads LangChain's normalized ``usage_metadata`` first, falling back to the
-    raw LiteLLM ``Usage`` object under ``response_metadata`` for provider-specific
-    detail (e.g. reasoning/cached token breakdowns) that LangChain doesn't
-    normalize on every integration version.
-    """
+    """Normalize token, cost, and reasoning/cache detail for one response."""
     usage_metadata = _read_value(response, "usage_metadata") or {}
     response_metadata = _read_value(response, "response_metadata") or {}
-    raw_usage = (
-        _read_value(response_metadata, "token_usage")
-        or _read_value(response_metadata, "usage")
-        or {}
-    )
-
+    raw_usage = _read_value(response_metadata, "token_usage") or _read_value(
+        response_metadata, "usage"
+    ) or {}
     input_tokens = int(
         _read_value(usage_metadata, "input_tokens") or _read_value(raw_usage, "prompt_tokens") or 0
     )
@@ -120,7 +109,6 @@ def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
         or _read_value(raw_usage, "total_tokens")
         or (input_tokens + output_tokens)
     )
-
     output_token_details = _read_value(usage_metadata, "output_token_details") or {}
     completion_tokens_details = _read_value(raw_usage, "completion_tokens_details") or {}
     reasoning_tokens = int(
@@ -128,7 +116,6 @@ def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
         or _read_value(completion_tokens_details, "reasoning_tokens")
         or 0
     )
-
     input_token_details = _read_value(usage_metadata, "input_token_details") or {}
     prompt_tokens_details = _read_value(raw_usage, "prompt_tokens_details") or {}
     cached_tokens = int(
@@ -136,9 +123,6 @@ def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
         or _read_value(prompt_tokens_details, "cached_tokens")
         or 0
     )
-
-    # Prefer a provider-reported real cost (e.g. OpenRouter with usage.include=true)
-    # over the static pricing table, which may not cover every routed model.
     cost = _read_value(raw_usage, "cost")
     if cost is None:
         hidden_params = _read_value(response, "_hidden_params") or {}
@@ -148,7 +132,6 @@ def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
     cost_usd = (
         float(cost) if cost is not None else _fallback_cost_usd(model, input_tokens, output_tokens)
     )
-
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -180,38 +163,34 @@ except ImportError:
 
 def get_llm(agent_name: str, session_id: str = "") -> Any:
     """Return the official LangChain LiteLLM chat model."""
-    model_string = f"{settings.llm_provider}/{settings.llm_model}"
+    model_string = f"{llm_settings.provider}/{llm_settings.model}"
     model_kwargs: dict[str, Any] = {
-        "timeout": settings.llm_timeout_seconds,
-        "num_retries": settings.llm_num_retries,
+        "timeout": llm_settings.timeout_seconds,
+        "num_retries": llm_settings.num_retries,
     }
-    if settings.llm_provider == "openrouter":
-        # Ask OpenRouter to report its own real billed cost per call instead of
-        # relying solely on LiteLLM's static pricing table.
+    if llm_settings.provider == "openrouter":
         model_kwargs["extra_body"] = {"usage": {"include": True}}
     kwargs: dict[str, Any] = {
         "model": model_string,
         "temperature": 0.0,
-        "max_tokens": settings.max_tokens_for_agent(agent_name),
-        "max_retries": settings.llm_max_retries,
-        # timeout and num_retries are LiteLLM completion params, not ChatLiteLLM fields.
+        "max_tokens": llm_settings.max_tokens_for_agent(agent_name),
+        "max_retries": llm_settings.max_retries,
         "model_kwargs": model_kwargs,
         "metadata": {"agent_name": agent_name, "session_id": session_id},
     }
-    if settings.llm_api_base:
-        kwargs["api_base"] = settings.llm_api_base
+    if llm_settings.api_base:
+        kwargs["api_base"] = llm_settings.api_base
     return ChatLiteLLM(**kwargs)
 
 
 def structured_llm(llm: Any, schema: type) -> Any:
     """Bind a Pydantic schema using the configured structured-output method."""
-    method = settings.llm_structured_output_method.strip()
+    method = llm_settings.structured_output_method.strip()
     if not method:
         return llm.with_structured_output(schema)
     try:
         return llm.with_structured_output(schema, method=method)
     except TypeError:
-        # Test doubles and older integrations expose with_structured_output(schema) only.
         return llm.with_structured_output(schema)
 
 
@@ -220,15 +199,10 @@ _llm_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
 def llm_semaphore() -> asyncio.Semaphore:
-    """Process-wide cap on in-flight LLM calls.
-
-    Agents fan out per stop/place with unbounded ``asyncio.gather``; without this
-    a multi-stop trip issues dozens of simultaneous requests and provider rate
-    limiting surfaces as an unexplained empty completion.
-    """
+    """Cap concurrent LLM calls across agent fan-outs."""
     global _llm_semaphore, _llm_semaphore_loop
     running_loop = asyncio.get_running_loop()
     if _llm_semaphore is None or _llm_semaphore_loop is not running_loop:
-        _llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
+        _llm_semaphore = asyncio.Semaphore(llm_settings.concurrency)
         _llm_semaphore_loop = running_loop
     return _llm_semaphore
