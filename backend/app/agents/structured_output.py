@@ -25,6 +25,7 @@ from app.services.usage_service import record_llm_call_usage
 
 logger = structlog.get_logger(__name__)
 
+
 # Appended to the conversation when a first attempt fails validation, so the
 # model repairs its own output instead of the caller silently degrading.
 _REPAIR_INSTRUCTION = (

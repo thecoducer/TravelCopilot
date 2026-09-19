@@ -93,9 +93,11 @@ def extract_llm_call_usage(response: Any, model: str) -> dict[str, int | float]:
     """Normalize token, cost, and reasoning/cache detail for one response."""
     usage_metadata = _read_value(response, "usage_metadata") or {}
     response_metadata = _read_value(response, "response_metadata") or {}
-    raw_usage = _read_value(response_metadata, "token_usage") or _read_value(
-        response_metadata, "usage"
-    ) or {}
+    raw_usage = (
+        _read_value(response_metadata, "token_usage")
+        or _read_value(response_metadata, "usage")
+        or {}
+    )
     input_tokens = int(
         _read_value(usage_metadata, "input_tokens") or _read_value(raw_usage, "prompt_tokens") or 0
     )
