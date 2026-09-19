@@ -9,7 +9,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-_TEMPLATE_DIR = pathlib.Path(__file__).parent / "templates"
+_TEMPLATE_DIR = pathlib.Path(__file__).parent.parent / "templates"
 
 
 async def render_pdf(itinerary_data: dict[str, Any] | str) -> bytes:
