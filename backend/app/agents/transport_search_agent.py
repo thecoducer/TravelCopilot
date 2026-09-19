@@ -19,15 +19,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
 from app.models.stops import RouteLegPlan, stop_display_name
+from app.prompts.transport_search_agent_prompts import HUB_DISCOVERY_PROMPT
 from app.services.cache_service import TTL_FLIGHTS, TTL_TRANSIT, cache_service
 from app.services.currency_service import resolve_from_state
 from app.tools.factory import ToolFactory
@@ -35,21 +34,6 @@ from app.tools.factory import ToolFactory
 # Generic TransportSearchPolicy.allowed_modes value -> which fetch helper handles it.
 _TRANSIT_MODES = frozenset({"train", "bus", "intercity_bus", "ferry"})
 _ROAD_MODES = frozenset({"road", "taxi", "rental", "local_transit", "private_car"})
-
-_HUB_SYSTEM_PROMPT = """\
-You are a transport routing expert. Given a source and destination, identify all
-plausible route combinations a traveller might take.
-
-For each route combination return:
-  - origin: IATA code or city name
-  - destination: IATA code or city name
-  - mode: "flight" | "train" | "bus" | "cab" | "taxi" | "ferry" | "other"
-  - via_hub: intermediate city/IATA code (if applicable)
-
-Return between 1 and 5 route combinations — prefer direct routes first, then
-1-stop via major hubs. For domestic Indian routes always include a train option
-where relevant.
-"""
 
 
 class _RouteCombo(BaseModel):
@@ -123,10 +107,7 @@ class TransportSearchAgent(AgentClarificationMixin):
             hubs = await invoke_structured(
                 self._llm,
                 _HubResult,
-                [
-                    SystemMessage(content=_HUB_SYSTEM_PROMPT),
-                    HumanMessage(content=f"Source: {source}\nDestination: {destination}"),
-                ],
+                HUB_DISCOVERY_PROMPT.format_messages(source=source, destination=destination),
                 agent=AgentName.TRANSPORT_SEARCH,
                 log=log,
             )

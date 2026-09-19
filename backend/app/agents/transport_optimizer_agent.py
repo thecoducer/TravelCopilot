@@ -13,37 +13,25 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.llm.config import llm_settings
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
 from app.models.stops import RouteLegPlan
 from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
+from app.prompts.transport_optimizer_agent_prompts import (
+    LEG_OPTIMIZATION_PROMPT,
+    ROUTE_OPTIMIZATION_PROMPT,
+)
 from app.services.currency_service import resolve_from_state
 from app.tools.factory import ToolFactory
 
 # Seat classes considered "premium" — excluded for budget tier
 _PREMIUM_CLASSES = frozenset(["business", "first", "premium economy", "premium"])
-
-_SYSTEM_PROMPT = """\
-You are a transport planning expert. Analyse the route options and produce:
-1. The single best recommended route.
-2. Two alternative routes (different trade-offs: one faster, one cheaper).
-
-Rules:
-- All options MUST be budget-filtered (no premium/business class unless tier is luxury).
-- ``personalization_reason`` must reference the traveller's budget tier.
-- ``non_obvious_insight`` set ONLY when a cheaper option saves > 15% vs the expensive one.
-- ``route_waypoints`` must include at least 2 lat/lng entries (origin + destination).
-- Each ``RouteLeg`` must have a non-empty ``price_disclaimer`` and a valid ``price_cached_at``.
-- ``alternatives`` is a JSON array with the same TransportRecommendation structure.
-"""
 
 
 class _OptimiserOutput(BaseModel):
@@ -58,18 +46,6 @@ class _LegRecommendation(BaseModel):
     recommendation: TransportRecommendation | None = None
     no_result: bool = False
 
-
-_LEG_SYSTEM_PROMPT = """\
-You are a transport planning expert. Pick the best available option for the single \
-route leg below and explain your reasoning.
-
-Rules:
-- All options MUST be budget-filtered (no premium/business class unless tier is luxury).
-- ``personalization_reason`` must reference the traveller's budget tier.
-- Express every cost in the currency given, and set ``currency_code`` to it.
-- If the leg has no viable option, set ``no_result=true`` and omit ``recommendation``.
-- Never invent a duration or price that is not present in the supplied options.
-"""
 
 # Google Routes returns durations as a protobuf duration string ("18543s").
 _ISO_SECONDS_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*s\s*$", re.IGNORECASE)
@@ -248,17 +224,14 @@ class TransportOptimizerAgent(AgentClarificationMixin):
             output = await invoke_structured(
                 self._llm,
                 _OptimiserOutput,
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Source: {source}\nDestination: {destination}\n"
-                            f"Trip days: {trip_days}\nTravelers: {travelers}\n"
-                            f"Budget tier: {budget_tier}\n\n"
-                            f"Route options (JSON):\n{json.dumps(legs_summary, indent=2)}"
-                        )
-                    ),
-                ],
+                ROUTE_OPTIMIZATION_PROMPT.format_messages(
+                    source=source,
+                    destination=destination,
+                    trip_days=trip_days,
+                    travelers=travelers,
+                    budget_tier=budget_tier,
+                    legs=json.dumps(legs_summary, indent=2),
+                ),
                 agent=AgentName.TRANSPORT_OPTIMIZER,
                 log=log,
             )
@@ -331,18 +304,13 @@ class TransportOptimizerAgent(AgentClarificationMixin):
                     item = await invoke_structured(
                         self._llm,
                         _LegRecommendation,
-                        [
-                            SystemMessage(content=_LEG_SYSTEM_PROMPT),
-                            HumanMessage(
-                                content=(
-                                    f"Travelers: {travelers}\n"
-                                    f"Budget tier: {budget_tier}\n"
-                                    f"Currency: {currency}\n\n"
-                                    f"Leg id: {leg_id}\n"
-                                    f"Leg (JSON):\n{json.dumps(summary, indent=2)}"
-                                )
-                            ),
-                        ],
+                        LEG_OPTIMIZATION_PROMPT.format_messages(
+                            travelers=travelers,
+                            budget_tier=budget_tier,
+                            currency=currency,
+                            leg_id=leg_id,
+                            summary=json.dumps(summary, indent=2),
+                        ),
                         agent=AgentName.TRANSPORT_OPTIMIZER,
                         log=log,
                     )

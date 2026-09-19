@@ -10,34 +10,19 @@ import asyncio
 import re
 from typing import Any, NamedTuple
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent, Sentiment
 from app.models.reports import ReviewSummary
+from app.prompts.reviews_agent_prompts import REVIEW_SUMMARY_PROMPT
 from app.services.cache_service import TTL_PLACES, cache_service
 from app.tools.factory import ToolFactory
 
 # Keep review synthesis bounded so one slow provider call cannot stall the full graph.
 _REVIEW_SUMMARY_TIMEOUT_SECONDS = 60
-
-# Sentiments the model may choose from; UNKNOWN is reserved for "no evidence".
-_JUDGEABLE_SENTIMENTS = (Sentiment.POSITIVE, Sentiment.MIXED, Sentiment.NEGATIVE)
-
-_SYSTEM_PROMPT = f"""\
-You are a travel reviewer. Given the raw place details and reviews below, synthesise a
-concise reviewer summary for a traveller.
-
-Rules:
-- ``pros`` should list 2–4 concrete positives mentioned by multiple reviewers.
-- ``cons`` should list 1–3 genuine negatives (skip if the place has near-perfect reviews).
-- ``sentiment`` must be one of: {" | ".join(_JUDGEABLE_SENTIMENTS)}.
-- Keep each pro/con to a single short sentence.
-"""
 
 
 class _PlaceSummary(BaseModel):
@@ -229,17 +214,12 @@ class ReviewsAgent(AgentClarificationMixin):
                 invoke_structured(
                     self._llm,
                     _PlaceSummary,
-                    [
-                        SystemMessage(content=_SYSTEM_PROMPT),
-                        HumanMessage(
-                            content=(
-                                f"Place: {target.name}\n"
-                                f"Rating: {details.get('rating')}/5"
-                                f" ({details.get('review_count')} reviews)\n\n"
-                                f"Reviews:\n{reviews_text}"
-                            )
-                        ),
-                    ],
+                    REVIEW_SUMMARY_PROMPT.format_messages(
+                        place_name=target.name,
+                        rating=details.get("rating"),
+                        review_count=details.get("review_count"),
+                        reviews=reviews_text,
+                    ),
                     agent=AgentName.REVIEWS,
                     log=log,
                 ),

@@ -13,19 +13,18 @@ import contextlib
 import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.config import settings
 from app.graph.state import TripStateModel
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, BudgetVerdict, LogEvent
 from app.models.reports import BudgetReport
 from app.models.transport import TransportRecommendation
 from app.models.user_profile import budget_from_state
+from app.prompts.budget_planner_agent_prompts import COST_ESTIMATE_PROMPT, COST_SAVING_TIPS_PROMPT
 from app.services.currency_service import resolve_trip_currency
 from app.services.fx_converter_service import FxConverter
 from app.tools.factory import ToolFactory
@@ -62,18 +61,6 @@ def _per_day_breakdown(
         )
         for day in range(trip_days)
     ]
-
-
-_SYSTEM_PROMPT = """\
-You are a travel budget analyst and cost estimator with deep knowledge of global pricing.
-Given a travel destination, budget tier, and trip parameters, estimate realistic daily food and \
-activity costs.
-
-Rules:
-- Estimates MUST be in the destination's local currency.
-- ``daily_food_per_person``: Average daily spending per person for meals, drinks, and dining.
-- ``daily_activity_per_person``: Average daily spending per person for entry fees and tours.
-"""
 
 
 class DestinationCostEstimate(BaseModel):
@@ -145,29 +132,18 @@ class BudgetPlannerAgent(AgentClarificationMixin):
             if isinstance(experiences, list):
                 exp_names = [extract_name(item) for item in experiences[:5]]
 
-            prompt = (
-                f"Destination: {destination}\n"
-                f"Destination Currency: {dest_currency}\n"
-                f"Budget Tier: {tier}\n"
-                f"Travelers: {travelers}, Trip Duration: {trip_days} days\n"
-            )
-            if food_names:
-                prompt += f"Discovered Food Venues: {', '.join(food_names)}\n"
-            if exp_names:
-                prompt += f"Discovered Activities: {', '.join(exp_names)}\n"
-
-            prompt += (
-                f"Estimate realistic daily per-person food and activity costs for "
-                f"{destination} in {dest_currency} matching the '{tier}' budget tier."
-            )
-
             res = await invoke_structured(
                 self._llm,
                 DestinationCostEstimate,
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(content=prompt),
-                ],
+                COST_ESTIMATE_PROMPT.format_messages(
+                    destination=destination,
+                    dest_currency=dest_currency,
+                    tier=tier,
+                    travelers=travelers,
+                    trip_days=trip_days,
+                    food_names=", ".join(food_names) if food_names else "",
+                    exp_names=", ".join(exp_names) if exp_names else "",
+                ),
                 agent=AgentName.BUDGET_PLANNER,
                 log=log,
             )
@@ -341,17 +317,13 @@ class BudgetPlannerAgent(AgentClarificationMixin):
                 tips_result = await invoke_structured(
                     self._llm,
                     _CostSavingTips,
-                    [
-                        SystemMessage(content="You are a budget travel advisor."),
-                        HumanMessage(
-                            content=(
-                                f"Trip to {destination}, {trip_days} days, {travelers} travelers.\n"
-                                f"Budget tier: {tier}. Currently over budget.\n"
-                                f"Cost breakdown: {json.dumps(per_category)}\n\n"
-                                "Provide 3–5 specific, actionable cost-saving tips."
-                            )
-                        ),
-                    ],
+                    COST_SAVING_TIPS_PROMPT.format_messages(
+                        destination=destination,
+                        trip_days=trip_days,
+                        travelers=travelers,
+                        tier=tier,
+                        cost_breakdown=json.dumps(per_category),
+                    ),
                     agent=AgentName.BUDGET_PLANNER,
                     log=log,
                 )

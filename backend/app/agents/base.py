@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.structured_output import StructuredOutputError, invoke_structured
+from app.llm import StructuredOutputError, invoke_structured
 from app.models.clarification import ClarificationPrompt, OptionalClarificationOutput
 from app.models.enums import LogEvent
+from app.prompts.base_agent_prompts import OPTIONAL_CLARIFICATION_PROMPT
 from app.services.clarification_manager import ClarificationManager
 
 logger = structlog.get_logger(__name__)
@@ -46,18 +46,7 @@ class AgentClarificationMixin:
             proposal = await invoke_structured(
                 llm,
                 OptionalClarificationOutput,
-                [
-                    SystemMessage(
-                        content=(
-                            "You may ask up to 3 optional questions to improve the itinerary. "
-                            "Use field names beginning with optional_. Ask only for useful, "
-                            "trip-scoped preferences. Never ask for required fields, credentials, "
-                            "or sensitive personal data. Return an empty prompts list when no "
-                            "question is useful. Every prompt must be optional=true."
-                        )
-                    ),
-                    HumanMessage(content=f"Agent context:\n{context}\nTrip state:\n{state}"),
-                ],
+                OPTIONAL_CLARIFICATION_PROMPT.format_messages(context=context, state=state),
                 agent=requester,
             )
         except StructuredOutputError as exc:

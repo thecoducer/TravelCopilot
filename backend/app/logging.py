@@ -12,7 +12,7 @@ Production:  JSON lines with a structured, machine-parseable ``exception`` field
 from __future__ import annotations
 
 import logging as stdlib_logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import structlog
@@ -20,7 +20,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-def log_configuration_validation_errors(errors: list[Mapping[str, Any]]) -> None:
+def log_configuration_validation_errors(errors: Sequence[Mapping[str, Any]]) -> None:
     """Log each configuration validation error with its environment key."""
     for error in errors:
         field_name = ".".join(str(part) for part in error["loc"])

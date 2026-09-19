@@ -15,36 +15,14 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent, SectionStatus
 from app.models.reports import SafetyReport
+from app.prompts.safety_agent_prompts import SAFETY_REPORT_PROMPT
 from app.services.cache_service import TTL_TAVILY, cache_service
 from app.tools.factory import ToolFactory
-
-_SYSTEM_PROMPT = """\
-You are a travel safety analyst. Based on the search results and venue list below, produce a
-structured safety report for travellers visiting the given destination.
-
-Rules:
-- ``crowd_level`` must be exactly one of: Low, Moderate, High, Extreme. Include concrete
-    ``crowd_notes`` for the travel month.
-- Set ``altitude_meters`` only for destinations above 1500 m and provide ``acclimatization_advice``
-    when relevant. Include concrete ``seasonal_risks`` and ``seasonal_weather_summary``.
-- ``advisory_level`` should reflect official government guidance: "Exercise normal caution" |
-  "Exercise increased caution" | "Reconsider travel" | "Do not travel".
-- ``top_scams`` should include 2–5 specific, actionable scam entries with how-to-avoid advice.
-  Where a scam is associated with a venue or neighbourhood listed in the traveller's actual
-  itinerary (see Venues section), mention that venue by name so the warning is immediately useful.
-- ``safe_areas`` should name specific neighbourhoods or districts travellers can rely on.
-- ``emergency_contacts`` must include police, ambulance, and tourist helpline numbers if available.
-- ``women_safety_notes`` and ``medical_facilities`` should only be populated with concrete, useful
-  information — leave null if nothing specific is known.
-"""
 
 
 class SafetyAgent(AgentClarificationMixin):
@@ -124,16 +102,11 @@ class SafetyAgent(AgentClarificationMixin):
             report = await invoke_structured(
                 self._llm,
                 SafetyReport,
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Destination: {destination}\n\n"
-                            f"Search results:\n{context}"
-                            f"{venue_section}"
-                        )
-                    ),
-                ],
+                SAFETY_REPORT_PROMPT.format_messages(
+                    destination=destination,
+                    context=context,
+                    venue_section=venue_section,
+                ),
                 agent=AgentName.SAFETY,
                 session_id=session_id,
                 log=log,

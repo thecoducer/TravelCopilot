@@ -10,8 +10,12 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from app.agents.local_experiences_agent import LocalExperiencesAgent
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import reset_active_llm_run_id, set_active_llm_run_id
+from app.llm import (
+    StructuredOutputError,
+    invoke_structured,
+    reset_active_llm_run_id,
+    set_active_llm_run_id,
+)
 from app.models.enums import DataSource, Sentiment
 from app.models.reports import ReviewSummary
 
@@ -104,7 +108,7 @@ class TestInvokeStructuredUsageTracking:
         async def _fake_record(run_id: str, usage: dict[str, Any]) -> None:
             recorded.append((run_id, usage))
 
-        monkeypatch.setattr("app.agents.structured_output.record_llm_call_usage", _fake_record)
+        monkeypatch.setattr("app.llm.structured_output.record_llm_call_usage", _fake_record)
 
         raw = MagicMock()
         raw.response_metadata = {"finish_reason": "stop"}
@@ -130,7 +134,7 @@ class TestInvokeStructuredUsageTracking:
     async def test_no_usage_recorded_without_an_active_run(self, monkeypatch) -> None:
         recorded: list[Any] = []
         monkeypatch.setattr(
-            "app.agents.structured_output.record_llm_call_usage",
+            "app.llm.structured_output.record_llm_call_usage",
             lambda *a, **k: recorded.append((a, k)),
         )
         llm = _llm_returning(_envelope(_Schema(name="ok")))

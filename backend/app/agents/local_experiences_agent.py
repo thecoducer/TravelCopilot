@@ -11,11 +11,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, DataSource, LogEvent
 from app.models.itinerary import (
@@ -23,24 +20,8 @@ from app.models.itinerary import (
     ExperiencesOutput,
 )
 from app.models.stops import TripStop
+from app.prompts.local_experiences_agent_prompts import EXPERIENCE_CURATION_PROMPT
 from app.tools.factory import ToolFactory
-
-_SYSTEM_PROMPT = """\
-You are an expert local guide and travel curator with deep worldwide knowledge of attractions, \
-landmarks, outdoor activities, cultural experiences, and hidden gems.
-
-Given a destination or stop, user travel profile, interests, and dates, curate a diverse, \
-high-quality list of 6 to 12 top experiences and attractions.
-
-Rules:
-1. Tailor choices to the traveler's specified interests, travel style, and fitness level.
-2. Include both iconic must-see highlights and authentic local gems.
-3. Provide realistic duration_hours (e.g. 1.0 - 4.0) and best_time_to_visit
-    (e.g. 'Morning for soft light and fewer crowds', 'Sunset').
-4. Estimate realistic price_range ('Free', 'Inexpensive', 'Moderate', 'Expensive').
-5. Estimate approximate latitude (lat) and longitude (lng) coordinates if known.
-6. Avoid generic or fabricated places — only suggest real, verifiable venues and landmarks.
-"""
 
 
 class LocalExperiencesAgent(AgentClarificationMixin):
@@ -192,25 +173,18 @@ class LocalExperiencesAgent(AgentClarificationMixin):
         interest_text = (
             ", ".join(interests) if interests else ("General sightseeing, culture, nature")
         )
-        prompt = (
-            f"Destination / Location: {location}\n"
-            f"User Interests: {interest_text}\n"
-            f"Travel Style: {travel_style}\n"
-            f"Fitness Level: {fitness_level}\n"
-            f"{dates_info}\n\n"
-            f"Please recommend 6 to 12 top experiences and attractions for {location}."
-        )
-        prompt += "\nOnly choose from these verified candidates:\n"
-        prompt += "\n".join(f"- {candidate}" for candidate in candidates)
-
         try:
             response = await invoke_structured(
                 llm,
                 ExperiencesOutput,
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(content=prompt),
-                ],
+                EXPERIENCE_CURATION_PROMPT.format_messages(
+                    location=location,
+                    interests=interest_text,
+                    travel_style=travel_style,
+                    fitness_level=fitness_level,
+                    dates_info=dates_info,
+                    candidates="\n".join(f"- {candidate}" for candidate in candidates),
+                ),
                 agent=AgentName.LOCAL_EXPERIENCES,
                 session_id=session_id,
                 log=log,

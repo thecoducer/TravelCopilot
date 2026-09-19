@@ -13,32 +13,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.clarification import ClarificationPrompt
 from app.models.enums import AgentName, LogEvent
 from app.models.reports import VisaReport, VisaSource
+from app.prompts.visa_agent_prompts import VISA_REPORT_PROMPT
 from app.services.clarification_manager import ClarificationManager
 from app.tools.factory import ToolFactory
-
-_SYSTEM_PROMPT = """\
-You are an expert visa and immigration adviser. Based on the search results below,
-produce a complete visa report.
-
-Critical rules:
-- ``application_process`` must be a numbered ordered list of concrete steps.
-- Include ``disclaimer`` reminding travellers to verify with the official consulate.
-- If search results are insufficient, lean conservative: flag uncertainty in
-  ``validity_notes``.
-- Decide which cited sources are official based on their content and provenance,
-    not a fixed domain allowlist. Set ``confidence`` to "high" only when at least
-    one source is official, "medium" when sources exist but none are official,
-    and "low" when no reliable source supports the report.
-"""
 
 
 class VisaAgent(AgentClarificationMixin):
@@ -184,16 +167,11 @@ class VisaAgent(AgentClarificationMixin):
             report = await invoke_structured(
                 self._llm,
                 VisaReport,
-                [
-                    SystemMessage(content=_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Passport country: {passport_country}\n"
-                            f"Destination country: {destination_country}\n\n"
-                            f"Search results:\n{context}"
-                        )
-                    ),
-                ],
+                VISA_REPORT_PROMPT.format_messages(
+                    passport_country=passport_country,
+                    destination_country=destination_country,
+                    context=context,
+                ),
                 agent=AgentName.VISA,
                 log=log,
             )

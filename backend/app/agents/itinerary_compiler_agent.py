@@ -36,17 +36,18 @@ import json
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.config import settings
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent
 from app.models.itinerary import MEAL_TYPES, SLOT_NAMES, Experience, TripDays
 from app.models.itinerary_compilation import DayPlan, FoodPick, RoutePlan, TripNarrative
 from app.models.stops import DayAllocation, TripStop
+from app.prompts.itinerary_compiler_agent_prompts import (
+    DAY_PLAN_CHAT_PROMPT,
+    NARRATIVE_CHAT_PROMPT,
+)
 from app.services.itinerary_compiler_service import ItineraryCompilerService, MissingTripDatesError
 from app.tools.factory import ToolFactory
 
@@ -72,44 +73,6 @@ def _fallback_day_plan(day_count: int, food_candidates: list[str]) -> DayPlan:
             )
             cursor += 1
     return DayPlan(food=picks)
-
-
-_DAY_PLAN_PROMPT = """\
-You are assembling {day_count} day(s) at {stop_name} for a traveller.
-
-You are a SELECTOR and an EXPLAINER, never a source of facts. Research agents have
-already found every place and venue worth considering. Your only job is to choose
-among the candidates below, spread them across the days, and say why.
-
-You MUST:
-- Pick up to {max_activities_per_day} ranked activities per day, spread across
-  morning/afternoon/evening.
-- Pick one food venue per meal type ({meal_types}) per day.
-- Copy ``experience_name`` and ``venue_name`` EXACTLY from the candidate lists.
-  Anything that does not match verbatim is discarded before the user sees it.
-- Use the ``day_number`` values given in the candidate list — never renumber days.
-- Ground ``recommendation_reason`` and ``best_for`` only in the candidate details
-  and the traveller's stated preferences.
-
-You MUST NOT:
-- Invent a place, venue, hotel, operator or route that is not listed.
-- State or change any price, rating, distance, duration, opening time or date.
-- Comment on safety, visas, permits, budget or bookings — other agents own those,
-  and their findings are attached to the itinerary separately.
-"""
-
-_NARRATIVE_PROMPT = """\
-You write short framing text for an itinerary that is already fully planned.
-
-- ``title``: evocative, names the destination(s) and the day count.
-- ``day_summaries``: one sentence per day, describing that day using only the places
-  already scheduled for it in the input.
-- ``packing_tips``: up to 6 short items, derived strictly from the season, weather
-  and altitude facts supplied in the input. Omit entirely if no such facts are given.
-
-Never introduce a place, price, rating, time, route or warning that is absent from
-the input. Never give safety, visa, budget or booking advice.
-"""
 
 
 class ItineraryCompilerAgent(AgentClarificationMixin):
@@ -276,23 +239,14 @@ class ItineraryCompilerAgent(AgentClarificationMixin):
             return await invoke_structured(
                 self._llm,
                 DayPlan,
-                [
-                    SystemMessage(
-                        content=_DAY_PLAN_PROMPT.format(
-                            day_count=day_count,
-                            stop_name=stop.name,
-                            max_activities_per_day=settings.itinerary_max_activities_per_day,
-                            meal_types="/".join(MEAL_TYPES),
-                        )
-                    ),
-                    HumanMessage(
-                        content=(
-                            f"Candidate experiences by day:\n"
-                            f"{json.dumps(day_candidates, indent=2)}\n\n"
-                            f"Candidate food venues:\n{json.dumps(food_candidates, indent=2)}"
-                        )
-                    ),
-                ],
+                DAY_PLAN_CHAT_PROMPT.format_messages(
+                    day_count=day_count,
+                    stop_name=stop.name,
+                    max_activities_per_day=settings.itinerary_max_activities_per_day,
+                    meal_types="/".join(MEAL_TYPES),
+                    day_candidates=json.dumps(day_candidates, indent=2),
+                    food_candidates=json.dumps(food_candidates, indent=2),
+                ),
                 agent=AgentName.ITINERARY_COMPILER,
                 log=log,
             )
@@ -358,10 +312,9 @@ class ItineraryCompilerAgent(AgentClarificationMixin):
             return await invoke_structured(
                 self._llm,
                 TripNarrative,
-                [
-                    SystemMessage(content=_NARRATIVE_PROMPT),
-                    HumanMessage(content=self._compiler.build_narrative_context(state, days)),
-                ],
+                NARRATIVE_CHAT_PROMPT.format_messages(
+                    narrative_context=self._compiler.build_narrative_context(state, days)
+                ),
                 agent=AgentName.ITINERARY_COMPILER,
                 log=log,
             )

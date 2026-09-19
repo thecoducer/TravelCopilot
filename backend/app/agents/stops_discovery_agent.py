@@ -16,14 +16,12 @@ import re
 from datetime import date, timedelta
 from typing import Any, Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.base import AgentClarificationMixin
-from app.agents.structured_output import StructuredOutputError, invoke_structured
 from app.config import settings
 from app.graph.state import TripStateModel
-from app.llm import get_llm
+from app.llm import StructuredOutputError, get_llm, invoke_structured
 from app.logging import get_agent_logger
 from app.models.enums import AgentName, LogEvent, StopKind
 from app.models.stops import (
@@ -39,35 +37,7 @@ from app.models.stops import (
     default_allowed_modes,
 )
 from app.models.user_profile import TripDates
-
-_SYSTEM_PROMPT = """\
-You are a trip route-planning expert with deep knowledge of world geography and \
-regional transport connectivity. Given a traveller's source, destination, trip \
-days, and travel style, decide whether the destination is best modelled as:
-
-- a single overnight stop ("single_destination"), or
-- a multi-stop circuit of overnight stops connected by an access gateway \
-("multi_stop_provisional") — use this whenever the destination is a region, \
-country, or area typically visited via more than one overnight town/city, or \
-whenever the source has no direct transport connection to the destination \
-region and a nearer transport hub is the practical entry/exit point.
-
-For "multi_stop_provisional" routes, propose:
-1. ``overnight_stops``: an ordered list of the overnight stops a typical \
-traveller would visit (the same place may repeat, e.g. on the way back). \
-Give each a sensible number of nights given the total trip length.
-2. ``gateway_options``: up to {max_gateway_options} distinct ways to reach the \
-region from the source (e.g. flying direct vs. a scenic overland route), each \
-with realistic trade-offs. Mark exactly one option ``is_recommended=true``. If \
-the first overnight stop already has practical direct transport from the \
-source, set the gateway stop's name equal to the first overnight stop's name \
-and its stop_kind to "overnight" (no separate transit stop is needed).
-
-Rules:
-- Never invent a country name; only set ``country`` when you are confident.
-- Keep nights realistic and proportionate to trip length.
-- If self_drive_intent is true, prefer gateway options reachable by road/rental.
-"""
+from app.prompts.stops_discovery_agent_prompts import ROUTE_DISCOVERY_PROMPT
 
 # leg_type -> relative ordering used to assign a stable, readable `sequence`
 # once the full route (gateway legs + internal transfers) is known.
@@ -520,21 +490,15 @@ class StopsDiscoveryAgent(AgentClarificationMixin):
             route = await invoke_structured(
                 self._llm,
                 _Route,
-                [
-                    SystemMessage(
-                        content=_SYSTEM_PROMPT.format(
-                            max_gateway_options=settings.max_gateway_options
-                        )
-                    ),
-                    HumanMessage(
-                        content=(
-                            f"Source: {s.source}\nDestination: {s.destination}\n"
-                            f"Trip length: {s.dates.trip_days} days\n"
-                            f"Travelers: {s.travelers}\n"
-                            f"Self-drive intent: {s.self_drive_intent}"
-                        )
-                    ),
-                ],
+                ROUTE_DISCOVERY_PROMPT.partial(
+                    max_gateway_options=settings.max_gateway_options
+                ).format_messages(
+                    source=s.source,
+                    destination=s.destination,
+                    trip_days=s.dates.trip_days,
+                    travelers=s.travelers,
+                    self_drive_intent=s.self_drive_intent,
+                ),
                 agent=AgentName.STOPS_DISCOVERY,
                 session_id=s.session_id,
                 log=log,
